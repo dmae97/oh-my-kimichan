@@ -1,4 +1,5 @@
 import type { Dag, DagNode, TaskStatus } from "./dag.js";
+import { getTaskDagGraph } from "./task-graph.js";
 
 export interface Scheduler {
   getRunnableNodes(dag: Dag): DagNode[];
@@ -11,15 +12,11 @@ export interface Scheduler {
 export function createScheduler(): Scheduler {
   return {
     getRunnableNodes(dag: Dag): DagNode[] {
-      return dag.nodes.filter((n) => {
-        if (n.status !== "pending") return false;
-        const deps = dag.nodes.filter((d) => n.dependsOn.includes(d.id));
-        return deps.every((d) => d.status === "done");
-      });
+      return getTaskDagGraph(dag).runnableNodes();
     },
 
     updateNodeStatus(dag: Dag, id: string, status: TaskStatus): void {
-      const node = dag.nodes.find((n) => n.id === id);
+      const node = getTaskDagGraph(dag).getNode(id);
       if (!node) return;
 
       node.status = status;
@@ -41,7 +38,7 @@ export function createScheduler(): Scheduler {
     },
 
     getNodeStatus(dag: Dag, id: string): TaskStatus | undefined {
-      return dag.nodes.find((n) => n.id === id)?.status;
+      return getTaskDagGraph(dag).getNode(id)?.status;
     },
   };
 }

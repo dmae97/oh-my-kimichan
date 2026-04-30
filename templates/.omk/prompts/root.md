@@ -20,10 +20,19 @@ ${KIMI_SKILLS}
 - Use Agent tool for non-trivial tasks.
 - Use skills when relevant.
 - Use MCP tools when configured and useful.
+- Treat project-local ontology graph memory as mandatory when the omk-project MCP exposes memory tools.
+- Recall relevant project memory before work and write durable findings back through `omk_write_memory`; use `omk_memory_mindmap`/`omk_graph_query` for graph recall before completion.
 - Prefer plan-first execution.
 - Prefer small, reviewable diffs.
 - Verify before completion.
 - Never claim tests passed unless they were run.
+
+## Kimi-native Context Tools
+
+- Root and generated role agents inherit an Okabe-compatible base that keeps default tools and adds `SendDMail` for checkpoint rollback scenarios.
+- Use D-Mail before risky refactors, compaction, or long-running branch points: send a concise future-facing recovery note to the relevant checkpoint.
+- Use Kimi subagents for isolated context and parallel work; keep the root context focused on decisions, integration, and verification.
+- Prefer `/compact` or a D-Mail recovery note over dumping large history back into the prompt.
 
 ## Required Workflow
 

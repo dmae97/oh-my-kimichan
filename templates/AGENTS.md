@@ -193,6 +193,10 @@ For web-heavy research, prefer a no-thinking research profile when the runtime s
 
 ---
 
+## Okabe / D-Mail Policy
+
+This project is Kimi Code-native. Generated agents should inherit the Okabe-compatible base agent so the `SendDMail` tool is available. Use Okabe smart context management plus D-Mail checkpoints before risky refactors, context compaction, multi-agent handoffs, or rollback-prone work. D-Mail notes should be concise recovery records: current goal, changed files, verification state, blockers, and intended next action.
+
 ## Context Policy
 
 Do not dump the entire repository into context.
@@ -205,7 +209,11 @@ Use this order:
 4. Use Glob/Grep to locate relevant files.
 5. Read the smallest useful file set.
 6. Expand through imports, routes, schemas, tests, and call sites.
-7. Store stable facts in `.omk/memory/`.
+7. Use Okabe/D-Mail for smart context checkpoints and store stable facts through project-local graph memory (`omk_write_memory`, `omk_memory_mindmap`, `omk_graph_query`); `.omk/memory/` is only a local mirror.
+
+Memory policy:
+
+Project-local graph memory is the default source of truth for project/session recall. Use `omk_read_memory`, `omk_write_memory`, `omk_memory_mindmap`, `omk_graph_query`, `omk_read_run_memory`, and `omk_write_run_memory` when available; `.omk/memory/` remains a readable mirror/cache.
 
 Memory files:
 

@@ -21,12 +21,19 @@ Use this skill when running oh-my-kimi workflows on Kimi K2.6.
 - For web-heavy work, use a no-thinking research profile when available.
 - For multimodal UI/debug work, inspect screenshots, traces, or video before proposing code.
 
+## Okabe + D-Mail
+
+- Generated oh-my-kimichan agents should inherit the Okabe-compatible base, not plain `default`, so `SendDMail` is available while custom `--agent-file` configs remain supported.
+- Use `SendDMail` for checkpoint rollback scenarios: risky refactors, dependency migrations, context compaction, or long-running work where a future recovery note prevents lost state.
+- Treat D-Mail as context insurance, not a substitute for tests, git diff review, or project-local graph durable memory.
+
 ## Context Policy
 
 - Never load the whole repository just because Kimi supports long context.
 - First build a file map.
 - Then read only relevant files.
-- Store stable facts in `.omk/memory/`.
+- Store stable facts through project-local graph memory; `.omk/memory/` is only a local mirror/cache.
+- Use Okabe/D-Mail checkpoints before risky context transitions.
 - Compact or summarize before context pressure becomes high.
 
 ## Completion Rule

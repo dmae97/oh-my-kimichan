@@ -1,8 +1,8 @@
 version: 1
 agent:
-  extend: default
+  extend: ./okabe.yaml  # Okabe-compatible base adds SendDMail/D-Mail checkpoints
   name: omk-root
-  system_prompt_path: /mnt/m/oh-my-kimichan/.omk/prompts/root.md
+  system_prompt_path: ../prompts/root.md
   system_prompt_args:
     OMK_ROLE: "root-coordinator"
   subagents:

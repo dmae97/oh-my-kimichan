@@ -11,14 +11,12 @@ import { syncCommand } from "./commands/sync.js";
 import { designInitCommand, designLintCommand, designDiffCommand, designExportCommand, designListCommand, designApplyCommand, designSearchCommand } from "./commands/design.js";
 import { stitchInstallCommand } from "./commands/google.js";
 import { teamCommand } from "./commands/team.js";
-import { style, header } from "./util/theme.js";
+import { lspCommand } from "./commands/lsp.js";
+import { style, kimichanCliHero } from "./util/theme.js";
 
 const CUSTOM_HELP = [
   "",
-  style.purple("    ╭────────────────────────────────────────────────────────────────────────╮"),
-  style.purple("    │") + "   " + style.pinkBold("🌸 oh-my-kimichan") + style.gray("  —  Kimi CLI, but better.") + "                              " + style.purple("│"),
-  style.purple("    │") + "   " + style.gray("The orchestration layer that turns Kimi CLI into a powerful coding team.") + "   " + style.purple("│"),
-  style.purple("    ╰────────────────────────────────────────────────────────────────────────╯"),
+  kimichanCliHero(),
   "",
   "  " + style.purpleBold("✨ 사용 가능한 명령어") + style.gray(" ─────────────────────────────────────────────────────"),
   "",
@@ -31,6 +29,7 @@ const CUSTOM_HELP = [
   "\n    " + style.mintBold("omk hud") + "       " + style.gray("실행 상태 & 시스템 사용량 HUD") +
   "\n    " + style.mintBold("omk merge") + "     " + style.gray("결과 병합") +
   "\n    " + style.mintBold("omk sync") + "      " + style.gray("assets 동기화") +
+  "\n    " + style.mintBold("omk lsp") + "       " + style.gray("내장 TypeScript LSP 실행/설정 출력") +
   "\n    " + style.mintBold("omk design") + "    " + style.gray("DESIGN.md 관리") +
   "\n    " + style.mintBold("omk google") + "    " + style.gray("Google 생태계 연동") +
   "",
@@ -92,12 +91,13 @@ program
 program
   .command("run <flow> <goal>")
   .description("DAG 기반 장기 작업 실행")
-  .option("--workers <n>", "worker 수", "1")
+  .option("--workers <n>", "worker 수 (auto면 resource profile 기반)", "auto")
   .action(runCommand);
 
 program
   .command("team")
   .description("tmux 기반 다중 에이전트 팀 실행")
+  .option("--workers <n>", "worker 창 수 (auto면 resource profile 기반)", "auto")
   .action(teamCommand);
 
 program
@@ -115,6 +115,13 @@ program
   .command("sync")
   .description("Kimi assets 재생성 및 동기화")
   .action(syncCommand);
+
+program
+  .command("lsp [server]")
+  .description("내장 LSP 서버 실행 (기본: typescript)")
+  .option("--print-config", ".omk/lsp.json 기본 설정 출력")
+  .option("--check", "실행될 LSP binary 경로만 확인")
+  .action(lspCommand);
 
 const design = program.command("design").description("Google DESIGN.md / awesome-design-md 연동 명령");
 design

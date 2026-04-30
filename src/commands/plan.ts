@@ -1,9 +1,12 @@
 import { runShell } from "../util/shell.js";
-import { getOmkPath, pathExists, injectKimiGlobals } from "../util/fs.js";
+import { getOmkPath, getProjectRoot, pathExists, injectKimiGlobals } from "../util/fs.js";
 import { style, header, status, label } from "../util/theme.js";
+import { createOmkSessionEnv, createOmkSessionId } from "../util/session.js";
 
 export async function planCommand(goal: string, options: { thinking?: string }): Promise<void> {
+  const root = getProjectRoot();
   const agentFile = getOmkPath("agents/roles/architect.yaml");
+  const sessionId = createOmkSessionId("plan");
 
   if (!(await pathExists(agentFile))) {
     console.error(status.error("architect agent가 없습니다. omk init을 먼저 실행하세요."));
@@ -24,7 +27,11 @@ export async function planCommand(goal: string, options: { thinking?: string }):
 
   args.push("-p", promptText);
 
-  const result = await runShell("kimi", args, { timeout: 120000 });
+  const result = await runShell("kimi", args, {
+    timeout: 120000,
+    cwd: root,
+    env: createOmkSessionEnv(root, sessionId),
+  });
   console.log(result.stdout);
   if (result.failed) {
     console.error(result.stderr);

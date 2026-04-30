@@ -8,7 +8,7 @@ export async function syncCommand(): Promise<void> {
   const root = getProjectRoot();
   console.log(header("oh-my-kimichan sync"));
 
-  // ~/.kimi/ 에 hooks + MCP + skills 무조건 글로벌 동기화
+  // ~/.kimi/ 에 hooks + MCP + skills + local graph memory 정책 무조건 글로벌 동기화
   // + 로컬 디렉토리 생성도 병렬
   const agentsSkills = join(root, ".agents/skills");
   const kimiSkills = join(root, ".kimi/skills");
@@ -17,7 +17,7 @@ export async function syncCommand(): Promise<void> {
     mkdir(agentsSkills, { recursive: true }),
     mkdir(kimiSkills, { recursive: true }),
   ]);
-  console.log(status.ok("~/.kimi/ 글로벌 동기화 완료 (hooks + MCP + skills)"));
+  console.log(status.ok("~/.kimi/ 글로벌 동기화 완료 (hooks + MCP + skills + local graph memory)"));
   console.log("");
   console.log(status.ok(".kimi/skills 확인"));
   console.log(status.ok(".agents/skills 확인"));

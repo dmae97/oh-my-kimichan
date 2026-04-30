@@ -4,6 +4,10 @@ import { runShell, checkCommand, getKimiVersion } from "../util/shell.js";
 import { pathExists, getKimiConfigPath, readTextFile, getKimiSkillsDir } from "../util/fs.js";
 import { isGitRepo, getCurrentBranch, getGitStatus } from "../util/git.js";
 import { style, status, header, separator } from "../util/theme.js";
+import { getGlobalMemoryConfigPath, isGraphMemoryBackend, loadMemorySettings, usesExternalNeo4jBackend, usesLocalGraphBackend } from "../memory/memory-config.js";
+import { getOmkResourceSettings } from "../util/resource-profile.js";
+import { formatBytes } from "../util/output-buffer.js";
+import { resolveBundledLspBinary } from "./lsp.js";
 
 interface CheckResult {
   name: string;
@@ -16,12 +20,18 @@ export async function doctorCommand(): Promise<void> {
   const results: CheckResult[] = [];
 
   // 1. Node version
+  const resources = await getOmkResourceSettings();
   const nodeVersion = process.version;
   const nodeMajor = parseInt(nodeVersion.replace("v", "").split(".")[0], 10);
   results.push({
     name: "Node.js",
     status: nodeMajor >= 20 ? "ok" : "warn",
     message: nodeMajor >= 20 ? `${nodeVersion}` : `${nodeVersion} (>=20 권장)`,
+  });
+  results.push({
+    name: "OMK Runtime",
+    status: resources.profile === "lite" ? "info" : "ok",
+    message: `profile=${resources.profile}, RAM=${resources.totalMemoryGb}GB, workers=${resources.maxWorkers}, buffer=${formatBytes(resources.shellMaxBufferBytes)}, MCP=${resources.mcpScope}, skills=${resources.skillsScope}`,
   });
 
   // 2-5. 병렬로 외부 명령어 존재 여부 확인
@@ -131,6 +141,33 @@ export async function doctorCommand(): Promise<void> {
     message: rootYamlExists ? "존재" : ".omk/agents/root.yaml 없음 — omk init 실행 필요",
   });
 
+  let okabeAgentCount = 0;
+  let totalAgentCount = 0;
+  const agentYamlPaths = [
+    join(process.cwd(), ".omk", "agents", "root.yaml"),
+    join(process.cwd(), ".omk", "agents", "roles", "architect.yaml"),
+    join(process.cwd(), ".omk", "agents", "roles", "coder.yaml"),
+    join(process.cwd(), ".omk", "agents", "roles", "explorer.yaml"),
+    join(process.cwd(), ".omk", "agents", "roles", "planner.yaml"),
+    join(process.cwd(), ".omk", "agents", "roles", "qa.yaml"),
+    join(process.cwd(), ".omk", "agents", "roles", "reviewer.yaml"),
+  ];
+  for (const agentPath of agentYamlPaths) {
+    if (!(await pathExists(agentPath))) continue;
+    totalAgentCount += 1;
+    const content = await readTextFile(agentPath, "");
+    if (/^\s*extend:\s*(?:\.\.\/|\.)?\/?okabe\.yaml\b/m.test(content)) okabeAgentCount += 1;
+  }
+  const okabeBase = await readTextFile(join(process.cwd(), ".omk", "agents", "okabe.yaml"), "");
+  const okabeBaseHasDMail = okabeBase.includes("kimi_cli.tools.dmail:SendDMail");
+  results.push({
+    name: "Okabe Agents",
+    status: totalAgentCount > 0 && okabeAgentCount === totalAgentCount && okabeBaseHasDMail ? "ok" : "warn",
+    message: totalAgentCount > 0 && okabeBaseHasDMail
+      ? `${okabeAgentCount}/${totalAgentCount} agents inherit okabe.yaml (SendDMail)`
+      : ".omk/agents/okabe.yaml 또는 SendDMail 설정 누락 — omk init/sync 확인",
+  });
+
   // root prompt includes required variables
   const rootPromptPath = join(process.cwd(), ".omk", "prompts", "root.md");
   let rootPromptValid = false;
@@ -186,6 +223,32 @@ export async function doctorCommand(): Promise<void> {
     name: "OMK MCP",
     status: omkMcpExists ? "ok" : "info",
     message: omkMcpExists ? ".omk/mcp.json 존재" : ".omk/mcp.json 없음 — MCP intentionally disabled 가능",
+  });
+
+  const lspConfigPath = join(process.cwd(), ".omk", "lsp.json");
+  const lspConfigExists = await pathExists(lspConfigPath);
+  let lspConfigValid = false;
+  if (lspConfigExists) {
+    try {
+      const parsed = JSON.parse(await readTextFile(lspConfigPath, "{}")) as {
+        enabled?: boolean;
+        servers?: Record<string, unknown>;
+      };
+      lspConfigValid = parsed.enabled === true && typeof parsed.servers?.typescript === "object";
+    } catch {
+      lspConfigValid = false;
+    }
+  }
+  const tsLspBinary = resolveBundledLspBinary("typescript");
+  const tsLspAvailable = tsLspBinary.includes("/") || tsLspBinary.includes("\\")
+    ? await pathExists(tsLspBinary)
+    : await checkCommand(tsLspBinary);
+  results.push({
+    name: "Built-in LSP",
+    status: lspConfigValid && tsLspAvailable ? "ok" : "warn",
+    message: lspConfigValid && tsLspAvailable
+      ? `.omk/lsp.json + TypeScript LSP (${tsLspBinary})`
+      : "내장 TypeScript LSP 설정/바이너리 누락 — npm install 후 omk init 또는 omk lsp --check 확인",
   });
 
   // dangerous hooks executable
@@ -274,13 +337,41 @@ export async function doctorCommand(): Promise<void> {
     message: globalSkillCount > 0 ? `${globalSkillCount}개 skills 동기화됨 (~/.kimi/skills/)` : "~/.kimi/skills/ 없음",
   });
 
+  const globalMemoryConfigPath = getGlobalMemoryConfigPath();
+  const [globalMemoryConfigExists, memorySettings] = await Promise.all([
+    pathExists(globalMemoryConfigPath),
+    loadMemorySettings(process.cwd()),
+  ]);
+  results.push({
+    name: "Global Memory",
+    status: globalMemoryConfigExists ? "ok" : "warn",
+    message: globalMemoryConfigExists
+      ? "~/.kimi/omk.memory.toml 동기화됨"
+      : "~/.kimi/omk.memory.toml 없음 — omk sync 실행 권장",
+  });
+  results.push({
+    name: "Graph Memory",
+    status: isGraphMemoryBackend(memorySettings.backend)
+      ? usesExternalNeo4jBackend(memorySettings.backend)
+        ? memorySettings.neo4j.configured ? "ok" : memorySettings.strict ? "fail" : "warn"
+        : "ok"
+      : "info",
+    message: isGraphMemoryBackend(memorySettings.backend)
+      ? usesLocalGraphBackend(memorySettings.backend)
+        ? `backend=local_graph, ontology=${memorySettings.localGraph.ontology}, state=${memorySettings.localGraph.path}`
+        : memorySettings.neo4j.configured
+          ? `backend=${memorySettings.backend}, database=${memorySettings.neo4j.database}, project=${memorySettings.project.key}`
+          : `backend=${memorySettings.backend}, 필수 env 누락: ${memorySettings.neo4j.missing.join(", ")}`
+      : "file backend 사용 중",
+  });
+
   // Global ~/.kimi pollution check
   const globalKimiDir = join(homedir(), ".kimi");
   let globalPollution = false;
   if (await pathExists(globalKimiDir)) {
     try {
       const entries = await (await import("fs/promises")).readdir(globalKimiDir, { withFileTypes: true });
-      const unexpected = entries.filter((e) => e.isFile() && !e.name.match(/^(config\.toml|mcp\.json)$/)).map((e) => e.name);
+      const unexpected = entries.filter((e) => e.isFile() && !e.name.match(/^(config\.toml|mcp\.json|omk\.memory\.toml)$/)).map((e) => e.name);
       if (unexpected.length > 0) globalPollution = true;
     } catch { /* ignore */ }
   }

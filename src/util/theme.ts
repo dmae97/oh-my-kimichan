@@ -5,30 +5,37 @@
  */
 
 import { totalmem, freemem, loadavg, cpus } from "os";
-import { KIMICHAN_ASCII_ART } from "./kimi-ascii-art.js";
+import { KIMICHAN_SIMPLE_ASCII_ART } from "./kimichan-simple-art.js";
 
 // ── True-color ANSI helpers ──────────────────────────────────
-const esc = (codes: string) => `\x1b[${codes}m`;
+const colorEnabled = process.env.FORCE_COLOR === "1"
+  || process.env.FORCE_COLOR === "true"
+  || (
+    process.env.NO_COLOR === undefined
+    && process.env.TERM !== "dumb"
+    && Boolean(process.stdout.isTTY)
+  );
+const esc = (codes: string) => colorEnabled ? `\x1b[${codes}m` : "";
 const rgb = (r: number, g: number, b: number) => `38;2;${r};${g};${b}`;
 const bgRgb = (r: number, g: number, b: number) => `48;2;${r};${g};${b}`;
 
 // ── Brand palette (from kimichan.png) ────────────────────────
 // "Onii-chan~ hai, naniga suki? Chocomint yori mo anata~ 💜"
 const P = {
-  purple: { r: 139, g: 92, b: 246 },   // #8B5CF6  Kimichan's eyes & logo
+  purple: { r: 123, g: 91, b: 245 },   // #7B5BF5  Kimichan's eyes & logo
   lightPurple: { r: 167, g: 139, b: 250 }, // #A78BFA  soft highlights
   darkPurple: { r: 91, g: 33, b: 182 },    // #5B21B6  deep shadows
-  pink: { r: 244, g: 114, b: 182 },        // #F472B6  hearts & cheeks
+  pink: { r: 236, g: 72, b: 153 },         // #EC4899  hearts & cheeks
   hotPink: { r: 236, g: 72, b: 153 },      // #EC4899  accent
-  mint: { r: 52, g: 211, b: 153 },         // #34D399  chocomint!
-  darkMint: { r: 16, g: 185, b: 129 },     // #10B981  mint shadow
+  mint: { r: 20, g: 184, b: 166 },         // #14B8A6  chocomint!
+  darkMint: { r: 13, g: 148, b: 136 },     // #0D9488  mint shadow
   orange: { r: 251, g: 146, b: 60 },       // #FB923C  warning
   red: { r: 248, g: 113, b: 113 },         // #F87171  error
   blue: { r: 96, g: 165, b: 250 },         // #60A5FA  info
-  cream: { r: 245, g: 243, b: 255 },       // #F5F3FF  bright text
-  dark: { r: 30, g: 27, b: 46 },           // #1E1B2E  hoodie black
+  cream: { r: 243, g: 232, b: 255 },       // #F3E8FF  bright text
+  dark: { r: 36, g: 28, b: 50 },           // #241C32  hoodie black
   gray: { r: 148, g: 163, b: 184 },        // #94A3B8  muted
-  skin: { r: 253, g: 224, b: 215 },        // #FDE0D7  warm skin tone
+  skin: { r: 249, g: 211, b: 197 },        // #F9D3C5  warm skin tone
 };
 
 // ── Style builders ───────────────────────────────────────────
@@ -103,7 +110,7 @@ export function bullet(text: string, color: "purple" | "pink" | "mint" | "blue" 
 }
 
 export function label(key: string, value: string): string {
-  return "  " + style.gray(key + ":") + " " + style.cream(value);
+  return "  " + style.gray(sanitizeTerminalText(key) + ":") + " " + style.cream(sanitizeTerminalText(value));
 }
 
 export function box(lines: string[], title?: string): string {
@@ -219,11 +226,19 @@ export function getSystemUsage(): {
 
 // ── Utility ──────────────────────────────────────────────────
 function stripAnsi(str: string): string {
-  return str.replace(/\x1b\[[0-9;]*m/g, "");
+  return sanitizeTerminalText(str);
 }
 
 export function padEndAnsi(str: string, len: number): string {
   return str + " ".repeat(Math.max(0, len - stripAnsi(str).length));
+}
+
+export function sanitizeTerminalText(value: string): string {
+  return value
+    .replace(/\x1B\][\s\S]*?(?:\x07|\x1B\\)/g, "")
+    .replace(/\x1B[P^_][\s\S]*?\x1B\\/g, "")
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "");
 }
 
 // ── Kimichan Emoji Kit ───────────────────────────────────────
@@ -250,6 +265,31 @@ export const emoji = {
   wand: "✨",
 };
 
+export function kimichanStatusChips(): string {
+  const chips = [
+    style.purpleBold("[AI-native]"),
+    style.blue("[agent-first]"),
+    style.mintBold("[plan-first]"),
+    style.orange("[safe]"),
+    style.lightPurple("[open]"),
+  ];
+  return chips.join(" ");
+}
+
+export function kimichanCliHero(): string {
+  const heroLines = [
+    gradient("✦ oh-my-kimichan ✦"),
+    style.creamBold("Kimi CLI, but better."),
+    style.gray("The orchestration layer that turns Kimi CLI into a powerful coding team."),
+    "",
+    ...KIMICHAN_SIMPLE_ASCII_ART.split("\n").map((line) => style.lightPurple(line)),
+    "",
+    kimichanStatusChips(),
+  ];
+
+  return box(heroLines, "Kimichan Mascot Theme");
+}
+
 // ── Kimichan Custom Banner ───────────────────────────────────
 export function kimichanMetaBox(meta?: { directory?: string; session?: string; model?: string }): string {
   const metaLines: string[] = [];
@@ -263,10 +303,7 @@ export function kimichanMetaBox(meta?: { directory?: string; session?: string; m
 
 export function kimichanBanner(meta?: { directory?: string; session?: string; model?: string }): string {
   const parts: string[] = [
-    gradient("🌸 oh-my-kimichan — Kimi CLI, but better~ 💜"),
-    "",
-    KIMICHAN_ASCII_ART,
-    "",
+    kimichanCliHero(),
   ];
 
   const metaBox = kimichanMetaBox(meta);

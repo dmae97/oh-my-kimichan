@@ -11,6 +11,7 @@ export interface TaskResult {
   exitCode?: number;
   stdout: string;
   stderr: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RunOptions {
@@ -20,11 +21,32 @@ export interface RunOptions {
   worktreeRoot?: string;
 }
 
+export type EstimateConfidence = "low" | "medium" | "high";
+
+export interface RunProgressEstimate {
+  elapsedMs: number;
+  completedNodes: number;
+  runningNodes: number;
+  pendingNodes: number;
+  failedNodes: number;
+  blockedNodes: number;
+  totalNodes: number;
+  workerCount: number;
+  percentComplete: number;
+  fallbackDurationMs: number;
+  averageCompletedDurationMs?: number;
+  estimatedRemainingMs?: number;
+  estimatedCompletedAt?: string;
+  confidence: EstimateConfidence;
+  updatedAt: string;
+}
+
 export interface RunState {
   runId: string;
   nodes: DagNode[];
   startedAt: string;
   completedAt?: string;
+  estimate?: RunProgressEstimate;
 }
 
 export interface RunResult {

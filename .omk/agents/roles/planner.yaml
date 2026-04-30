@@ -1,11 +1,10 @@
 version: 1
 agent:
-  extend: default
+  extend: ../okabe.yaml  # Okabe-compatible base adds SendDMail/D-Mail checkpoints
   name: omk-planner
   system_prompt_args:
     OMK_ROLE: "planner"
   exclude_tools:
-    - WriteFile
-    - StrReplaceFile
-    - applyDiff
-    - Shell
+    - "kimi_cli.tools.file:WriteFile"
+    - "kimi_cli.tools.file:StrReplaceFile"
+    - "kimi_cli.tools.shell:Shell"

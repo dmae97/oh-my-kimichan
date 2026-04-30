@@ -14,6 +14,8 @@ Use Kimi native tools aggressively:
 - Use `ReadMediaFile` for screenshots, mockups, videos, and UI debugging.
 - Use `SearchWeb` / `FetchURL` only when current external information is needed.
 - Use MCP tools when configured.
+- Use project-local graph memory tools for project/session recall when available; never store secrets.
+- Prefer Okabe smart context management and SendDMail checkpoints before risky context transitions.
 
 ## Subagent Requirement
 

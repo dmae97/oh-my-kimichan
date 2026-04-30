@@ -4,9 +4,13 @@ import { join } from "path";
 import { getOmkPath, getProjectRoot, pathExists, readTextFile, injectKimiGlobals } from "../util/fs.js";
 import { style, header, status, label } from "../util/theme.js";
 import { runKimiInteractive } from "../util/kimi-runner.js";
+import { createOmkSessionEnv } from "../util/session.js";
+import { getOmkResourceSettings } from "../util/resource-profile.js";
 
 export async function runCommand(flow: string, goal: string, options: { workers?: string }): Promise<void> {
   const root = getProjectRoot();
+  const resources = await getOmkResourceSettings();
+  const workerCount = normalizeWorkerCount(options.workers, resources.maxWorkers);
   const flowPath = getOmkPath(`flows/${flow}/SKILL.md`);
   const kimiFlowPath = join(root, ".kimi/skills", `omk-flow-${flow}`, "SKILL.md");
 
@@ -45,13 +49,14 @@ export async function runCommand(flow: string, goal: string, options: { workers?
   const runDir = join(root, ".omk/runs", runId);
   await mkdir(runDir, { recursive: true });
   await writeFile(join(runDir, "goal.md"), `# Goal\n\n${goal}\n`);
-  await writeFile(join(runDir, "plan.md"), `# Plan\n\nFlow: ${flow}\nWorkers: ${options.workers ?? 1}\n`);
+  await writeFile(join(runDir, "plan.md"), `# Plan\n\nFlow: ${flow}\nWorkers: ${workerCount}\nResource profile: ${resources.profile}\n`);
 
   console.log(header("Run started"));
   console.log(label("Run ID", runId));
   console.log(label("Flow", flow));
   console.log(label("Goal", goal));
-  console.log(label("Workers", String(options.workers ?? 1)) + "\n");
+  console.log(label("Workers", String(workerCount)));
+  console.log(label("Resource profile", `${resources.profile} (${resources.reason})`) + "\n");
 
   const agentFile = getOmkPath("agents/root.yaml");
 
@@ -60,6 +65,8 @@ export async function runCommand(flow: string, goal: string, options: { workers?
     `Flow: ${flow}`,
     `Goal: ${goal}`,
     `Run ID: ${runId}`,
+    `Resource profile: ${resources.profile}`,
+    `Worker budget: ${workerCount}`,
     ``,
     `아래 flow 정의를 참고하여 실행 계획을 세우고 진행하세요.`,
     ``,
@@ -81,6 +88,13 @@ export async function runCommand(flow: string, goal: string, options: { workers?
 
   await runKimiInteractive(args, {
     cwd: root,
-    env: { OMK_RUN_ID: runId, OMK_FLOW: flow, OMK_GOAL: goal },
+    env: { ...createOmkSessionEnv(root, runId), OMK_RUN_ID: runId, OMK_FLOW: flow, OMK_GOAL: goal, OMK_WORKERS: String(workerCount) },
   });
+}
+
+function normalizeWorkerCount(value: string | undefined, fallback: number): number {
+  if (!value || value === "auto") return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, 6);
 }

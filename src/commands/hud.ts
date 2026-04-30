@@ -4,12 +4,14 @@ import { uptime } from "os";
 import { execSync } from "child_process";
 import { getOmkPath, pathExists, getProjectRoot } from "../util/fs.js";
 import { getGitStatus } from "../util/git.js";
+import { runShell } from "../util/shell.js";
 import { getKimiUsage, formatDuration } from "../util/kimi-usage.js";
+import { getOmkResourceSettings } from "../util/resource-profile.js";
+import { formatBytes } from "../util/output-buffer.js";
+import type { RunState } from "../contracts/orchestration.js";
 import {
   style,
-  header,
   status,
-  label,
   bullet,
   panel,
   gauge,
@@ -18,13 +20,43 @@ import {
   gradient,
   getSystemUsage,
   separator,
+  padEndAnsi,
+  sanitizeTerminalText,
 } from "../util/theme.js";
+
+export interface HudGitChange {
+  status: string;
+  path: string;
+}
 
 function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
   return `${h}h ${m}m ${s}s`;
+}
+
+function formatEtaMs(ms: number | undefined): string {
+  if (ms === undefined) return "unknown";
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function parseRunState(content: string): RunState | null {
+  try {
+    const value = JSON.parse(content) as Partial<RunState>;
+    if (!value || typeof value !== "object" || typeof value.runId !== "string" || !Array.isArray(value.nodes)) {
+      return null;
+    }
+    return value as RunState;
+  } catch {
+    return null;
+  }
 }
 
 function getDiskUsage(): { used: number; total: number; percent: number } | null {
@@ -43,8 +75,146 @@ function getDiskUsage(): { used: number; total: number; percent: number } | null
   }
 }
 
+export function parseGitStatusPorcelain(output: string): HudGitChange[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      const statusCode = line.slice(0, 2);
+      const rawPath = line.slice(3).trim();
+      const renamedPath = rawPath.includes(" -> ") ? rawPath.split(" -> ").pop() ?? rawPath : rawPath;
+      return {
+        status: statusCode.trim() || statusCode,
+        path: renamedPath.replace(/^"|"$/g, ""),
+      };
+    });
+}
+
+async function getGitChanges(root: string): Promise<HudGitChange[]> {
+  const result = await runShell("git", ["status", "--porcelain=v1", "--untracked-files=normal"], {
+    cwd: root,
+    timeout: 5000,
+  });
+  if (result.failed) return [];
+  return parseGitStatusPorcelain(result.stdout);
+}
+
+function lineWidth(line: string): number {
+  return sanitizeTerminalText(line).length;
+}
+
+function blockWidth(block: string): number {
+  return Math.max(0, ...block.split("\n").map(lineWidth));
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const clean = sanitizeTerminalText(value).replace(/\s+/g, " ").trim();
+  const chars = [...clean];
+  if (chars.length <= maxLength) return clean;
+  return `${chars.slice(0, Math.max(1, maxLength - 1)).join("")}…`;
+}
+
+function statusRank(statusValue: string): number {
+  switch (statusValue) {
+    case "running": return 0;
+    case "pending": return 1;
+    case "blocked": return 2;
+    case "failed": return 3;
+    case "done": return 4;
+    default: return 5;
+  }
+}
+
+function todoMarker(statusValue: string): string {
+  switch (statusValue) {
+    case "running": return style.purpleBold("▶");
+    case "done": return style.mintBold("✓");
+    case "failed": return style.red("✕");
+    case "blocked": return style.orange("■");
+    default: return style.gray("□");
+  }
+}
+
+function gitMarker(changeStatus: string): string {
+  const normalized = changeStatus.replace(/\s/g, "");
+  if (normalized === "??") return style.blue("?");
+  if (normalized.includes("D")) return style.red("D");
+  if (normalized.includes("A")) return style.mint("A");
+  if (normalized.includes("R")) return style.purple("R");
+  return style.orange("M");
+}
+
+export function buildHudSidebar(
+  state: RunState | null,
+  changes: HudGitChange[],
+  options: { maxTodos?: number; maxFiles?: number } = {}
+): string {
+  const maxTodos = options.maxTodos ?? 9;
+  const maxFiles = options.maxFiles ?? 12;
+  const lines: string[] = ["", `  ${style.pinkBold("TODO")}`];
+
+  const nodes = [...(state?.nodes ?? [])].sort((a, b) => {
+    const rank = statusRank(a.status) - statusRank(b.status);
+    return rank !== 0 ? rank : a.id.localeCompare(b.id);
+  });
+
+  if (nodes.length === 0) {
+    lines.push(`  ${style.gray("□ active run state 없음")}`);
+    lines.push(`  ${style.gray("  omk run 실행 시 DAG TODO 표시")}`);
+  } else {
+    for (const node of nodes.slice(0, maxTodos)) {
+      const role = style.gray(`[${truncateText(node.role, 9)}]`);
+      const name = truncateText(node.name || node.id, 30);
+      lines.push(`  ${todoMarker(node.status)} ${role} ${name}`);
+    }
+    if (nodes.length > maxTodos) {
+      lines.push(`  ${style.gray(`… ${nodes.length - maxTodos} more tasks`)}`);
+    }
+  }
+
+  lines.push("", `  ${style.pinkBold("Changed Files")} ${style.gray(`(${changes.length})`)}`);
+  if (changes.length === 0) {
+    lines.push(`  ${style.mint("✓")} ${style.gray("clean worktree")}`);
+  } else {
+    for (const change of changes.slice(0, maxFiles)) {
+      lines.push(`  ${gitMarker(change.status)} ${truncateText(change.path, 38)}`);
+    }
+    if (changes.length > maxFiles) {
+      lines.push(`  ${style.gray(`… ${changes.length - maxFiles} more files`)}`);
+    }
+  }
+  lines.push("");
+
+  return panel(lines, gradient("TODO / Changed Files"));
+}
+
+export function renderHudColumns(mainPanels: string[], sidebar: string, terminalWidth = process.stdout.columns || 120): string {
+  const left = mainPanels.join("\n\n");
+  const leftLines = left.split("\n");
+  const rightLines = sidebar.split("\n");
+  const leftWidth = blockWidth(left);
+  const rightWidth = blockWidth(sidebar);
+  const gap = 3;
+
+  if (terminalWidth < 100 || leftWidth + gap + rightWidth > terminalWidth) {
+    return `${left}\n\n${sidebar}`;
+  }
+
+  const height = Math.max(leftLines.length, rightLines.length);
+  const output: string[] = [];
+  for (let i = 0; i < height; i += 1) {
+    const leftLine = leftLines[i] ?? "";
+    const rightLine = rightLines[i] ?? "";
+    output.push(`${padEndAnsi(leftLine, leftWidth)}${" ".repeat(gap)}${rightLine}`.trimEnd());
+  }
+  return output.join("\n");
+}
+
 export async function hudCommand(): Promise<void> {
   const root = getProjectRoot();
+  const resources = await getOmkResourceSettings();
+  const mainPanels: string[] = [];
 
   // ── Top banner ───────────────────────────────────────────────
   console.log(sparkleHeader("oh-my-kimichan HUD"));
@@ -61,39 +231,48 @@ export async function hudCommand(): Promise<void> {
     "",
     stat("Load Avg", usage.loadAvg.map((v) => v.toFixed(2)).join(", "), ""),
     stat("Memory", `${usage.memUsedGB} / ${usage.memTotalGB}`, " GB"),
+    stat("OMK Profile", `${resources.profile} (${resources.mcpScope} MCP, ${resources.skillsScope} skills)`, ""),
+    stat("OMK Buffer", formatBytes(resources.shellMaxBufferBytes), ""),
     disk ? stat("Disk", `${(disk.used / 1024 / 1024 / 1024).toFixed(1)} / ${(disk.total / 1024 / 1024 / 1024).toFixed(1)}`, " GB") : "",
     stat("Uptime", formatUptime(Math.floor(uptime())), ""),
     "",
   ].filter(Boolean);
 
-  console.log(panel(sysLines, gradient("System Usage")));
-  console.log();
+  mainPanels.push(panel(sysLines, gradient("System Usage")));
 
   // ── Coding Plan Usage ────────────────────────────────────────
   const kimiUsage = await getKimiUsage();
   const LIMIT_HOURS = 5;
   const limitSeconds = LIMIT_HOURS * 3600;
-  const todayPercent = Math.min(100, Math.round((kimiUsage.totalSecondsToday / limitSeconds) * 100));
-  const weekPercent = Math.min(100, Math.round((kimiUsage.totalSecondsWeek / (limitSeconds * 7)) * 100));
+  const rollingPercent = kimiUsage.quota.fiveHour
+    ? Math.min(100, 100 - kimiUsage.quota.fiveHour.remainingPercent)
+    : Math.min(100, Math.round((kimiUsage.totalSecondsLast5Hours / limitSeconds) * 100));
+  const weekPercent = kimiUsage.quota.weekly
+    ? Math.min(100, 100 - kimiUsage.quota.weekly.remainingPercent)
+    : Math.min(100, Math.round((kimiUsage.totalSecondsWeek / (limitSeconds * 7)) * 100));
 
   const planLines: string[] = [
     "",
-    gauge("Today    ", todayPercent, 100, 20),
+    gauge("5h Window", rollingPercent, 100, 20),
     gauge("This Week", weekPercent, 100, 20),
     "",
+    stat("OAuth Login", `${kimiUsage.oauth.displayId} (${kimiUsage.oauth.tokenStatus})`, ""),
+    stat("5h Usage", kimiUsage.quota.fiveHour ? `${kimiUsage.quota.fiveHour.remainingPercent}% left` : formatDuration(kimiUsage.totalSecondsLast5Hours), ""),
+    stat("5h Sessions", `${kimiUsage.sessionCountLast5Hours}`, ""),
     stat("Today Used", formatDuration(kimiUsage.totalSecondsToday), ""),
     stat("Today Sessions", `${kimiUsage.sessionCountToday}`, ""),
-    stat("Week Used", formatDuration(kimiUsage.totalSecondsWeek), ""),
+    stat("Week Usage", kimiUsage.quota.weekly ? `${kimiUsage.quota.weekly.remainingPercent}% left` : formatDuration(kimiUsage.totalSecondsWeek), ""),
     stat("Week Sessions", `${kimiUsage.sessionCountWeek}`, ""),
+    kimiUsage.quota.error ? stat("Quota Source", `local fallback (${kimiUsage.quota.error})`, "") : "",
     "",
-  ];
+  ].filter(Boolean);
 
-  console.log(panel(planLines, gradient("Coding Plan")));
-  console.log();
+  mainPanels.push(panel(planLines, gradient("Coding Plan")));
 
   // ── Project Status ───────────────────────────────────────────
   const projLines: string[] = [""];
   const gitStatus = await getGitStatus(root);
+  const gitChanges = await getGitChanges(root);
   projLines.push(
     `  ${style.purple("🌿 Git")}      ${gitStatus.clean ? status.ok("clean") : status.warn(`${gitStatus.changes} changes`)}`
   );
@@ -108,12 +287,12 @@ export async function hudCommand(): Promise<void> {
   projLines.push(`  ${style.purple("🎨 DESIGN")}   ${designMdExists ? status.ok("exists") : status.info("optional")}`);
 
   projLines.push("");
-  console.log(panel(projLines, gradient("Project Status")));
-  console.log();
+  mainPanels.push(panel(projLines, gradient("Project Status")));
 
   // ── Latest Run ───────────────────────────────────────────────
   const runsDir = getOmkPath("runs");
   let runLines: string[] = [];
+  let latestState: RunState | null = null;
 
   if (await pathExists(runsDir)) {
     const entries = await readdir(runsDir, { withFileTypes: true });
@@ -125,6 +304,10 @@ export async function hudCommand(): Promise<void> {
 
       const goal = await readFile(join(runDir, "goal.md"), "utf-8").catch(() => "N/A");
       const plan = await readFile(join(runDir, "plan.md"), "utf-8").catch(() => "N/A");
+      const state = await readFile(join(runDir, "state.json"), "utf-8")
+        .then(parseRunState)
+        .catch(() => null);
+      latestState = state;
       const goalLine = goal.replace(/# Goal\n\n?/, "").split("\n")[0].trim();
 
       runLines = [
@@ -134,6 +317,17 @@ export async function hudCommand(): Promise<void> {
         `  ${style.gray("Plan:")}     ${plan !== "N/A" ? style.mint("✔ generated") : style.gray("none")}`,
         "",
       ];
+
+      if (state?.estimate) {
+        runLines.push(
+          `  ${style.pinkBold("ETA:")}      ${style.cream(formatEtaMs(state.estimate.estimatedRemainingMs))} ${style.gray(`(${state.estimate.confidence} confidence)`)}`,
+          `  ${style.gray("Progress:")} ${style.mintBold(`${state.estimate.completedNodes}/${state.estimate.totalNodes}`)} ${style.gray(`${state.estimate.percentComplete}%`)}`,
+          state.estimate.estimatedCompletedAt
+            ? `  ${style.gray("Done by:")}  ${style.cream(new Date(state.estimate.estimatedCompletedAt).toLocaleString())}`
+            : "",
+          "",
+        );
+      }
 
       // Workers
       const worktreesDir = getOmkPath(`worktrees/${latestRun.name}`);
@@ -156,7 +350,8 @@ export async function hudCommand(): Promise<void> {
     runLines = ["", `  ${style.gray("아직 실행 기록이 없습니다.")}`, ""];
   }
 
-  console.log(panel(runLines, gradient("Latest Run")));
+  mainPanels.push(panel(runLines, gradient("Latest Run")));
+  console.log(renderHudColumns(mainPanels, buildHudSidebar(latestState, gitChanges)));
   console.log();
 
   // ── Tips ─────────────────────────────────────────────────────

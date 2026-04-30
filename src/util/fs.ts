@@ -11,9 +11,11 @@ import {
   lstat,
   copyFile,
 } from "fs/promises";
-import { dirname, join, resolve } from "path";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import { homedir } from "os";
 import { execSync } from "child_process";
+import { GLOBAL_MEMORY_CONFIG_TOML, getGlobalMemoryConfigPath } from "../memory/memory-config.js";
+import { getOmkResourceSettings, type OmkRuntimeScope } from "./resource-profile.js";
 
 export async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
@@ -51,6 +53,7 @@ export async function readTextFile(path: string, defaultValue = ""): Promise<str
 }
 
 export function getProjectRoot(): string {
+  if (process.env.OMK_PROJECT_ROOT) return resolve(process.env.OMK_PROJECT_ROOT);
   // Git 저장소 루트를 우선 찾고, 실패 시 cwd 폴백
   try {
     const gitRoot = execSync("git rev-parse --show-toplevel", {
@@ -279,6 +282,12 @@ async function copyDir(src: string, dest: string): Promise<void> {
   }
 }
 
+/** local graph memory policy를 ~/.kimi/omk.memory.toml 에 동기화 */
+export async function syncKimiMemoryGlobal(): Promise<boolean> {
+  await writeFileSafe(getGlobalMemoryConfigPath(), GLOBAL_MEMORY_CONFIG_TOML);
+  return true;
+}
+
 /** hooks + MCP + skills 를 ~/.kimi/ 에 한 번에 동기화 */
 export async function syncAllKimiGlobals(): Promise<void> {
   const configFile = getOmkPath("kimi.config.toml");
@@ -301,17 +310,25 @@ export async function syncAllKimiGlobals(): Promise<void> {
   } catch (err) {
     console.warn("⚠️  skills 글로벌 동기화 실패:", (err as Error).message);
   }
+
+  try {
+    await syncKimiMemoryGlobal();
+  } catch (err) {
+    console.warn("⚠️  local graph memory 글로벌 동기화 실패:", (err as Error).message);
+  }
 }
 
 /** .omk/mcp.json + .kimi/mcp.json + ~/.kimi/mcp.json 모두 수집 */
-export async function collectMcpConfigs(): Promise<string[]> {
+export async function collectMcpConfigs(scope: OmkRuntimeScope = "all"): Promise<string[]> {
   const configs: string[] = [];
+  if (scope === "none") return configs;
+
   const omkMcp = getOmkPath("mcp.json");
   const kimiMcp = join(getProjectRoot(), ".kimi", "mcp.json");
   const globalMcp = join(homedir(), ".kimi", "mcp.json");
   if (await pathExists(omkMcp)) configs.push(omkMcp);
   if (await pathExists(kimiMcp)) configs.push(kimiMcp);
-  if (await pathExists(globalMcp)) configs.push(globalMcp);
+  if (scope === "all" && await pathExists(globalMcp)) configs.push(globalMcp);
   return configs;
 }
 
@@ -332,7 +349,10 @@ export async function getKimiDefaultModel(): Promise<string | null> {
   }
 }
 
-/** .omk/config.toml 에서 logo_image 경로 읽기 (상대경로는 프로젝트 루트 기준) */
+const MAX_LOGO_IMAGE_BYTES = 4 * 1024 * 1024;
+const ALLOWED_LOGO_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+/** .omk/config.toml 에서 안전한 logo_image 경로 읽기 (상대경로는 프로젝트 루트 기준) */
 export async function getOmkLogoImagePath(): Promise<string | null> {
   const configPath = getOmkPath("config.toml");
   try {
@@ -340,30 +360,92 @@ export async function getOmkLogoImagePath(): Promise<string | null> {
     const match = content.match(/^\s*logo_image\s*=\s*["']([^"']+)["']/m);
     if (!match) return null;
     const p = match[1].trim();
-    // 절대 경로 판정 (Unix /, Windows \, C:\)
-    if (p.startsWith("/") || p.startsWith("\\") || /^[A-Za-z]:/.test(p)) {
-      return p;
+    const root = getProjectRoot();
+    const absoluteInput = isAbsolute(p) || p.startsWith("\\") || /^[A-Za-z]:/.test(p);
+    if (absoluteInput && !isTrustedLocalFlag(process.env.OMK_TRUST_ABSOLUTE_LOGO_PATH)) {
+      return null;
     }
-    return join(getProjectRoot(), p);
+    const candidate = absoluteInput ? resolve(p) : resolve(root, p);
+    if (!absoluteInput && isOutsideRoot(root, candidate)) {
+      return null;
+    }
+    return await isSafeLogoImage(candidate) ? candidate : null;
   } catch {
     return null;
   }
 }
 
+function isTrustedLocalFlag(value: string | undefined): boolean {
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function isOutsideRoot(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === ".." || rel.startsWith(`..${"/"}`) || rel.startsWith(`..${"\\"}`) || isAbsolute(rel);
+}
+
+async function isSafeLogoImage(path: string): Promise<boolean> {
+  const ext = extname(path).toLowerCase();
+  if (!ALLOWED_LOGO_EXTENSIONS.has(ext)) return false;
+
+  const info = await lstat(path);
+  if (!info.isFile() || info.isSymbolicLink() || info.size <= 0 || info.size > MAX_LOGO_IMAGE_BYTES) {
+    return false;
+  }
+
+  const bytes = await readFile(path);
+  return hasAllowedImageMagic(bytes);
+}
+
+function hasAllowedImageMagic(bytes: Uint8Array): boolean {
+  return isPng(bytes) || isJpeg(bytes) || isGif(bytes) || isWebp(bytes);
+}
+
+function isPng(bytes: Uint8Array): boolean {
+  return bytes.length >= 8
+    && bytes[0] === 0x89
+    && bytes[1] === 0x50
+    && bytes[2] === 0x4e
+    && bytes[3] === 0x47
+    && bytes[4] === 0x0d
+    && bytes[5] === 0x0a
+    && bytes[6] === 0x1a
+    && bytes[7] === 0x0a;
+}
+
+function isJpeg(bytes: Uint8Array): boolean {
+  return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+}
+
+function isGif(bytes: Uint8Array): boolean {
+  if (bytes.length < 6) return false;
+  const header = String.fromCharCode(...bytes.slice(0, 6));
+  return header === "GIF87a" || header === "GIF89a";
+}
+
+function isWebp(bytes: Uint8Array): boolean {
+  if (bytes.length < 12) return false;
+  const riff = String.fromCharCode(...bytes.slice(0, 4));
+  const webp = String.fromCharCode(...bytes.slice(8, 12));
+  return riff === "RIFF" && webp === "WEBP";
+}
+
 /** Kimi CLI 실행 인자에 model + MCP + Skills 주입 (전역 동기화는 별도) */
 export async function injectKimiGlobals(args: string[]): Promise<void> {
+  const resources = await getOmkResourceSettings();
+
   // default_model이 있으면 주입 (agent-file 사용 시 model이 unset 될 수 있음)
   const defaultModel = await getKimiDefaultModel();
   if (defaultModel) {
     args.push("--model", defaultModel);
   }
 
-  for (const mcp of await collectMcpConfigs()) {
+  for (const mcp of await collectMcpConfigs(resources.mcpScope)) {
     args.push("--mcp-config-file", mcp);
   }
 
   const globalSkillsDir = join(homedir(), ".kimi", "skills");
   const projectSkillsDir = getKimiSkillsDir();
-  if (await pathExists(globalSkillsDir)) args.push("--skills-dir", globalSkillsDir);
-  if (await pathExists(projectSkillsDir)) args.push("--skills-dir", projectSkillsDir);
+  if (resources.skillsScope === "all" && await pathExists(globalSkillsDir)) args.push("--skills-dir", globalSkillsDir);
+  if (resources.skillsScope !== "none" && await pathExists(projectSkillsDir)) args.push("--skills-dir", projectSkillsDir);
 }

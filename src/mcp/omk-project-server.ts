@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import { createInterface } from "readline";
 import { readFile, writeFile, readdir, access } from "fs/promises";
-import { join, resolve, relative, dirname } from "path";
-import { execSync } from "child_process";
+import { join, resolve, relative } from "path";
+import { execFileSync } from "child_process";
+import { MemoryStore } from "../memory/memory-store.js";
+import { canWriteConfig, configWriteDeniedMessage } from "./config-permissions.js";
+import { runQualityGate, type QualityGateResults } from "./quality-gate.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -32,7 +35,7 @@ interface Tool {
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
-const PROJECT_ROOT = process.cwd();
+const PROJECT_ROOT = process.env.OMK_PROJECT_ROOT || process.cwd();
 const OMK_DIR = join(PROJECT_ROOT, ".omk");
 const OMK_MEMORY_DIR = join(OMK_DIR, "memory");
 const OMK_AGENTS_DIR = join(OMK_DIR, "agents", "roles");
@@ -42,6 +45,10 @@ const OMK_CONFIG_PATH = join(OMK_DIR, "config.toml");
 const PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "omk-project";
 const SERVER_VERSION = "0.1.0";
+const MEMORY_STORE = new MemoryStore(OMK_MEMORY_DIR, {
+  projectRoot: PROJECT_ROOT,
+  source: "omk-project-mcp",
+});
 
 // ─── Security helpers ───────────────────────────────────────────────────
 
@@ -69,15 +76,52 @@ async function pathExists(path: string): Promise<boolean> {
 // ─── Tool handlers ──────────────────────────────────────────────────────
 
 async function handleReadMemory(args: { path: string }): Promise<{ content: string }> {
-  const full = safePath(args.path, OMK_MEMORY_DIR);
-  const content = await readFile(full, "utf-8").catch(() => "");
+  safePath(args.path, OMK_MEMORY_DIR);
+  const content = await MEMORY_STORE.read(args.path);
   return { content };
 }
 
 async function handleWriteMemory(args: { path: string; content: string }): Promise<{ success: boolean }> {
-  const full = safePath(args.path, OMK_MEMORY_DIR);
-  await writeFile(full, args.content, "utf-8");
+  safePath(args.path, OMK_MEMORY_DIR);
+  await MEMORY_STORE.write(args.path, args.content);
   return { success: true };
+}
+
+async function handleReadRunMemory(args: { runId: string; path: string }): Promise<{ content: string }> {
+  const content = await MEMORY_STORE.readRunMemory(args.runId, args.path);
+  return { content };
+}
+
+async function handleWriteRunMemory(args: { runId: string; path: string; content: string }): Promise<{ success: boolean }> {
+  await MEMORY_STORE.writeRunMemory(args.runId, args.path, args.content);
+  return { success: true };
+}
+
+async function handleSearchMemory(args: { query?: string; limit?: number }): Promise<{
+  results: Array<{ path: string; content: string; sessionId: string; updatedAt: string; source: string }>;
+}> {
+  const results = await MEMORY_STORE.search(args.query ?? "", args.limit);
+  return { results };
+}
+
+async function handleMemoryStatus(): Promise<unknown> {
+  return MEMORY_STORE.status();
+}
+
+async function handleMemoryOntology(): Promise<unknown> {
+  const ontology = await MEMORY_STORE.ontology();
+  if (!ontology) throw new Error("Memory ontology is available when backend=local_graph");
+  return { ontology };
+}
+
+async function handleMemoryMindmap(args: { query?: string; limit?: number }): Promise<unknown> {
+  const mindmap = await MEMORY_STORE.mindmap(args.query ?? "", args.limit);
+  if (!mindmap) throw new Error("Memory mindmap is available when backend=local_graph");
+  return { mindmap };
+}
+
+async function handleGraphQuery(args: { query: string }): Promise<unknown> {
+  return MEMORY_STORE.graphQuery(args.query);
 }
 
 async function handleReadConfig(): Promise<{ content: string }> {
@@ -86,6 +130,9 @@ async function handleReadConfig(): Promise<{ content: string }> {
 }
 
 async function handleWriteConfig(args: { content: string }): Promise<{ success: boolean }> {
+  if (!canWriteConfig()) {
+    throw new Error(configWriteDeniedMessage());
+  }
   await writeFile(OMK_CONFIG_PATH, args.content, "utf-8");
   return { success: true };
 }
@@ -155,9 +202,8 @@ async function handleGetProjectInfo(): Promise<{
   let gitChanges = 0;
 
   try {
-    const { execSync } = await import("child_process");
-    gitBranch = execSync("git branch --show-current", { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"], timeout: 3000 }).trim();
-    const status = execSync("git status --porcelain", { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"], timeout: 3000 }).trim();
+    gitBranch = execFileSync("git", ["branch", "--show-current"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 }).trim();
+    const status = execFileSync("git", ["status", "--porcelain"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 }).trim();
     const lines = status.split("\n").filter((l) => l.trim().length > 0);
     gitChanges = lines.length;
     gitClean = lines.length === 0;
@@ -190,7 +236,8 @@ async function handleGetQualitySettings(): Promise<{
 
 async function handleGetApprovalPolicy(): Promise<{ policy: string }> {
   const config = await readFile(OMK_CONFIG_PATH, "utf-8").catch(() => "");
-  const policy = config.match(/^approval_policy\s*=\s*"([^"]+)"/m)?.[1] ?? "interactive";
+  const yoloMode = /^\s*yolo_mode\s*=\s*true\b/m.test(config);
+  const policy = config.match(/^approval_policy\s*=\s*"([^"]+)"/m)?.[1] ?? (yoloMode ? "yolo" : "yolo");
   return { policy };
 }
 
@@ -213,63 +260,9 @@ async function handleListWorktrees(): Promise<{ worktrees: string[] }> {
   return { worktrees: result };
 }
 
-async function handleRunQualityGate(): Promise<{
-  lint: { command: string; exitCode: number; stdout: string; stderr: string };
-  typecheck: { command: string; exitCode: number; stdout: string; stderr: string };
-  test: { command: string; exitCode: number; stdout: string; stderr: string };
-  build: { command: string; exitCode: number; stdout: string; stderr: string };
-}> {
+async function handleRunQualityGate(): Promise<QualityGateResults> {
   const config = await readFile(OMK_CONFIG_PATH, "utf-8").catch(() => "");
-
-  function getSetting(key: string): string {
-    // Match both top-level and [quality] section entries
-    const regex = new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, "m");
-    return config.match(regex)?.[1] ?? "auto";
-  }
-
-  function detectPm(): string {
-    try {
-      execSync("test -f pnpm-lock.yaml", { cwd: PROJECT_ROOT, encoding: "utf-8", stdio: "pipe" });
-      return "pnpm";
-    } catch { /* ignore */ }
-    try {
-      execSync("test -f yarn.lock", { cwd: PROJECT_ROOT, encoding: "utf-8", stdio: "pipe" });
-      return "yarn";
-    } catch { /* ignore */ }
-    try {
-      execSync("test -f bun.lockb", { cwd: PROJECT_ROOT, encoding: "utf-8", stdio: "pipe" });
-      return "bun";
-    } catch { /* ignore */ }
-    return "npm";
-  }
-
-  const pm = detectPm();
-
-  function runGate(setting: string, defaultCmd: string): { command: string; exitCode: number; stdout: string; stderr: string } {
-    if (setting === "off") {
-      return { command: "", exitCode: 0, stdout: "", stderr: "skipped (off)" };
-    }
-    const command = setting === "auto" ? `${pm} run ${defaultCmd}` : setting;
-    try {
-      const stdout = execSync(command, { cwd: PROJECT_ROOT, encoding: "utf-8", stdio: "pipe", timeout: 120000 });
-      return { command, exitCode: 0, stdout: stdout ?? "", stderr: "" };
-    } catch (err: unknown) {
-      const e = err as { stdout?: string; stderr?: string; status?: number };
-      return {
-        command,
-        exitCode: e.status ?? 1,
-        stdout: String(e.stdout ?? ""),
-        stderr: String(e.stderr ?? ""),
-      };
-    }
-  }
-
-  const lint = runGate(getSetting("lint"), "lint");
-  const typecheck = runGate(getSetting("typecheck"), "typecheck");
-  const test = runGate(getSetting("test"), "test");
-  const build = runGate(getSetting("build"), "build");
-
-  return { lint, typecheck, test, build };
+  return runQualityGate(PROJECT_ROOT, config);
 }
 
 // ─── Tool registry ──────────────────────────────────────────────────────
@@ -277,13 +270,71 @@ async function handleRunQualityGate(): Promise<{
 const TOOLS: Tool[] = [
   {
     name: "omk_read_memory",
-    description: "Read a file from .omk/memory/",
+    description: "Read project memory. Uses project-local graph memory by default and falls back to .omk/memory/ only when allowed.",
     inputSchema: { type: "object", properties: { path: { type: "string", description: "Relative path under .omk/memory/" } }, required: ["path"] },
   },
   {
     name: "omk_write_memory",
-    description: "Write a file to .omk/memory/",
+    description: "Write project memory. Stores an ontology graph by default and mirrors to .omk/memory/ when enabled.",
     inputSchema: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] },
+  },
+  {
+    name: "omk_read_run_memory",
+    description: "Read run/session memory for a run ID. Uses the selected graph memory backend when configured.",
+    inputSchema: {
+      type: "object",
+      properties: { runId: { type: "string" }, path: { type: "string" } },
+      required: ["runId", "path"],
+    },
+  },
+  {
+    name: "omk_write_run_memory",
+    description: "Write run/session memory for a run ID. Uses the selected graph memory backend when configured.",
+    inputSchema: {
+      type: "object",
+      properties: { runId: { type: "string" }, path: { type: "string" }, content: { type: "string" } },
+      required: ["runId", "path", "content"],
+    },
+  },
+  {
+    name: "omk_search_memory",
+    description: "Search graph-backed project memories by path/content.",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string" }, limit: { type: "number" } },
+    },
+  },
+  {
+    name: "omk_memory_status",
+    description: "Show sanitized memory backend status, local graph state, and optional Neo4j health.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "omk_memory_ontology",
+    description: "Return the project-local ontology used to split memory into mind-map nodes.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "omk_memory_mindmap",
+    description: "Return an ontology-based mind map for project/session memory.",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string" }, limit: { type: "number" } },
+    },
+  },
+  {
+    name: "omk_graph_query",
+    description: "Run GraphQL-lite queries over the project-local graph memory (ontology, memory, memories, mindmap, nodes).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Example: query { mindmap(query: \"decision\", limit: 20) { root nodes edges } }",
+        },
+      },
+      required: ["query"],
+    },
   },
   {
     name: "omk_read_config",
@@ -292,7 +343,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: "omk_write_config",
-    description: "Write .omk/config.toml (overwrite)",
+    description: "Write .omk/config.toml (overwrite). Disabled by default; requires OMK_MCP_ALLOW_WRITE_CONFIG=1 in trusted local sessions.",
     inputSchema: { type: "object", properties: { content: { type: "string" } }, required: ["content"] },
   },
   {
@@ -348,6 +399,20 @@ async function handleToolCall(name: string, args: unknown): Promise<unknown> {
       return handleReadMemory(args as { path: string });
     case "omk_write_memory":
       return handleWriteMemory(args as { path: string; content: string });
+    case "omk_read_run_memory":
+      return handleReadRunMemory(args as { runId: string; path: string });
+    case "omk_write_run_memory":
+      return handleWriteRunMemory(args as { runId: string; path: string; content: string });
+    case "omk_search_memory":
+      return handleSearchMemory(args as { query?: string; limit?: number });
+    case "omk_memory_status":
+      return handleMemoryStatus();
+    case "omk_memory_ontology":
+      return handleMemoryOntology();
+    case "omk_memory_mindmap":
+      return handleMemoryMindmap(args as { query?: string; limit?: number });
+    case "omk_graph_query":
+      return handleGraphQuery(args as { query: string });
     case "omk_read_config":
       return handleReadConfig();
     case "omk_write_config":

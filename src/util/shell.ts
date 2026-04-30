@@ -2,6 +2,8 @@ import { execa, type ExecaError } from "execa";
 import { createWriteStream } from "fs";
 import { mkdir } from "fs/promises";
 import { dirname } from "path";
+import { CappedOutputBuffer } from "./output-buffer.js";
+import { getOmkResourceSettings } from "./resource-profile.js";
 
 export interface ShellResult {
   stdout: string;
@@ -14,6 +16,8 @@ export interface StreamingShellOptions {
   cwd?: string;
   env?: Record<string, string>;
   timeout?: number;
+  maxBuffer?: number;
+  stdio?: "pipe" | "inherit";
   logPath?: string;
   input?: string;
   onStdout?: (line: string) => void;
@@ -31,9 +35,10 @@ function isExecaError(err: unknown): err is ExecaError {
 export async function runShell(
   command: string,
   args: string[] = [],
-  options: { cwd?: string; env?: Record<string, string>; timeout?: number; logPath?: string; input?: string } = {}
+  options: { cwd?: string; env?: Record<string, string>; timeout?: number; maxBuffer?: number; stdio?: "pipe" | "inherit"; logPath?: string; input?: string } = {}
 ): Promise<ShellResult> {
-  const { cwd, env, timeout = 30000, logPath, input } = options;
+  const resources = await getOmkResourceSettings();
+  const { cwd, env, timeout = 30000, maxBuffer = resources.shellMaxBufferBytes, stdio = "pipe", logPath, input } = options;
   let logStream: ReturnType<typeof createWriteStream> | undefined;
 
   try {
@@ -41,15 +46,18 @@ export async function runShell(
       cwd,
       env: env ? { ...process.env, ...env } : process.env,
       timeout,
+      maxBuffer,
+      buffer: stdio !== "inherit",
+      stdio: stdio === "inherit" ? "inherit" : "pipe",
       reject: false,
-      all: true,
       input,
     });
 
     if (logPath) {
       await mkdir(dirname(logPath), { recursive: true });
       logStream = createWriteStream(logPath, { flags: "a" });
-      subprocess.all?.pipe(logStream);
+      subprocess.stdout?.pipe(logStream, { end: false });
+      subprocess.stderr?.pipe(logStream, { end: false });
     }
 
     const result = await subprocess;
@@ -65,7 +73,7 @@ export async function runShell(
     if (isExecaError(err)) {
       return {
         stdout: String(err.stdout ?? ""),
-        stderr: String(err.stderr ?? ""),
+        stderr: String(err.stderr ?? "") || (err instanceof Error ? err.message : String(err)),
         exitCode: err.exitCode ?? 1,
         failed: true,
       };
@@ -85,14 +93,19 @@ export async function runShellStreaming(
   args: string[] = [],
   options: StreamingShellOptions = {}
 ): Promise<ShellResult> {
-  const { cwd, env, timeout = 30000, logPath, input, onStdout, onStderr } = options;
+  const resources = await getOmkResourceSettings();
+  const { cwd, env, timeout = 30000, maxBuffer = resources.shellMaxBufferBytes, stdio = "pipe", logPath, input, onStdout, onStderr } = options;
   let logStream: ReturnType<typeof createWriteStream> | undefined;
+  const stdoutBuffer = new CappedOutputBuffer(maxBuffer, "stdout");
+  const stderrBuffer = new CappedOutputBuffer(maxBuffer, "stderr");
 
   try {
     const subprocess = execa(command, args, {
       cwd,
       env: env ? { ...process.env, ...env } : process.env,
       timeout,
+      buffer: false,
+      stdio: stdio === "inherit" ? "inherit" : "pipe",
       reject: false,
       input,
     });
@@ -104,12 +117,14 @@ export async function runShellStreaming(
 
     subprocess.stdout?.on("data", (chunk: Buffer) => {
       const line = chunk.toString("utf-8");
+      stdoutBuffer.append(line);
       logStream?.write(line);
       onStdout?.(line);
     });
 
     subprocess.stderr?.on("data", (chunk: Buffer) => {
       const line = chunk.toString("utf-8");
+      stderrBuffer.append(line);
       logStream?.write(line);
       onStderr?.(line);
     });
@@ -117,8 +132,8 @@ export async function runShellStreaming(
     const result = await subprocess;
     logStream?.end();
     return {
-      stdout: String(result.stdout ?? ""),
-      stderr: String(result.stderr ?? ""),
+      stdout: stdoutBuffer.toString(),
+      stderr: stderrBuffer.toString(),
       exitCode: result.exitCode ?? 1,
       failed: result.failed ?? result.exitCode !== 0,
     };
@@ -126,8 +141,8 @@ export async function runShellStreaming(
     logStream?.end();
     if (isExecaError(err)) {
       return {
-        stdout: String(err.stdout ?? ""),
-        stderr: String(err.stderr ?? ""),
+        stdout: stdoutBuffer.toString() || String(err.stdout ?? ""),
+        stderr: stderrBuffer.toString() || String(err.stderr ?? "") || (err instanceof Error ? err.message : String(err)),
         exitCode: err.exitCode ?? 1,
         failed: true,
       };

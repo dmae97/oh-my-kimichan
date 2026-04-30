@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./kimichan.png" alt="oh-my-kimichan" width="400" />
+<img src="./kimichan.png" alt="oh-my-kimichan" width="720" />
 
 <h1>oh-my-kimichan</h1>
 
@@ -10,8 +10,13 @@
 </p>
 
 <p>
+  <a href="https://github.com/dmae97/oh-my-kimichan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dmae97/oh-my-kimichan/ci.yml?branch=main&amp;style=for-the-badge&amp;logo=githubactions&amp;label=CI" alt="GitHub CI" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimichan/releases"><img src="https://img.shields.io/github/package-json/v/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github&amp;label=GitHub%20version" alt="GitHub package version" /></a>
   <a href="https://www.npmjs.com/package/oh-my-kimichan"><img src="https://img.shields.io/npm/v/oh-my-kimichan?style=for-the-badge&amp;color=cb3837&amp;logo=npm" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/oh-my-kimichan"><img src="https://img.shields.io/npm/dm/oh-my-kimichan?style=for-the-badge&amp;color=brightgreen&amp;logo=npm" alt="npm downloads" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimichan/stargazers"><img src="https://img.shields.io/github/stars/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github&amp;color=yellow" alt="GitHub stars" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimichan/network/members"><img src="https://img.shields.io/github/forks/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github" alt="GitHub forks" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimichan/issues"><img src="https://img.shields.io/github/issues/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github" alt="GitHub issues" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/oh-my-kimichan?style=for-the-badge&amp;color=blue" alt="license" /></a>
 </p>
 
@@ -36,11 +41,69 @@
 
 ## Table of Contents
 
+- [GitHub Release Snapshot](#github-release-snapshot)
+- [Repository Topics](#repository-topics)
 - [Korean](#korean)
 - [English](#english)
 - [Chinese](#chinese)
 - [Japanese](#japanese)
+- [Customization](#customization)
 - [Acknowledgements](#acknowledgements)
+
+---
+
+## GitHub Release Snapshot
+
+> **Current GitHub-ready version:** `0.2.2` — documented for the active open-source README branch.
+
+| Area | GitHub-visible update | Why it matters |
+|------|-----------------------|----------------|
+| 16GB-friendly runtime | `runtime.resource_profile = "auto"` selects a lite profile on memory-constrained machines | Keeps OMK usable on 16GB laptops and WSL environments |
+| DAG execution | Graphlib-inspired internal task graph validates missing deps, duplicate ids, cycles, and stable topological order | Faster, safer long-running agent orchestration without adding dependency weight |
+| Role-aware ensemble | Coder/planner/architect/reviewer/QA/explorer nodes can run weighted candidate perspectives with quorum aggregation | Improves agent-call quality while keeping `max_parallel = 1` by default |
+| Local graph memory | Project memory defaults to `.omk/memory/graph-state.json` with ontology mindmap and GraphQL-lite recall | Local-first memory works without external Neo4j setup |
+| Built-in LSP | `omk lsp typescript` exposes the bundled TypeScript language server | Helps coding agents and editors share the same language intelligence |
+| Quality gates | `npm run check`, `npm test`, `npm run lint`, `npm run build` are wired into CI and release checks | GitHub contributors can verify changes before PRs |
+
+### GitHub Markdown checklist
+
+- [x] GitHub Actions / package version / npm / stars / forks / issues badges are visible at the top.
+- [x] Mermaid architecture diagrams render in GitHub-flavored Markdown.
+- [x] Repository topic badges below match the recommended GitHub topics.
+- [x] README logo PNG display width increased to `720px` for a stronger GitHub landing page.
+
+## Repository Topics
+
+These topics are also mirrored in `package.json` keywords for npm/GitHub discoverability.
+
+<p>
+  <img src="https://img.shields.io/badge/kimi-111827?style=flat-square" alt="kimi" />
+  <img src="https://img.shields.io/badge/kimi--cli-111827?style=flat-square" alt="kimi-cli" />
+  <img src="https://img.shields.io/badge/kimi--code-111827?style=flat-square" alt="kimi-code" />
+  <img src="https://img.shields.io/badge/kimi--k2-111827?style=flat-square" alt="kimi-k2" />
+  <img src="https://img.shields.io/badge/ai--agent-2563EB?style=flat-square" alt="ai-agent" />
+  <img src="https://img.shields.io/badge/coding--agent-2563EB?style=flat-square" alt="coding-agent" />
+  <img src="https://img.shields.io/badge/multi--agent-2563EB?style=flat-square" alt="multi-agent" />
+  <img src="https://img.shields.io/badge/agentic--coding-2563EB?style=flat-square" alt="agentic-coding" />
+  <img src="https://img.shields.io/badge/orchestration-7C3AED?style=flat-square" alt="orchestration" />
+  <img src="https://img.shields.io/badge/dag-7C3AED?style=flat-square" alt="dag" />
+  <img src="https://img.shields.io/badge/task--graph-7C3AED?style=flat-square" alt="task-graph" />
+  <img src="https://img.shields.io/badge/ensemble-7C3AED?style=flat-square" alt="ensemble" />
+  <img src="https://img.shields.io/badge/mcp-059669?style=flat-square" alt="mcp" />
+  <img src="https://img.shields.io/badge/model--context--protocol-059669?style=flat-square" alt="model-context-protocol" />
+  <img src="https://img.shields.io/badge/lsp-059669?style=flat-square" alt="lsp" />
+  <img src="https://img.shields.io/badge/typescript-3178C6?style=flat-square&amp;logo=typescript&amp;logoColor=white" alt="typescript" />
+  <img src="https://img.shields.io/badge/nodejs-339933?style=flat-square&amp;logo=node.js&amp;logoColor=white" alt="nodejs" />
+  <img src="https://img.shields.io/badge/cli-4B5563?style=flat-square" alt="cli" />
+  <img src="https://img.shields.io/badge/developer--tools-4B5563?style=flat-square" alt="developer-tools" />
+  <img src="https://img.shields.io/badge/worktree-4B5563?style=flat-square" alt="worktree" />
+</p>
+
+Recommended GitHub topics:
+
+```txt
+kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic-coding, orchestration, dag, task-graph, ensemble, mcp, model-context-protocol, lsp, typescript, nodejs, cli, developer-tools, worktree
+```
 
 ---
 
@@ -53,13 +116,18 @@
 | Feature | Description |
 |---------|-------------|
 | Kimi K2.6 Optimized | Kimi K2.6에 특화된 워크플로우와 컨텍스트 관리 |
+| Okabe + D-Mail | Kimi Code의 Okabe 스마트 컨텍스트 관리와 `SendDMail` 체크포인트 기본 활용 |
 | Worktree-based Parallel Team | Git worktree로 에이전트별 격리된 작업 공간 제공 |
 | DESIGN.md Integration | Google DESIGN.md 표준 기반 UI 생성 |
 | Multi-Agent Compatible | AGENTS.md / GEMINI.md / CLAUDE.md 동시 지원 |
 | Quality Gates | 완료 전 자동 lint, typecheck, test, build 검증 |
+| Built-in LSP | `omk lsp typescript`로 번들 TypeScript language server 실행 |
 | Live HUD | 작업자 상태, 테스트 결과, 리스크, 병합 현황 실시간 모니터링 |
 | MCP Integration | 다양한 MCP 서버와의 원활한 연동 |
-| Safety Hooks | 파괴적 명령어 및 비밀 유출 방지 기본 제공 |
+| Local Graph Memory | 프로젝트/세션별 기억을 `.omk/memory/graph-state.json` 온톨로지 그래프로 저장하고 mindmap/GraphQL-lite 제공 |
+| OAuth Usage Badge | Kimi `context:` 상태줄 옆에 `/login` 계정, 5h quota, weekly quota 표시 |
+| YOLO-by-default | 오픈소스 기본값은 `approval_policy = "yolo"`; secret/destructive hooks는 계속 차단 |
+| Safety Hooks | yolo mode에서도 파괴적 명령어 및 비밀 유출 방지 기본 제공 |
 
 ### Install
 
@@ -76,6 +144,17 @@ omk init
 omk doctor
 omk chat
 ```
+
+### Kimi-native context
+
+oh-my-kimichan agents use an Okabe-compatible base agent that inherits `default` and adds `SendDMail`, so D-Mail is available for checkpoint rollback and context recovery. Use it before risky refactors, long-running handoffs, or `/compact`; durable facts still go to project-local ontology graph memory.
+
+### Project-local graph memory
+
+OMK stores project/session memory in `.omk/memory/graph-state.json` by default, decomposes notes into ontology nodes (`Goal`, `Decision`, `Task`, `Risk`, `Command`, `File`, `Evidence`, `Concept`), and exposes `omk_memory_mindmap` plus `omk_graph_query` for GraphQL-lite access. External Neo4j remains optional.
+
+The interactive wrapper also augments Kimi’s native `context:` status line with a masked OAuth account plus 5-hour and weekly usage/quota. See `docs/kimi-oauth-usage-status.md`.
+
 
 ### Preview
 
@@ -107,6 +186,7 @@ Team Runtime starting...
 | `omk chat` | Interactive Kimi with agent/config/MCP auto-detection |
 | `omk plan <goal>` | Plan-only mode |
 | `omk run <flow> <goal>` | Flow-based task execution |
+| `omk lsp [server]` | Built-in LSP launcher; default server is TypeScript |
 | `omk design init` | Create DESIGN.md with frontmatter |
 | `omk design list` | List local/remote DESIGN.md files |
 | `omk design apply <name>` | Convert DESIGN.md into code |
@@ -146,10 +226,21 @@ graph TD
 
 기본 훅은 파괴적 명령과 비밀 유출을 차단합니다:
 
+- `.omk/config.toml`의 기본 approval policy는 오픈소스 자동화를 위해 `yolo`입니다.
 - `pre-shell-guard.sh` — `rm -rf /`, `sudo`, `git push --force` 등 차단
 - `protect-secrets.sh` — `.env` 편집 및 비밀 유출 차단
 - `post-format.sh` — 수정된 파일 자동 포맷
 - `stop-verify.sh` — 종료 시 최종 검증
+
+### 🔌 내장 LSP
+
+```bash
+omk lsp --print-config
+omk lsp --check
+omk lsp typescript
+```
+
+`omk init`은 `.omk/lsp.json`을 생성하고, TypeScript/JavaScript 프로젝트에서 사용할 수 있는 번들 `typescript-language-server` 실행 경로를 제공합니다.
 
 ### 📄 라이선스
 
@@ -166,12 +257,14 @@ graph TD
 | Feature | Description |
 |---------|-------------|
 | Kimi K2.6 Optimized | Workflows and context management tailored for Kimi K2.6 |
+| Okabe + D-Mail | Uses Kimi Code Okabe smart context management and `SendDMail` checkpoint recovery by default |
 | Worktree-based Parallel Team | Git worktree provides isolated workspaces per agent |
 | DESIGN.md Integration | UI generation based on Google DESIGN.md standard |
 | Multi-Agent Compatible | Simultaneous support for AGENTS.md / GEMINI.md / CLAUDE.md |
 | Quality Gates | Automated lint, typecheck, test, build verification before completion |
 | Live HUD | Real-time monitoring of worker status, test results, risk, and merge state |
 | MCP Integration | Seamless connection with various MCP servers |
+| Local Graph Memory | Stores project/session memory in `.omk/memory/graph-state.json` as an ontology graph with mindmap/GraphQL-lite tools |
 | Safety Hooks | Default protection against destructive commands and secret leakage |
 
 ### Install
@@ -279,12 +372,14 @@ Default hooks block destructive commands and secret leakage:
 | Feature | Description |
 |---------|-------------|
 | Kimi K2.6 优化 | 专为 Kimi K2.6 定制的工作流与上下文管理 |
+| Okabe + D-Mail | 默认使用 Kimi Code Okabe 智能上下文管理和 `SendDMail` 检查点恢复 |
 | 基于 Worktree 的并行团队 | Git worktree 为每个 Agent 提供隔离工作空间 |
 | DESIGN.md 集成 | 基于 Google DESIGN.md 标准的 UI 生成 |
 | 多 Agent 兼容 | 同时支持 AGENTS.md / GEMINI.md / CLAUDE.md |
 | 质量门禁 | 完成前自动执行 lint、typecheck、test、build 验证 |
 | 实时 HUD | 实时监控工作者状态、测试结果、风险与合并状态 |
 | MCP 集成 | 与多种 MCP 服务器无缝连接 |
+| Local Graph Memory | 将项目/会话记忆存入 `.omk/memory/graph-state.json` 本地本体图，并提供 mindmap/GraphQL-lite |
 | 安全钩子 | 默认防止破坏性命令与密钥泄漏 |
 
 ### Install
@@ -392,12 +487,14 @@ graph TD
 | Feature | Description |
 |---------|-------------|
 | Kimi K2.6 対応 | Kimi K2.6 に特化したワークフローとコンテキスト管理 |
+| Okabe + D-Mail | Kimi Code Okabe のスマートコンテキスト管理と `SendDMail` チェックポイント復旧を標準利用 |
 | Worktree ベース並列チーム | Git worktree でエージェントごとに分離された作業空間を提供 |
 | DESIGN.md 連携 | Google DESIGN.md 標準に基づく UI 生成 |
 | マルチエージェント互換 | AGENTS.md / GEMINI.md / CLAUDE.md を同時サポート |
 | 品質ゲート | 完了前に自動 lint、typecheck、test、build を検証 |
 | ライブ HUD | ワーカー状態、テスト結果、リスク、マージ状況をリアルタイム監視 |
 | MCP 統合 | 様々な MCP サーバーとのシームレスな連携 |
+| Local Graph Memory | プロジェクト/セッション記憶を `.omk/memory/graph-state.json` のローカル ontology graph に保存し、mindmap/GraphQL-lite を提供 |
 | 安全フック | 破壊的コマンドとシークレット漏洩をデフォルトで防止 |
 
 ### Install
@@ -531,4 +628,3 @@ This project is built on top of amazing open-source work:
 <div align="center">
   <sub>Built with love for the Kimi ecosystem</sub>
 </div>
-

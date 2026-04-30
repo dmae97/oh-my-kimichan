@@ -1,10 +1,11 @@
-import { getOmkPath, pathExists, injectKimiGlobals } from "../util/fs.js";
+import { getOmkPath, getProjectRoot, pathExists, injectKimiGlobals } from "../util/fs.js";
 import { style, header, status } from "../util/theme.js";
 import { readFile } from "fs/promises";
 import { dirname, join, isAbsolute } from "path";
 import YAML from "yaml";
 import { initCommand } from "./init.js";
 import { runKimiInteractive } from "../util/kimi-runner.js";
+import { createOmkSessionEnv, createOmkSessionId } from "../util/session.js";
 
 async function verifyAgentPrompt(agentFile: string): Promise<boolean> {
   if (!(await pathExists(agentFile))) return false;
@@ -23,7 +24,9 @@ async function verifyAgentPrompt(agentFile: string): Promise<boolean> {
 }
 
 export async function chatCommand(options: { agentFile?: string }): Promise<void> {
+  const root = getProjectRoot();
   const agentFile = options.agentFile ?? getOmkPath("agents/root.yaml");
+  const sessionId = createOmkSessionId("chat");
 
   const promptOk = await verifyAgentPrompt(agentFile);
   if (!promptOk) {
@@ -47,5 +50,8 @@ export async function chatCommand(options: { agentFile?: string }): Promise<void
   // ── node-pty 로 Kimi CLI 실행 (배너를 가로채 커스텀 배너로 교체) ──
   console.log(style.purple("🌸 oh-my-kimichan is wrapping Kimi CLI..."));
 
-  await runKimiInteractive(args);
+  await runKimiInteractive(args, {
+    cwd: root,
+    env: createOmkSessionEnv(root, sessionId),
+  });
 }

@@ -12,11 +12,13 @@ Apply these rules silently.
 3. Use subagents for non-trivial tasks.
 4. Use relevant skills before implementation.
 5. Use MCP tools when configured and useful.
-6. Prefer plan-first execution.
-7. Prefer small diffs.
-8. Verify before completion.
-9. Report exact changed files and commands.
-10. Never overclaim test results.
+6. Treat project-local graph memory as the default project/session source of truth; use memory tools when available and never store secrets.
+7. Prefer Kimi Okabe + SendDMail checkpoints for risky context transitions and rollback recovery.
+8. Prefer plan-first execution.
+9. Prefer small diffs.
+10. Verify before completion.
+11. Report exact changed files and commands.
+12. Never overclaim test results.
 
 ## Final Response
 

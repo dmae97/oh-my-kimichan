@@ -2,6 +2,8 @@ import { spawn, type ChildProcess } from "child_process";
 import { createInterface } from "readline";
 import type { TaskResult, TaskRunner } from "../contracts/orchestration.js";
 import type { DagNode } from "../orchestration/dag.js";
+import { CappedOutputBuffer } from "../util/output-buffer.js";
+import { getOmkResourceSettings } from "../util/resource-profile.js";
 
 export interface JsonRpcRequest<TParams = unknown> {
   jsonrpc: "2.0";
@@ -137,6 +139,8 @@ export class KimiWireClient {
 
     this.proc.on("exit", (code) => {
       this.emit({ type: "error", message: `Kimi process exited with code ${code}` });
+      this.rl?.close();
+      this.rl = undefined;
       // 프로세스 종료 시 pending Promise 전부 reject — 메모리 누수/데드락 방지
       for (const [id, p] of this.pending) {
         clearTimeout(p.timer);
@@ -286,36 +290,37 @@ export class KimiWireClient {
 export function createKimiTaskRunner(client: KimiWireClient): TaskRunner {
   return {
     async run(node: DagNode, env: Record<string, string>): Promise<TaskResult> {
+      const resources = await getOmkResourceSettings();
       const prompt = `[${node.role}] ${node.name}`;
-      const stdoutLines: string[] = [];
-      const stderrLines: string[] = [];
+      const stdout = new CappedOutputBuffer(resources.wireOutputBytes, "wire stdout");
+      const stderr = new CappedOutputBuffer(resources.wireOutputBytes, "wire stderr");
 
       const offEvent = client.onEvent((event) => {
         if (event.type === "message") {
-          stdoutLines.push(event.content);
+          stdout.append(`${event.content}\n`);
         } else if (event.type === "error") {
-          stderrLines.push(event.message);
+          stderr.append(`${event.message}\n`);
         } else if (event.type === "tool_result") {
-          stdoutLines.push(JSON.stringify(event.output));
+          stdout.append(`${JSON.stringify(event.output)}\n`);
         }
       });
 
       try {
-        const childEnv = { ...process.env, ...env };
         // Restart client with merged env if needed, or just use existing client
         // For simplicity, we use the existing client and assume env is passed via prompt context
         const result = await client.prompt(prompt);
         const success = result.status === "finished";
         return {
           success,
-          stdout: stdoutLines.join("\n"),
-          stderr: stderrLines.join("\n"),
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
         };
       } catch (err) {
+        stderr.append(`\n${String(err)}`);
         return {
           success: false,
-          stdout: stdoutLines.join("\n"),
-          stderr: stderrLines.join("\n") + "\n" + String(err),
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
         };
       } finally {
         offEvent();
