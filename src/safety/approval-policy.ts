@@ -1,11 +1,6 @@
-export type ApprovalPolicy = "interactive" | "auto" | "yolo" | "block";
+import type { ApprovalContext, ApprovalDecision, PolicyEngine } from "../contracts/safety.js";
 
-export interface ApprovalContext {
-  tool: string;
-  input: unknown;
-  workerId?: string;
-  runId?: string;
-}
+export type ApprovalPolicy = "interactive" | "auto" | "yolo" | "block";
 
 const SAFE_TOOLS = [
   "ReadFile", "Glob", "Grep", "SearchWeb", "FetchURL",
@@ -18,7 +13,7 @@ const DESTRUCTIVE_TOOLS = ["Shell", "WriteFile", "StrReplaceFile", "applyDiff"];
 export function decideApproval(
   policy: ApprovalPolicy,
   ctx: ApprovalContext
-): "allow" | "block" | "ask" {
+): ApprovalDecision {
   if (policy === "yolo") return "allow";
   if (policy === "block") return "block";
   if (policy === "auto") {
@@ -30,4 +25,12 @@ export function decideApproval(
   if (DESTRUCTIVE_TOOLS.includes(ctx.tool)) return "ask";
   if (SAFE_TOOLS.includes(ctx.tool)) return "allow";
   return "ask";
+}
+
+export function createPolicyEngine(policy: ApprovalPolicy): PolicyEngine {
+  return {
+    async decide(ctx: ApprovalContext): Promise<ApprovalDecision> {
+      return decideApproval(policy, ctx);
+    },
+  };
 }

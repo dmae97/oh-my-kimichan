@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from "child_process";
 import { createInterface } from "readline";
+import type { TaskResult, TaskRunner } from "../contracts/orchestration.js";
+import type { DagNode } from "../orchestration/dag.js";
 
 export interface JsonRpcRequest<TParams = unknown> {
   jsonrpc: "2.0";
@@ -279,4 +281,45 @@ export class KimiWireClient {
       this.proc = undefined;
     }
   }
+}
+
+export function createKimiTaskRunner(client: KimiWireClient): TaskRunner {
+  return {
+    async run(node: DagNode, env: Record<string, string>): Promise<TaskResult> {
+      const prompt = `[${node.role}] ${node.name}`;
+      const stdoutLines: string[] = [];
+      const stderrLines: string[] = [];
+
+      const offEvent = client.onEvent((event) => {
+        if (event.type === "message") {
+          stdoutLines.push(event.content);
+        } else if (event.type === "error") {
+          stderrLines.push(event.message);
+        } else if (event.type === "tool_result") {
+          stdoutLines.push(JSON.stringify(event.output));
+        }
+      });
+
+      try {
+        const childEnv = { ...process.env, ...env };
+        // Restart client with merged env if needed, or just use existing client
+        // For simplicity, we use the existing client and assume env is passed via prompt context
+        const result = await client.prompt(prompt);
+        const success = result.status === "finished";
+        return {
+          success,
+          stdout: stdoutLines.join("\n"),
+          stderr: stderrLines.join("\n"),
+        };
+      } catch (err) {
+        return {
+          success: false,
+          stdout: stdoutLines.join("\n"),
+          stderr: stderrLines.join("\n") + "\n" + String(err),
+        };
+      } finally {
+        offEvent();
+      }
+    },
+  };
 }
