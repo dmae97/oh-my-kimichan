@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./kimichan.png" alt="oh-my-kimichan" width="240" />
+  <img src="./kimichan.png" alt="oh-my-kimichan" width="400" />
   <h1>oh-my-kimichan</h1>
   <p><strong>Kimi is the agent. oh-my-kimichan is the team runtime.</strong></p>
 
