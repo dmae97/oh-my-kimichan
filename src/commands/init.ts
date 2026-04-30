@@ -506,14 +506,27 @@ export async function initCommand(options: { profile: string }): Promise<void> {
     await writeFile(kimiAgentsMdPath, kimiAgentsMdContent);
   }
 
-  // 3. Write agents (병렬)
-  const agentWrites = [
-    writeFile(join(root, ".omk/agents/root.yaml"), ROOT_AGENT_YAML),
-    ...Object.entries(ROLE_YAMLS).map(([name, content]) =>
+  // 3. Write / migrate agents (병렬)
+  const rootYamlPath = join(root, ".omk/agents/root.yaml");
+  if (await pathExists(rootYamlPath)) {
+    // 기존 root.yaml 마이그레이션: 상대 경로 버그 수정
+    const existing = await readFile(rootYamlPath, "utf8");
+    if (existing.includes("system_prompt_path: ./prompts/root.md")) {
+      const migrated = existing.replace(
+        /system_prompt_path:\s*\.\/prompts\/root\.md/,
+        "system_prompt_path: ../prompts/root.md"
+      );
+      await writeFile(rootYamlPath, migrated);
+      console.log(status.ok("기존 root.yaml 마이그레이션 완료 (prompts 경로 수정)"));
+    }
+  } else {
+    await writeFile(rootYamlPath, ROOT_AGENT_YAML);
+  }
+  await Promise.all(
+    Object.entries(ROLE_YAMLS).map(([name, content]) =>
       writeFile(join(root, ".omk/agents/roles", `${name}.yaml`), content)
-    ),
-  ];
-  await Promise.all(agentWrites);
+    )
+  );
 
   // 4. Write prompts
   await writeFile(join(root, ".omk/prompts/root.md"), ROOT_PROMPT_MD);

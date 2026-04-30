@@ -1,6 +1,9 @@
 import { execa } from "execa";
 import { getOmkPath, pathExists, injectKimiGlobals } from "../util/fs.js";
 import { style, header } from "../util/theme.js";
+import { readFile } from "fs/promises";
+import { dirname, join, isAbsolute } from "path";
+import YAML from "yaml";
 
 export async function chatCommand(options: { agentFile?: string }): Promise<void> {
   const agentFile = options.agentFile ?? getOmkPath("agents/root.yaml");
@@ -8,6 +11,31 @@ export async function chatCommand(options: { agentFile?: string }): Promise<void
   if (!(await pathExists(agentFile))) {
     console.error(style.red("✖ root agent YAML이 없습니다. omk init을 먼저 실행하세요."));
     process.exit(1);
+  }
+
+  // root.yaml 의 system_prompt_path 가 가리키는 파일이 존재하는지 사전 검증
+  try {
+    const raw = await readFile(agentFile, "utf8");
+    const parsed = YAML.parse(raw);
+    const promptPath = parsed?.agent?.system_prompt_path as string | undefined;
+    if (promptPath) {
+      const resolved = isAbsolute(promptPath)
+        ? promptPath
+        : join(dirname(agentFile), promptPath);
+      if (!(await pathExists(resolved))) {
+        console.error(
+          style.red(
+            `✖ system_prompt_path 가 가리키는 파일을 찾을 수 없습니다: ${resolved}`
+          )
+        );
+        console.error(
+          style.gray("  힌트: omk init을 다시 실행하여 경로를 마이그레이션하세요.")
+        );
+        process.exit(1);
+      }
+    }
+  } catch {
+    // YAML 파싱 실패 시 무시 (kimi CLI 가 직접 에러를 보여줌)
   }
 
   console.log(header("Kimi root coordinator"));
