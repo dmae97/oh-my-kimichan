@@ -1,6 +1,6 @@
-import { mkdir, writeFile, symlink, access, constants } from "fs/promises";
-import { join, relative } from "path";
-import { getProjectRoot } from "../util/fs.js";
+import { mkdir, writeFile, symlink, access, constants, copyFile, readdir } from "fs/promises";
+import { join, relative, dirname } from "path";
+import { getProjectRoot, pathExists } from "../util/fs.js";
 import { isGitRepo } from "../util/git.js";
 import { runShell } from "../util/shell.js";
 
@@ -179,153 +179,20 @@ const ROOT_PROMPT_MD = `# OMK Root Coordinator System Prompt
 - {{OMK_MEMORY_PATH}}
 `;
 
-const SKILL_TEMPLATES: Record<string, string> = {
-  "code-review": `---
-name: code-review
-description: 코드 리뷰 수행
-type: skill
----
-
-# 코드 리뷰 스킬
-
-## 목표
-제공된 diff나 파일에 대해 체계적인 코드 리뷰를 수행합니다.
-
-## 체크리스트
-- [ ] 보안 취약점 (SQL Injection, XSS, secret 노출)
-- [ ] 에러 핸들링
-- [ ] 타입 안전성
-- [ ] 성능 문제
-- [ ] 테스트 커버리지
-- [ ] 네이밍/가독성
-
-## 출력 형식
-\`\`\`json
-{
-  "summary": "...",
-  "issues": [
-    { "severity": "critical|warning|info", "line": 0, "message": "..." }
-  ],
-  "approved": false
+async function copyTemplateDir(src: string, dest: string): Promise<void> {
+  const entries = await readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = join(src, entry.name);
+    const destPath = join(dest, entry.name);
+    if (entry.isDirectory()) {
+      await mkdir(destPath, { recursive: true });
+      await copyTemplateDir(srcPath, destPath);
+    } else {
+      await mkdir(dirname(destPath), { recursive: true });
+      await copyFile(srcPath, destPath);
+    }
+  }
 }
-\`\`\`
-`,
-  release: `---
-name: release
-description: 릴리스 워크플로우
-type: skill
----
-
-# 릴리스 스킬
-
-1. 버전 범프 (package.json, Cargo.toml 등)
-2. CHANGELOG.md 업데이트
-3. git tag 생성
-4. 빌드/테스트 통과 확인
-5. 배포 명령 실행
-`,
-  "ui-review": `---
-name: ui-review
-description: UI/스크린샷 리뷰
-type: skill
----
-
-# UI 리뷰 스킬
-
-스크린샷이나 비디오를 분석하여:
-- 레이아웃 문제
-- 접근성(a11y) 위반
-- 반응형 깨짐
-- 시각적 일관성
-을 보고합니다.
-`,
-  "perf-audit": `---
-name: perf-audit
-description: 성능 감사
-type: skill
----
-
-# 성능 감사 스킬
-
-- 번들 사이즈 분석
-- 불필요한 리렌더링 탐지
-- 쿼리 N+1 탐지
-- 메모리 누수 의심 지점
-`,
-  "industrial-control-loop": `---
-name: industrial-control-loop
-description: 제어 루프 및 산업 자동화 코드 분석
-type: skill
----
-
-# 산업 제어 루프 스킬
-
-- PLC/ladder logic 검토
-- PID 파라미터 타당성
-- 안전 인터락(interlock) 확인
-- 고장 모드 분석
-- 피드백 루프 안정성
-`,
-};
-
-const FLOW_TEMPLATES: Record<string, string> = {
-  "feature-dev": `---
-name: feature-dev
-description: Full feature development workflow
-type: flow
----
-
-\`\`\`mermaid
-flowchart TD
-  BEGIN --> interview[Clarify user goal and constraints]
-  interview --> explore[Explore repository and summarize architecture]
-  explore --> plan[Write implementation plan]
-  plan --> gate{Is plan specific and testable?}
-  gate -->|No| plan
-  gate -->|Yes| implement[Implement in isolated worktree or assigned scope]
-  implement --> test[Run lint/typecheck/test/build]
-  test --> review{Any critical issue?}
-  review -->|Yes| implement
-  review -->|No| END
-\`\`\`
-`,
-  refactor: `---
-name: refactor
-description: 안전한 리팩터링 워크플로우
-type: flow
----
-
-1. 현재 동작을 보존하는 테스트 작성
-2. 리팩터링 수행
-3. 테스트 통과 확인
-4. diff 리뷰
-5. 병합
-`,
-  bugfix: `---
-name: bugfix
-description: 버그 수정 워크플로우
-type: flow
----
-
-1. 버그 재현 테스트 작성
-2. 루트 코즈 분석
-3. 최소 수정
-4. 회귀 테스트
-5. 리뷰 및 병합
-`,
-  "pr-review": `---
-name: pr-review
-description: Pull Request 리뷰 워크플로우
-type: flow
----
-
-1. PR 설명 및 컨텍스트 파악
-2. diff 분석
-3. 코드 리뷰 스킬 실행
-4. CI 결과 확인
-5. 승인/변경 요청
-`,
-};
 
 const HOOK_SCRIPTS: Record<string, string> = {
   "pre-shell-guard.sh": `#!/usr/bin/env bash
@@ -494,8 +361,7 @@ export async function initCommand(options: { profile: string }): Promise<void> {
     ".omk/agents/roles",
     ".omk/prompts/role-addons",
     ".omk/hooks",
-    ".omk/skills",
-    ".omk/flows",
+    // skills and flows are now installed under .kimi/skills and .agents/skills
     ".omk/worktrees",
     ".omk/logs",
     ".kimi/skills",
@@ -518,18 +384,18 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   // 4. Write prompts
   await writeFile(join(root, ".omk/prompts/root.md"), ROOT_PROMPT_MD);
 
-  // 5. Write skills
-  for (const [name, content] of Object.entries(SKILL_TEMPLATES)) {
-    const skillDir = join(root, ".omk/skills", name);
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(join(skillDir, "SKILL.md"), content);
+  // 5. Copy Kimi-specific skills to .kimi/skills
+  const kimiSkillsSrc = join(root, "templates/skills/kimi");
+  const kimiSkillsDest = join(root, ".kimi/skills");
+  if (await pathExists(kimiSkillsSrc)) {
+    await copyTemplateDir(kimiSkillsSrc, kimiSkillsDest);
   }
 
-  // 6. Write flows
-  for (const [name, content] of Object.entries(FLOW_TEMPLATES)) {
-    const flowDir = join(root, ".omk/flows", name);
-    await mkdir(flowDir, { recursive: true });
-    await writeFile(join(flowDir, "SKILL.md"), content);
+  // 6. Copy portable skills to .agents/skills
+  const agentsSkillsSrc = join(root, "templates/skills/agents");
+  const agentsSkillsDest = join(root, ".agents/skills");
+  if (await pathExists(agentsSkillsSrc)) {
+    await copyTemplateDir(agentsSkillsSrc, agentsSkillsDest);
   }
 
   // 7. Write hooks
@@ -547,18 +413,6 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   // 9. Write memory files
   for (const [name, content] of Object.entries(MEMORY_FILES)) {
     await writeFile(join(root, ".omk/memory", name), content);
-  }
-
-  // 10. Symlinks .kimi/skills -> .omk/skills
-  try {
-    const fromKimiSkills = join(root, ".kimi/skills");
-    const toOmkSkills = relative(join(root, ".kimi"), join(root, ".omk/skills"));
-    await access(fromKimiSkills, constants.F_OK);
-    // if exists and empty, remove it to allow symlink
-    await runShell("rm", ["-rf", fromKimiSkills], { timeout: 5000 });
-    await symlink(toOmkSkills, fromKimiSkills, "dir");
-  } catch {
-    // ignore symlink errors
   }
 
   console.log("✅ oh-my-kimichan scaffold 생성 완료!");
