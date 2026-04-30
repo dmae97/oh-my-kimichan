@@ -2,8 +2,8 @@ import { mkdir, writeFile, readdir } from "fs/promises";
 import { join } from "path";
 
 import { getOmkPath, getProjectRoot, pathExists, readTextFile, injectKimiGlobals } from "../util/fs.js";
-import { execa } from "execa";
 import { style, header, status, label } from "../util/theme.js";
+import { runKimiInteractive } from "../util/kimi-runner.js";
 
 export async function runCommand(flow: string, goal: string, options: { workers?: string }): Promise<void> {
   const root = getProjectRoot();
@@ -79,9 +79,8 @@ export async function runCommand(flow: string, goal: string, options: { workers?
 
   args.push("-p", promptText);
 
-  await execa("kimi", args, {
+  await runKimiInteractive(args, {
     cwd: root,
-    stdio: "inherit",
     env: { OMK_RUN_ID: runId, OMK_FLOW: flow, OMK_GOAL: goal },
   });
 }

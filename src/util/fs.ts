@@ -327,6 +327,24 @@ export async function getKimiDefaultModel(): Promise<string | null> {
   }
 }
 
+/** .omk/config.toml 에서 logo_image 경로 읽기 (상대경로는 프로젝트 루트 기준) */
+export async function getOmkLogoImagePath(): Promise<string | null> {
+  const configPath = getOmkPath("config.toml");
+  try {
+    const content = await readTextFile(configPath, "");
+    const match = content.match(/^\s*logo_image\s*=\s*["']([^"']+)["']/m);
+    if (!match) return null;
+    const p = match[1].trim();
+    // 절대 경로 판정 (Unix /, Windows \, C:\)
+    if (p.startsWith("/") || p.startsWith("\\") || /^[A-Za-z]:/.test(p)) {
+      return p;
+    }
+    return join(getProjectRoot(), p);
+  } catch {
+    return null;
+  }
+}
+
 /** Kimi CLI 실행 인자에 model + MCP + Skills 주입 (전역 동기화는 별도) */
 export async function injectKimiGlobals(args: string[]): Promise<void> {
   // default_model이 있으면 주입 (agent-file 사용 시 model이 unset 될 수 있음)

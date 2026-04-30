@@ -50,7 +50,7 @@ export async function teamCommand(): Promise<void> {
   console.log(bullet("worker-1/2:  병렬 작업 실행", "mint"));
   console.log(bullet("reviewer:    코드 리뷰/검증", "pink"));
   console.log("");
-  console.log(style.blueBold("💡 tmux 단축키:"));
+  console.log(style.pinkBold("💡 tmux 단축키:"));
   console.log(style.gray("   Ctrl+b, 0~3  — 창 전환"));
   console.log(style.gray("   Ctrl+b, d    — 세션 분리 (백그라운드 유지)"));
   console.log(style.gray("   omk team     — 세션 재연결"));

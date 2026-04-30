@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "worktreeRoot": "/mnt/m/oh-my-kimichan",
-  "gitDir": "/mnt/m/oh-my-kimichan/.git",
-  "indexMtimeMs": 1777539820337.8467,
-  "indexSize": 16284,
-  "map": "  src/: cli\n  src/commands/: chat, design, doctor, google, hud, init, merge, plan, run, sync\n  src/kimi/: wire-client\n  src/memory/: memory-store\n  src/orchestration/: dag\n  src/safety/: approval-policy\n  src/util/: fs, git, shell",
-  "createdAt": "2026-04-30T10:39:49.432Z"
-}

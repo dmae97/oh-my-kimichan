@@ -133,7 +133,7 @@ export async function designApplyCommand(name: string): Promise<void> {
     process.exit(1);
   }
 
-  console.log(style.blue(`📥 ${name} DESIGN.md 다운로드 중...`));
+  console.log(style.purple(`📥 ${name} DESIGN.md 다운로드 중...`));
   const content = await fetchDesignMd(name);
   if (!content) {
     console.error(status.error(`'${name}' DESIGN.md를 찾을 수 없습니다.`));
@@ -165,7 +165,7 @@ export async function designSearchCommand(keyword: string): Promise<void> {
     process.exit(1);
   }
 
-  console.log(style.blue(`🔍 '${keyword}' 검색 중...\n`));
+  console.log(style.purple(`🔍 '${keyword}' 검색 중...\n`));
   const list = await fetchDesignList();
   const matched = list.filter((n) => n.toLowerCase().includes(keyword.toLowerCase()));
 

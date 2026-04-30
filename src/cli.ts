@@ -13,25 +13,36 @@ import { stitchInstallCommand } from "./commands/google.js";
 import { teamCommand } from "./commands/team.js";
 import { style, header } from "./util/theme.js";
 
-const CUSTOM_HELP = `
-${header("oh-my-kimichan")}
-${style.gray("Kimi CLI, but better. The orchestration layer that turns Kimi CLI into a powerful coding team.")}
-
-${style.pinkBold("사용 가능한 명령어:")}
-  ${style.mint("omk init")}               프로젝트 scaffold 생성
-  ${style.mint("omk doctor")}             환경 검사
-  ${style.mint("omk chat")}               Kimi 대화형 실행
-  ${style.mint("omk plan")} ${style.gray("<goal>")}        계획 수립
-  ${style.mint("omk run")} ${style.gray("<flow> <goal>")}  flow 실행
-  ${style.mint("omk team")}               tmux 기반 다중 에이전트 실행
-  ${style.mint("omk hud")}                실행 상태 HUD
-  ${style.mint("omk merge")}              결과 병합
-  ${style.mint("omk sync")}               assets 동기화
-  ${style.mint("omk design")}             DESIGN.md 관리
-  ${style.mint("omk google")}             Google 생태계 연동
-
-${style.gray("전체 도움말: omk --help")}
-`;
+const CUSTOM_HELP = [
+  "",
+  style.purple("    ╭────────────────────────────────────────────────────────────────────────╮"),
+  style.purple("    │") + "   " + style.pinkBold("🌸 oh-my-kimichan") + style.gray("  —  Kimi CLI, but better.") + "                              " + style.purple("│"),
+  style.purple("    │") + "   " + style.gray("The orchestration layer that turns Kimi CLI into a powerful coding team.") + "   " + style.purple("│"),
+  style.purple("    ╰────────────────────────────────────────────────────────────────────────╯"),
+  "",
+  "  " + style.purpleBold("✨ 사용 가능한 명령어") + style.gray(" ─────────────────────────────────────────────────────"),
+  "",
+  "    " + style.mintBold("omk init") + "      " + style.gray("프로젝트 scaffold 생성 (AGENTS.md, DESIGN.md, .omk/)") +
+  "\n    " + style.mintBold("omk doctor") + "    " + style.gray("환경 검사 — CLI, Git, Hooks, MCP, Skills 상태 확인") +
+  "\n    " + style.mintBold("omk chat") + "      " + style.gray("Kimi 대화형 실행 (interactive mode)") +
+  "\n    " + style.mintBold("omk plan") + "      " + style.gray("<goal>   계획 수립 및 DAG 생성") +
+  "\n    " + style.mintBold("omk run") + "       " + style.gray("<flow> <goal>   flow 실행") +
+  "\n    " + style.mintBold("omk team") + "      " + style.gray("tmux 기반 다중 에이전트 팀 실행") +
+  "\n    " + style.mintBold("omk hud") + "       " + style.gray("실행 상태 & 시스템 사용량 HUD") +
+  "\n    " + style.mintBold("omk merge") + "     " + style.gray("결과 병합") +
+  "\n    " + style.mintBold("omk sync") + "      " + style.gray("assets 동기화") +
+  "\n    " + style.mintBold("omk design") + "    " + style.gray("DESIGN.md 관리") +
+  "\n    " + style.mintBold("omk google") + "    " + style.gray("Google 생태계 연동") +
+  "",
+  "  " + style.purpleBold("💜 빠른 시작") + style.gray(" ────────────────────────────────────────────────────────"),
+  "",
+  "    " + style.gray("$") + " " + style.cream("omk init") + "     " + style.gray("# 현재 프로젝트 초기화") +
+  "\n    " + style.gray("$") + " " + style.cream("omk hud") + "      " + style.gray("# 대시보드 보기") +
+  "\n    " + style.gray("$") + " " + style.cream("omk chat") + "     " + style.gray("# Kimi와 대화 시작") +
+  "",
+  "  " + style.gray("전체 도움말: omk --help    |    문서: https://github.com/dmae97/oh-my-kimichan") +
+  "",
+].join("\n");
 
 const program = new Command();
 

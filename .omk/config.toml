@@ -14,6 +14,9 @@ test = "auto"
 typecheck = "auto"
 build = "auto"
 
+[theme]
+logo_image = "kimichan.png"
+
 [router]
 default_model = "kimi-k2.6"
 research_thinking = "disabled"

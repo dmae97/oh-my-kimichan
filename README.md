@@ -1,95 +1,128 @@
 <div align="center">
-  <img src="./kimichan.png" alt="oh-my-kimichan" width="600" />
-  <h1>oh-my-kimichan</h1>
-  <p><strong>Kimi is the agent. oh-my-kimichan is the team runtime.</strong></p>
 
-  <p>
-    <a href="https://www.npmjs.com/package/oh-my-kimichan"><img src="https://img.shields.io/npm/v/oh-my-kimichan?style=flat-square&color=blue" alt="npm version" /></a>
-    <a href="./LICENSE"><img src="https://img.shields.io/npm/l/oh-my-kimichan?style=flat-square&color=brightgreen" alt="license" /></a>
-    <a href="https://github.com/dmae97/oh-my-kimichan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dmae97/oh-my-kimichan/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
-    <img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen?style=flat-square&logo=node.js" alt="Node.js >=20" />
-    <a href="https://github.com/dmae97/oh-my-kimichan/issues"><img src="https://img.shields.io/github/issues/dmae97/oh-my-kimichan?style=flat-square&color=orange" alt="issues" /></a>
-    <a href="https://github.com/dmae97/oh-my-kimichan/stargazers"><img src="https://img.shields.io/github/stars/dmae97/oh-my-kimichan?style=flat-square&color=yellow" alt="stars" /></a>
-  </p>
+<img src="./kimichan.png" alt="oh-my-kimichan" width="400" />
 
-  <p>
-    <a href="#-한국어">🇰🇷 한국어</a> •
-    <a href="#-english">🇺🇸 English</a> •
-    <a href="#-简体中文">🇨🇳 简体中文</a> •
-    <a href="#-日本語">🇯🇵 日本語</a>
-  </p>
+<h1>oh-my-kimichan</h1>
+
+<p>
+  <strong>Turn Kimi Code CLI into a worktree-based coding team</strong><br/>
+  <sub>Multi-agent orchestration harness / DESIGN.md-aware UI / Live quality gates / AGENTS.md compatible</sub>
+</p>
+
+<p>
+  <a href="https://www.npmjs.com/package/oh-my-kimichan"><img src="https://img.shields.io/npm/v/oh-my-kimichan?style=for-the-badge&amp;color=cb3837&amp;logo=npm" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/oh-my-kimichan"><img src="https://img.shields.io/npm/dm/oh-my-kimichan?style=for-the-badge&amp;color=brightgreen&amp;logo=npm" alt="npm downloads" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/oh-my-kimichan?style=for-the-badge&amp;color=blue" alt="license" /></a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&amp;logo=typescript&amp;logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Node.js-20+-339933?style=flat-square&amp;logo=node.js&amp;logoColor=white" alt="Node.js" />
+  <img src="https://img.shields.io/badge/Zod-3E67B1?style=flat-square&amp;logo=zod&amp;logoColor=white" alt="Zod" />
+  <img src="https://img.shields.io/badge/Commander-4A4A4A?style=flat-square" alt="Commander" />
+  <img src="https://img.shields.io/badge/tmux-1BB91F?style=flat-square&amp;logo=tmux&amp;logoColor=white" alt="tmux" />
+</p>
+
+<p>
+  <a href="#korean">Korean</a> /
+  <a href="#english">English</a> /
+  <a href="#chinese">Chinese</a> /
+  <a href="#japanese">Japanese</a>
+</p>
+
 </div>
 
 ---
 
-## 📑 목차 / Table of Contents / 目录 / 目次
+## Table of Contents
 
-- [🇰🇷 한국어](#-한국어)
-- [🇺🇸 English](#-english)
-- [🇨🇳 简体中文](#-简体中文)
-- [🇯🇵 日本語](#-日本語)
+- [Korean](#korean)
+- [English](#english)
+- [Chinese](#chinese)
+- [Japanese](#japanese)
+- [Acknowledgements](#acknowledgements)
 
 ---
 
-## 🇰🇷 한국어
+<h2 id="korean">Korean</h2>
 
-> [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli)를 **worktree 기반 코딩 팀**으로 변환하세요. DESIGN.md 기반 UI 생성, AGENTS.md 호환성, 실시간 품질 게이트를 제공합니다.
+> Kimi Code CLI를 <strong>worktree 기반 코딩 팀</strong>으로 변환하세요. DESIGN.md 기반 UI 생성, AGENTS.md 호환성, 실시간 품질 게이트를 제공합니다.
 
-### ✨ 주요 기능
+### Features
 
-- 🧠 Kimi K2.6 최적화 워크플로우
-- 🌲 Worktree 기반 병렬 코딩 팀
-- 🎨 [Google DESIGN.md](https://github.com/google-labs-code/design.md) 연동
-- 📄 AGENTS.md / GEMINI.md / CLAUDE.md 호환
-- 🛡️ 완료 전 품질 게이트
-- 📊 실시간 HUD (작업자, 테스트, 리스크, 병합 상태)
+| Feature | Description |
+|---------|-------------|
+| Kimi K2.6 Optimized | Kimi K2.6에 특화된 워크플로우와 컨텍스트 관리 |
+| Worktree-based Parallel Team | Git worktree로 에이전트별 격리된 작업 공간 제공 |
+| DESIGN.md Integration | Google DESIGN.md 표준 기반 UI 생성 |
+| Multi-Agent Compatible | AGENTS.md / GEMINI.md / CLAUDE.md 동시 지원 |
+| Quality Gates | 완료 전 자동 lint, typecheck, test, build 검증 |
+| Live HUD | 작업자 상태, 테스트 결과, 리스크, 병합 현황 실시간 모니터링 |
+| MCP Integration | 다양한 MCP 서버와의 원활한 연동 |
+| Safety Hooks | 파괴적 명령어 및 비밀 유출 방지 기본 제공 |
 
-### 🚀 설치
+### Install
 
 ```bash
 npm install -g oh-my-kimichan
 ```
 
-> **요구사항:** Node.js >= 20, Git, python3, Kimi CLI (v1.39.0+)
+> **Requirements:** Node.js >= 20, Git, python3, Kimi CLI (v1.39.0+)
 
-### ⚡ 빠른 시작
+### Quick Start
 
 ```bash
-# 1. 프로젝트 스캐폴드 생성
 omk init
-
-# 2. 환경 진단
 omk doctor
-
-# 3. 대화형 Kimi 실행
 omk chat
 ```
 
-### 📋 CLI 명령어
+### Preview
 
-#### ✅ 안정
+```bash
+$ omk doctor
+OK Node.js           v22.14.0
+OK Git               2.49.0
+OK Python            3.13.2
+OK tmux              3.5a
+OK Kimi CLI          v1.39.0
+OK Scaffold          .omk/, .kimi/skills/ found
 
-| 명령어 | 설명 |
-|--------|------|
-| `omk init` | `.omk/`, `.kimi/skills/`, `.agents/skills/`, docs, hooks, agents 스캐폴드 생성 |
-| `omk doctor` | Node, Kimi CLI, Git, python3, tmux, scaffold 진단 |
-| `omk chat` | 에이전트/설정/MCP 자동 탐지 대화형 Kimi |
-| `omk plan <목표>` | 계획 전용 모드 |
-| `omk run <플로우> <목표>` | 플로우 기반 작업 실행 |
-| `omk design init` | frontmatter가 포함된 DESIGN.md 생성 |
-| `omk google stitch-install` | Google Stitch 스킬 설치 |
-| `omk sync` | Kimi 에셋 동기화 |
+$ omk team
+Team Runtime starting...
+   [architect]  Creating plan.md...
+   [coder]      Implementation in progress...
+   [reviewer]   Code review done
+   [qa]         Tests passed
+```
 
-#### 🧪 실험적
+### CLI Commands
 
-| 명령어 | 상태 | 비고 |
-|--------|------|------|
-| `omk team` | 레이아웃만 | tmux 창 레이아웃 스캐폴드 |
-| `omk merge` | 수동 | Diff 확인 + 수동 cherry-pick 안내 |
-| `omk hud` | 부분 | 실행 상태 표시 |
-| `omk design lint` | 스텁 | 유효성 검사 미구현 |
-| `omk design diff` | 스텁 | Diff 미구현 |
-| `omk design export` | 스텁 | 낳지 미구현 |
+#### Stable
+
+| Command | Description |
+|---------|-------------|
+| `omk init` | Scaffold .omk/, .kimi/skills/, .agents/skills/, docs, hooks, agents |
+| `omk doctor` | Check Node, Kimi CLI, Git, python3, tmux, scaffold |
+| `omk chat` | Interactive Kimi with agent/config/MCP auto-detection |
+| `omk plan <goal>` | Plan-only mode |
+| `omk run <flow> <goal>` | Flow-based task execution |
+| `omk design init` | Create DESIGN.md with frontmatter |
+| `omk design list` | List local/remote DESIGN.md files |
+| `omk design apply <name>` | Convert DESIGN.md into code |
+| `omk google stitch-install` | Install Google Stitch skills |
+| `omk sync` | Sync Kimi assets |
+
+#### Experimental
+
+| Command | Status | Notes |
+|---------|--------|-------|
+| `omk team` | Layout only | tmux window layout scaffold |
+| `omk merge` | Manual | Diff check + manual cherry-pick guidance |
+| `omk hud` | Partial | Run status display |
+| `omk design lint` | Stub | Validation not yet implemented |
+| `omk design diff` | Stub | Diff not yet implemented |
+| `omk design export` | Stub | Export not yet implemented |
 
 ### 🏗️ 아키텍처
 
@@ -124,20 +157,24 @@ graph TD
 
 ---
 
-## 🇺🇸 English
+<h2 id="english">English</h2>
 
-> Turn [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli) into a **worktree-based coding team** with DESIGN.md-aware UI generation, AGENTS.md compatibility, and live quality gates.
+> Turn Kimi Code CLI into a <strong>worktree-based coding team</strong> with DESIGN.md-aware UI generation, AGENTS.md compatibility, and live quality gates.
 
-### ✨ Features
+### Features
 
-- 🧠 Kimi K2.6-aware workflows
-- 🌲 Worktree-based parallel coding team
-- 🎨 [Google DESIGN.md](https://github.com/google-labs-code/design.md) integration
-- 📄 AGENTS.md / GEMINI.md / CLAUDE.md compatibility
-- 🛡️ Quality gates before completion
-- 📊 Live HUD for workers, tests, risk, and merge state
+| Feature | Description |
+|---------|-------------|
+| Kimi K2.6 Optimized | Workflows and context management tailored for Kimi K2.6 |
+| Worktree-based Parallel Team | Git worktree provides isolated workspaces per agent |
+| DESIGN.md Integration | UI generation based on Google DESIGN.md standard |
+| Multi-Agent Compatible | Simultaneous support for AGENTS.md / GEMINI.md / CLAUDE.md |
+| Quality Gates | Automated lint, typecheck, test, build verification before completion |
+| Live HUD | Real-time monitoring of worker status, test results, risk, and merge state |
+| MCP Integration | Seamless connection with various MCP servers |
+| Safety Hooks | Default protection against destructive commands and secret leakage |
 
-### 🚀 Install
+### Install
 
 ```bash
 npm install -g oh-my-kimichan
@@ -145,35 +182,51 @@ npm install -g oh-my-kimichan
 
 > **Requirements:** Node.js >= 20, Git, python3, Kimi CLI (v1.39.0+)
 
-### ⚡ Quick Start
+### Quick Start
 
 ```bash
-# 1. Scaffold your project
 omk init
-
-# 2. Check your environment
 omk doctor
-
-# 3. Start interactive Kimi
 omk chat
 ```
 
-### 📋 CLI Commands
+### Preview
 
-#### ✅ Stable
+```bash
+$ omk doctor
+OK Node.js           v22.14.0
+OK Git               2.49.0
+OK Python            3.13.2
+OK tmux              3.5a
+OK Kimi CLI          v1.39.0
+OK Scaffold          .omk/, .kimi/skills/ found
+
+$ omk team
+Team Runtime starting...
+   [architect]  Creating plan.md...
+   [coder]      Implementation in progress...
+   [reviewer]   Code review done
+   [qa]         Tests passed
+```
+
+### CLI Commands
+
+#### Stable
 
 | Command | Description |
 |---------|-------------|
-| `omk init` | Scaffold `.omk/`, `.kimi/skills/`, `.agents/skills/`, docs, hooks, agents |
+| `omk init` | Scaffold .omk/, .kimi/skills/, .agents/skills/, docs, hooks, agents |
 | `omk doctor` | Check Node, Kimi CLI, Git, python3, tmux, scaffold |
 | `omk chat` | Interactive Kimi with agent/config/MCP auto-detection |
 | `omk plan <goal>` | Plan-only mode |
 | `omk run <flow> <goal>` | Flow-based task execution |
 | `omk design init` | Create DESIGN.md with frontmatter |
+| `omk design list` | List local/remote DESIGN.md files |
+| `omk design apply <name>` | Convert DESIGN.md into code |
 | `omk google stitch-install` | Install Google Stitch skills |
 | `omk sync` | Sync Kimi assets |
 
-#### 🧪 Experimental
+#### Experimental
 
 | Command | Status | Notes |
 |---------|--------|-------|
@@ -217,20 +270,24 @@ Default hooks block destructive commands and secret leakage:
 
 ---
 
-## 🇨🇳 简体中文
+<h2 id="chinese">Chinese</h2>
 
-> 将 [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli) 转变为一个**基于 worktree 的编码团队**。支持 DESIGN.md 感知 UI 生成、AGENTS.md 兼容性以及实时质量门禁。
+> 将 Kimi Code CLI 转变为一个<strong>基于 worktree 的编码团队</strong>。支持 DESIGN.md 感知 UI 生成、AGENTS.md 兼容性以及实时质量门禁。
 
-### ✨ 主要功能
+### Features
 
-- 🧠 Kimi K2.6 优化工作流
-- 🌲 基于 Worktree 的并行编码团队
-- 🎨 [Google DESIGN.md](https://github.com/google-labs-code/design.md) 集成
-- 📄 AGENTS.md / GEMINI.md / CLAUDE.md 兼容
-- 🛡️ 完成前质量门禁
-- 📊 实时 HUD（工作者、测试、风险、合并状态）
+| Feature | Description |
+|---------|-------------|
+| Kimi K2.6 优化 | 专为 Kimi K2.6 定制的工作流与上下文管理 |
+| 基于 Worktree 的并行团队 | Git worktree 为每个 Agent 提供隔离工作空间 |
+| DESIGN.md 集成 | 基于 Google DESIGN.md 标准的 UI 生成 |
+| 多 Agent 兼容 | 同时支持 AGENTS.md / GEMINI.md / CLAUDE.md |
+| 质量门禁 | 完成前自动执行 lint、typecheck、test、build 验证 |
+| 实时 HUD | 实时监控工作者状态、测试结果、风险与合并状态 |
+| MCP 集成 | 与多种 MCP 服务器无缝连接 |
+| 安全钩子 | 默认防止破坏性命令与密钥泄漏 |
 
-### 🚀 安装
+### Install
 
 ```bash
 npm install -g oh-my-kimichan
@@ -238,38 +295,54 @@ npm install -g oh-my-kimichan
 
 > **要求：** Node.js >= 20、Git、python3、Kimi CLI (v1.39.0+)
 
-### ⚡ 快速开始
+### Quick Start
 
 ```bash
-# 1. 创建项目脚手架
 omk init
-
-# 2. 环境诊断
 omk doctor
-
-# 3. 启动交互式 Kimi
 omk chat
 ```
 
-### 📋 CLI 命令
+### Preview
 
-#### ✅ 稳定
+```bash
+$ omk doctor
+OK Node.js           v22.14.0
+OK Git               2.49.0
+OK Python            3.13.2
+OK tmux              3.5a
+OK Kimi CLI          v1.39.0
+OK Scaffold          .omk/, .kimi/skills/ found
 
-| 命令 | 说明 |
-|------|------|
-| `omk init` | 创建 `.omk/`、`.kimi/skills/`、`.agents/skills/`、docs、hooks、agents 脚手架 |
+$ omk team
+Team Runtime 启动中...
+   [architect]  创建 plan.md...
+   [coder]      实现进行中...
+   [reviewer]   代码审查完成
+   [qa]         测试通过
+```
+
+### CLI Commands
+
+#### Stable
+
+| Command | Description |
+|---------|-------------|
+| `omk init` | 创建 .omk/、.kimi/skills/、.agents/skills/、docs、hooks、agents 脚手架 |
 | `omk doctor` | 检查 Node、Kimi CLI、Git、python3、tmux、脚手架 |
 | `omk chat` | 支持代理/配置/MCP 自动检测的交互式 Kimi |
-| `omk plan <目标>` | 仅计划模式 |
-| `omk run <流程> <目标>` | 基于流程的任务执行 |
+| `omk plan <goal>` | 仅计划模式 |
+| `omk run <flow> <goal>` | 基于流程的任务执行 |
 | `omk design init` | 创建带 frontmatter 的 DESIGN.md |
+| `omk design list` | 列出本地/远程 DESIGN.md |
+| `omk design apply <name>` | 将 DESIGN.md 转换为代码 |
 | `omk google stitch-install` | 安装 Google Stitch 技能 |
 | `omk sync` | 同步 Kimi 资源 |
 
-#### 🧪 实验性
+#### Experimental
 
-| 命令 | 状态 | 备注 |
-|------|------|------|
+| Command | Status | Notes |
+|---------|--------|-------|
 | `omk team` | 仅布局 | tmux 窗口布局脚手架 |
 | `omk merge` | 手动 | Diff 检查 + 手动 cherry-pick 指导 |
 | `omk hud` | 部分 | 运行状态显示 |
@@ -310,20 +383,24 @@ graph TD
 
 ---
 
-## 🇯🇵 日本語
+<h2 id="japanese">Japanese</h2>
 
-> [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli) を **worktree ベースのコーディングチーム**に変換します。DESIGN.md 対応の UI 生成、AGENTS.md 互換性、ライブ品質ゲートを提供します。
+> Kimi Code CLI を <strong>worktree ベースのコーディングチーム</strong>に変換します。DESIGN.md 対応の UI 生成、AGENTS.md 互換性、ライブ品質ゲートを提供します。
 
-### ✨ 主な機能
+### Features
 
-- 🧠 Kimi K2.6 対応ワークフロー
-- 🌲 Worktree ベースの並列コーディングチーム
-- 🎨 [Google DESIGN.md](https://github.com/google-labs-code/design.md) 連携
-- 📄 AGENTS.md / GEMINI.md / CLAUDE.md 互換
-- 🛡️ 完了前品質ゲート
-- 📊 ライブ HUD（ワーカー、テスト、リスク、マージ状態）
+| Feature | Description |
+|---------|-------------|
+| Kimi K2.6 対応 | Kimi K2.6 に特化したワークフローとコンテキスト管理 |
+| Worktree ベース並列チーム | Git worktree でエージェントごとに分離された作業空間を提供 |
+| DESIGN.md 連携 | Google DESIGN.md 標準に基づく UI 生成 |
+| マルチエージェント互換 | AGENTS.md / GEMINI.md / CLAUDE.md を同時サポート |
+| 品質ゲート | 完了前に自動 lint、typecheck、test、build を検証 |
+| ライブ HUD | ワーカー状態、テスト結果、リスク、マージ状況をリアルタイム監視 |
+| MCP 統合 | 様々な MCP サーバーとのシームレスな連携 |
+| 安全フック | 破壊的コマンドとシークレット漏洩をデフォルトで防止 |
 
-### 🚀 インストール
+### Install
 
 ```bash
 npm install -g oh-my-kimichan
@@ -331,38 +408,54 @@ npm install -g oh-my-kimichan
 
 > **要件:** Node.js >= 20、Git、python3、Kimi CLI (v1.39.0+)
 
-### ⚡ クイックスタート
+### Quick Start
 
 ```bash
-# 1. プロジェクト スキャフォールドを作成
 omk init
-
-# 2. 環境診断
 omk doctor
-
-# 3. 対話型 Kimi を開始
 omk chat
 ```
 
-### 📋 CLI コマンド
+### Preview
 
-#### ✅ 安定版
+```bash
+$ omk doctor
+OK Node.js           v22.14.0
+OK Git               2.49.0
+OK Python            3.13.2
+OK tmux              3.5a
+OK Kimi CLI          v1.39.0
+OK Scaffold          .omk/, .kimi/skills/ found
 
-| コマンド | 説明 |
-|----------|------|
-| `omk init` | `.omk/`、`.kimi/skills/`、`.agents/skills/`、docs、hooks、agents のスキャフォールドを作成 |
+$ omk team
+Team Runtime 開始中...
+   [architect]  plan.md 作成中...
+   [coder]      実装進行中...
+   [reviewer]   コードレビュー完了
+   [qa]         テスト通過
+```
+
+### CLI Commands
+
+#### Stable
+
+| Command | Description |
+|---------|-------------|
+| `omk init` | .omk/、.kimi/skills/、.agents/skills/、docs、hooks、agents のスキャフォールドを作成 |
 | `omk doctor` | Node、Kimi CLI、Git、python3、tmux、スキャフォールドを診断 |
 | `omk chat` | エージェント/設定/MCP 自動検出対応の対話型 Kimi |
-| `omk plan <目標>` | 計画専用モード |
-| `omk run <フロー> <目標>` | フローベースのタスク実行 |
+| `omk plan <goal>` | 計画専用モード |
+| `omk run <flow> <goal>` | フローベースのタスク実行 |
 | `omk design init` | frontmatter 付き DESIGN.md を作成 |
+| `omk design list` | ローカル/リモート DESIGN.md を一覧表示 |
+| `omk design apply <name>` | DESIGN.md をコードに変換適用 |
 | `omk google stitch-install` | Google Stitch スキルをインストール |
 | `omk sync` | Kimi アセットを同期 |
 
-#### 🧪 実験的
+#### Experimental
 
-| コマンド | 状態 | 備考 |
-|----------|------|------|
+| Command | Status | Notes |
+|---------|--------|-------|
 | `omk team` | レイアウトのみ | tmux ウィンドウ レイアウト スキャフォールド |
 | `omk merge` | 手動 | Diff 確認 + 手動 cherry-pick ガイダンス |
 | `omk hud` | 部分的 | 実行状態の表示 |
@@ -403,7 +496,39 @@ graph TD
 
 ---
 
+<h2 id="customization">Customization</h2>
+
+### 🎨 Custom Welcome Banner Image
+
+You can override Kimi CLI's default ASCII banner with your own image:
+
+1. Place your image in the project root (e.g. `kimichan.png`).
+2. Add to `.omk/config.toml`:
+
+```toml
+[theme]
+logo_image = "kimichan.png"
+```
+
+- Supports **PNG**, **JPEG**, and **GIF**.
+- Relative paths are resolved from the project root; absolute paths (including Windows `C:\...` or `M:\...`) work too.
+- In **iTerm**, **Kitty**, **WezTerm**, and other graphics-capable terminals, the image renders in full resolution.
+- In standard terminals, it falls back to high-quality ANSI block art via `terminal-image`.
+- If the image is missing or rendering fails, the built-in ASCII art is used automatically.
+
+---
+
+<h2 id="acknowledgements">Acknowledgements</h2>
+
+This project is built on top of amazing open-source work:
+
+- Kimi Code CLI by Moonshot AI - The foundation that makes everything possible
+- Google DESIGN.md - Design specification standard for UI generation
+- Commander.js - Elegant command-line interfaces
+- Zod - TypeScript-first schema validation
+- tmux - Terminal multiplexer for team runtime
+
 <div align="center">
-  <sub>Built with ❤️ for the Kimi ecosystem</sub>
+  <sub>Built with love for the Kimi ecosystem</sub>
 </div>
 

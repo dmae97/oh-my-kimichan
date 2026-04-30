@@ -1,10 +1,10 @@
-import { execa } from "execa";
 import { getOmkPath, pathExists, injectKimiGlobals } from "../util/fs.js";
 import { style, header, status } from "../util/theme.js";
 import { readFile } from "fs/promises";
 import { dirname, join, isAbsolute } from "path";
 import YAML from "yaml";
 import { initCommand } from "./init.js";
+import { runKimiInteractive } from "../util/kimi-runner.js";
 
 async function verifyAgentPrompt(agentFile: string): Promise<boolean> {
   if (!(await pathExists(agentFile))) return false;
@@ -44,8 +44,8 @@ export async function chatCommand(options: { agentFile?: string }): Promise<void
   // ~/.kimi/ 에 hooks + MCP + skills 무조건 글로벌 동기화
   await injectKimiGlobals(args);
 
-  await execa("kimi", args, {
-    cwd: process.cwd(),
-    stdio: "inherit",
-  });
+  // ── node-pty 로 Kimi CLI 실행 (배너를 가로채 커스텀 배너로 교체) ──
+  console.log(style.purple("🌸 oh-my-kimichan is wrapping Kimi CLI..."));
+
+  await runKimiInteractive(args);
 }

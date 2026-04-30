@@ -542,6 +542,13 @@ test = "auto"
 typecheck = "auto"
 build = "auto"
 
+[theme]
+# 터미널 웰컴 배너에 사용할 커스텀 로고 이미지 경로
+# 상대경로는 프로젝트 루트 기준, 절대경로도 가능
+# 예: logo_image = "kimichan.png"  또는  logo_image = "M:\\oh-my-kimichan\\kimichan.png"
+# 지원 형식: PNG, JPEG, GIF (터미널이 iTerm/Konsole 등이면 고해상도, 아니면 ANSI 블록)
+#logo_image = ""
+
 [router]
 default_model = "kimi-k2.6"
 research_thinking = "disabled"
@@ -626,13 +633,13 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   const agentsSkillsSrc = join(packageRoot, "templates", "skills", "agents");
   const skillCopies = [];
   if (await pathExists(kimiSkillsSrc)) {
-    console.log(style.blue("   📦 Kimi skills 복사 중..."));
+    console.log(style.purple("   📦 Kimi skills 복사 중..."));
     skillCopies.push(copyTemplateDir(kimiSkillsSrc, join(root, ".kimi", "skills")));
   } else {
     console.log(status.warn("Kimi skills 템플릿 없음 — templates/skills/kimi 확인"));
   }
   if (await pathExists(agentsSkillsSrc)) {
-    console.log(style.blue("   📦 Portable skills 복사 중..."));
+    console.log(style.purple("   📦 Portable skills 복사 중..."));
     skillCopies.push(copyTemplateDir(agentsSkillsSrc, join(root, ".agents", "skills")));
   } else {
     console.log(status.warn("Portable skills 템플릿 없음 — templates/skills/agents 확인"));
