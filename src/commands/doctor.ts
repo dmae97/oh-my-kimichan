@@ -30,13 +30,13 @@ export async function doctorCommand(): Promise<void> {
     results.push({ name: "Kimi CLI", status: "fail", message: "kimi 명령을 찾을 수 없습니다. npm install -g kimi-cli 또는 공식 설치 필요" });
   }
 
-  // 3. Kimi auth
+  // 3. Kimi version check (auth status may not exist; use --version info as proxy)
   if (kimiExists) {
-    const authResult = await runShell("kimi", ["auth", "status"], { timeout: 10000 });
+    const infoResult = await runShell("kimi", ["--version"], { timeout: 10000 });
     results.push({
-      name: "Kimi Auth",
-      status: authResult.failed ? "fail" : "ok",
-      message: authResult.failed ? "인증 실패. kimi auth login 실행 필요" : "인증됨",
+      name: "Kimi CLI",
+      status: infoResult.failed ? "warn" : "ok",
+      message: infoResult.failed ? "kimi 실행 확인 실패" : "실행 가능",
     });
   }
 
@@ -59,7 +59,15 @@ export async function doctorCommand(): Promise<void> {
     results.push({ name: "Git", status: "fail", message: "git 명령을 찾을 수 없습니다" });
   }
 
-  // 5. .omk directory
+  // 5. jq (hooks depend on it; fail-open without jq = security bypass)
+  const jqExists = await checkCommand("jq");
+  results.push({
+    name: "jq",
+    status: jqExists ? "ok" : "warn",
+    message: jqExists ? "설치됨 (hooks 보장)" : "미설치 — hooks가 fail-open 될 수 있습니다. apt/brew install jq 권장",
+  });
+
+  // 6. .omk directory
   const omkExists = await pathExists(".omk");
   results.push({
     name: "OMK Scaffold",
@@ -67,7 +75,7 @@ export async function doctorCommand(): Promise<void> {
     message: omkExists ? "초기화됨" : "omk init 실행 필요",
   });
 
-  // 6. Tmux (optional for team mode)
+  // 7. Tmux (optional for team mode)
   const tmuxExists = await checkCommand("tmux");
   results.push({
     name: "tmux",

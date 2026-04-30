@@ -49,7 +49,8 @@ export type WireEvent =
   | { type: "message"; role: "assistant" | "user"; content: string }
   | { type: "tool_use"; name: string; input: unknown }
   | { type: "tool_result"; name: string; output: unknown }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "request"; method: string; params: unknown; respond: (result: unknown) => void; reject: (error: { code: number; message: string }) => void };
 
 let requestId = 0;
 function nextId(): string {
@@ -59,7 +60,7 @@ function nextId(): string {
 export class KimiWireClient {
   private proc?: ChildProcess;
   private rl?: ReturnType<typeof createInterface>;
-  private pending = new Map<string, (value: JsonRpcResponse) => void>();
+  private pending = new Map<string, { resolve: (value: JsonRpcResponse) => void; reject: (error: Error) => void }>();
   private eventHandlers: Array<(event: WireEvent) => void> = [];
 
   constructor(
@@ -108,18 +109,20 @@ export class KimiWireClient {
       if (!trimmed) return;
       try {
         const msg = JSON.parse(trimmed) as JsonRpcResponse | JsonRpcRequest;
-        if ("id" in msg && "result" in msg) {
-          const resolve = this.pending.get(msg.id);
-          if (resolve) {
+        if ("id" in msg && ("result" in msg || "error" in msg)) {
+          const pending = this.pending.get(msg.id);
+          if (pending) {
             this.pending.delete(msg.id);
-            resolve(msg as JsonRpcResponse);
+            if ("error" in msg && msg.error) {
+              pending.reject(new Error(msg.error.message));
+            } else {
+              pending.resolve(msg as JsonRpcResponse);
+            }
           }
         } else if ("method" in msg) {
-          // server->client notification or request
           this.handleServerMessage(msg as JsonRpcRequest);
         }
       } catch {
-        // non-JSON line, treat as assistant message
         this.emit({ type: "message", role: "assistant", content: trimmed });
       }
     });
@@ -133,7 +136,6 @@ export class KimiWireClient {
       this.emit({ type: "error", message: `Kimi process exited with code ${code}` });
     });
 
-    // wait a bit for process to be ready
     await new Promise((r) => setTimeout(r, 500));
 
     await this.call("initialize", {
@@ -202,8 +204,8 @@ export class KimiWireClient {
     if (!this.proc?.stdin) throw new Error("Wire client not started");
     const id = nextId();
     const req: JsonRpcRequest<TParams> = { jsonrpc: "2.0", id, method, params };
-    const promise = new Promise<JsonRpcResponse>((resolve) => {
-      this.pending.set(id, resolve);
+    const promise = new Promise<JsonRpcResponse>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
     });
     this.proc.stdin.write(JSON.stringify(req) + "\n");
     const res = await promise;
@@ -221,7 +223,20 @@ export class KimiWireClient {
         tokenUsage: Number(p.token_usage ?? 0),
         planMode: Boolean(p.plan_mode ?? false),
       });
+      return;
     }
+
+    // Handle server->client requests (ApprovalRequest, ToolCallRequest, QuestionRequest)
+    const respond = (result: unknown): void => {
+      const res: JsonRpcResponse = { jsonrpc: "2.0", id: msg.id, result };
+      this.proc?.stdin?.write(JSON.stringify(res) + "\n");
+    };
+    const reject = (error: { code: number; message: string }): void => {
+      const res: JsonRpcResponse = { jsonrpc: "2.0", id: msg.id, error };
+      this.proc?.stdin?.write(JSON.stringify(res) + "\n");
+    };
+
+    this.emit({ type: "request", method: msg.method, params: msg.params, respond, reject });
   }
 
   async prompt(userInput: string): Promise<KimiPromptResult> {

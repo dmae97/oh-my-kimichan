@@ -1,4 +1,4 @@
-import { runShell } from "../util/shell.js";
+import { execa } from "execa";
 import { getOmkPath, pathExists } from "../util/fs.js";
 
 export async function chatCommand(options: { agentFile?: string }): Promise<void> {
@@ -12,17 +12,13 @@ export async function chatCommand(options: { agentFile?: string }): Promise<void
   }
 
   console.log("🤖 Kimi root coordinator 시작...\n");
-  const args = ["--wire"];
+  const args: string[] = [];
   args.push("--agent-file", agentFile);
   if (await pathExists(configFile)) args.push("--config-file", configFile);
   if (await pathExists(mcpFile)) args.push("--mcp-config-file", mcpFile);
 
-  const result = await runShell("kimi", args, {
+  await execa("kimi", args, {
     cwd: process.cwd(),
-    timeout: 0, // interactive
+    stdio: "inherit",
   });
-
-  if (result.failed) {
-    process.exit(result.exitCode);
-  }
 }

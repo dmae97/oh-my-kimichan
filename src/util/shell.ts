@@ -13,9 +13,9 @@ export interface ShellResult {
 export async function runShell(
   command: string,
   args: string[] = [],
-  options: { cwd?: string; env?: Record<string, string>; timeout?: number; logPath?: string } = {}
+  options: { cwd?: string; env?: Record<string, string>; timeout?: number; logPath?: string; input?: string } = {}
 ): Promise<ShellResult> {
-  const { cwd, env, timeout = 30000, logPath } = options;
+  const { cwd, env, timeout = 30000, logPath, input } = options;
 
   try {
     const subprocess = execa(command, args, {
@@ -24,6 +24,7 @@ export async function runShell(
       timeout,
       reject: false,
       all: true,
+      input,
     });
 
     if (logPath) {

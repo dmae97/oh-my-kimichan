@@ -10,13 +10,34 @@ import { mergeCommand } from "./commands/merge.js";
 import { syncCommand } from "./commands/sync.js";
 import { designInitCommand, designLintCommand, designDiffCommand, designExportCommand } from "./commands/design.js";
 import { stitchInstallCommand } from "./commands/google.js";
+import { teamCommand } from "./commands/team.js";
 
 const program = new Command();
 
 program
   .name("omk")
   .description("oh-my-kimichan: Kimi Code CLI용 multi-agent orchestration harness")
-  .version("0.1.0");
+  .version("0.1.0")
+  .argument("[command]", "subcommand to run")
+  .action(async () => {
+    console.log("oh-my-kimichan v0.1.0");
+    console.log("");
+    console.log("사용 가능한 명령어:");
+    console.log("  omk init         — 프로젝트 scaffold 생성");
+    console.log("  omk doctor       — 환경 검사");
+    console.log("  omk chat         — Kimi 대화형 실행");
+    console.log("  omk plan <goal>  — 계획 수립");
+    console.log("  omk run <flow> <goal> — flow 실행");
+    console.log("  omk team         — tmux 기반 다중 에이전트 실행");
+    console.log("  omk hud          — 실행 상태 HUD");
+    console.log("  omk merge        — 결과 병합");
+    console.log("  omk sync         — assets 동기화");
+    console.log("  omk design       — DESIGN.md 관리");
+    console.log("  omk google       — Google 생태계 연동");
+    console.log("");
+    console.log("도움말: omk --help");
+    process.exit(0);
+  });
 
 program
   .command("init")
@@ -46,6 +67,11 @@ program
   .description("DAG 기반 장기 작업 실행")
   .option("--workers <n>", "worker 수", "1")
   .action(runCommand);
+
+program
+  .command("team")
+  .description("tmux 기반 다중 에이전트 팀 실행")
+  .action(teamCommand);
 
 program
   .command("hud")

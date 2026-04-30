@@ -1,8 +1,13 @@
 import { mkdir, writeFile, symlink, access, constants, copyFile, readdir } from "fs/promises";
 import { join, relative, dirname } from "path";
+import { fileURLToPath } from "node:url";
 import { getProjectRoot, pathExists } from "../util/fs.js";
 import { isGitRepo } from "../util/git.js";
 import { runShell } from "../util/shell.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const packageRoot = join(__dirname, "..", "..");
 
 const AGENTS_MD = `# AGENTS.md
 
@@ -83,9 +88,11 @@ agent:
   name: omk-interviewer
   system_prompt_args:
     OMK_ROLE: "interviewer"
-  thinking: enabled
-  restrictions:
-    write: false
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell
 `,
   architect: `version: 1
 agent:
@@ -93,10 +100,11 @@ agent:
   name: omk-architect
   system_prompt_args:
     OMK_ROLE: "architect"
-  thinking: enabled
-  restrictions:
-    write: false
-    shell: false
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell
 `,
   explorer: `version: 1
 agent:
@@ -104,7 +112,6 @@ agent:
   name: omk-explorer
   system_prompt_args:
     OMK_ROLE: "explorer"
-  thinking: disabled
 `,
   coder: `version: 1
 agent:
@@ -112,7 +119,6 @@ agent:
   name: omk-coder
   system_prompt_args:
     OMK_ROLE: "coder"
-  thinking: enabled
 `,
   reviewer: `version: 1
 agent:
@@ -120,9 +126,10 @@ agent:
   name: omk-reviewer
   system_prompt_args:
     OMK_ROLE: "reviewer"
-  thinking: enabled
-  restrictions:
-    write: false
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
 `,
   qa: `version: 1
 agent:
@@ -130,7 +137,6 @@ agent:
   name: omk-qa
   system_prompt_args:
     OMK_ROLE: "qa"
-  thinking: enabled
 `,
   integrator: `version: 1
 agent:
@@ -138,7 +144,6 @@ agent:
   name: omk-integrator
   system_prompt_args:
     OMK_ROLE: "integrator"
-  thinking: enabled
 `,
   researcher: `version: 1
 agent:
@@ -146,7 +151,6 @@ agent:
   name: omk-researcher
   system_prompt_args:
     OMK_ROLE: "researcher"
-  thinking: disabled
 `,
   "vision-debugger": `version: 1
 agent:
@@ -154,13 +158,16 @@ agent:
   name: omk-vision-debugger
   system_prompt_args:
     OMK_ROLE: "vision-debugger"
-  thinking: enabled
-  capabilities:
-    vision: true
 `,
 };
 
-const DESIGN_MD = `# DESIGN.md
+const DESIGN_MD = `---
+title: "Design System"
+description: "Project visual identity and design system"
+version: "1.0"
+---
+
+# DESIGN.md
 
 ## Overview
 
@@ -205,7 +212,7 @@ Use DESIGN.md for UI/frontend work.
 const ROADMAP_MD = `# Roadmap
 
 ## v0.1
-- init / doctor / chat
+- init / doctor / chat / team
 - P0 skills
 - AGENTS.md / DESIGN.md generation
 - quality gate hooks
@@ -273,7 +280,7 @@ const ROOT_PROMPT_MD = `# OMK Root Coordinator System Prompt
 - OMK external tools (Wire 등록)
 
 ## 메모리 경로
-- {{OMK_MEMORY_PATH}}
+- \${OMK_MEMORY_PATH}
 `;
 
 async function copyTemplateDir(src: string, dest: string): Promise<void> {
@@ -296,9 +303,9 @@ const HOOK_SCRIPTS: Record<string, string> = {
 # PreShellUse Guard — 위험 명령 차단
 set -e
 
-INPUT=\$(cat)
-COMMAND=\$(echo "\$INPUT" | jq -r '.tool_input.command // empty')
-ARGS=\$(echo "\$INPUT" | jq -r '.tool_input.args // empty')
+INPUT=$(cat)
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+ARGS=$(echo "$INPUT" | jq -r '.tool_input.args // empty')
 
 FULL="$COMMAND $ARGS"
 
@@ -316,59 +323,67 @@ BLOCKED=(
 )
 
 for pattern in "\${BLOCKED[@]}"; do
-  if [[ "\$FULL" == *"\$pattern"* ]]; then
-    echo '{"decision": "block", "reason": "Potentially destructive command blocked by pre-shell-guard"}'
+  if [[ "$FULL" == *"$pattern"* ]]; then
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Potentially destructive command blocked by pre-shell-guard"}}'
     exit 0
   fi
 done
 
-echo '{"decision": "allow"}'
+echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
 `,
   "protect-secrets.sh": `#!/usr/bin/env bash
 # Secret/환경변수 보호
 set -e
 
-INPUT=\$(cat)
-FILEPATH=\$(echo "\$INPUT" | jq -r '.tool_input.file_path // empty')
-CONTENT=\$(echo "\$INPUT" | jq -r '.tool_input.content // empty')
+INPUT=$(cat)
+FILEPATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // empty')
 
 # .env 수정 차단
-if [[ "\$FILEPATH" == *".env"* ]] || [[ "\$FILEPATH" == *".env.local"* ]]; then
-  echo '{"decision": "block", "reason": "Direct .env modification blocked"}'
+if [[ "$FILEPATH" == *".env"* ]] || [[ "$FILEPATH" == *".env.local"* ]]; then
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Direct .env modification blocked"}}'
   exit 0
 fi
 
 # 키워드 탐지
-if echo "\$CONTENT" | grep -qiE '(password|secret|api_key|token|private_key)'; then
-  echo '{"decision": "block", "reason": "Potential secret leak detected"}'
+if echo "$CONTENT" | grep -qiE '(password|secret|api_key|token|private_key)'; then
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Potential secret leak detected"}}'
   exit 0
 fi
 
-echo '{"decision": "allow"}'
+echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
 `,
   "post-format.sh": `#!/usr/bin/env bash
-# 저장 후 자동 포맷팅
+# 저장 후 자동 포맷팅 (단일 파일 대상)
 set -e
 
-# 프로젝트 루트 감지 및 포맷터 실행
-if [ -f "package.json" ]; then
-  npx prettier --write . >/dev/null 2>&1 || true
+INPUT=$(cat)
+FILEPATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+
+if [ -z "$FILEPATH" ]; then
+  echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","permissionDecision":"allow"}}'
+  exit 0
 fi
 
-if [ -f "Cargo.toml" ]; then
-  cargo fmt >/dev/null 2>&1 || true
+# 프로젝트 루트 감지 및 포맷터 실행 (대상 파일만)
+if [ -f "package.json" ] && [ -f "$FILEPATH" ]; then
+  npx prettier --write "$FILEPATH" >/dev/null 2>&1 || true
 fi
 
-echo '{"decision": "allow"}'
+if [ -f "Cargo.toml" ] && [ -f "$FILEPATH" ]; then
+  rustfmt "$FILEPATH" >/dev/null 2>&1 || true
+fi
+
+echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","permissionDecision":"allow"}}'
 `,
   "stop-verify.sh": `#!/usr/bin/env bash
 # Stop 시 최종 검증
 set -e
 
-INPUT=\$(cat)
+INPUT=$(cat)
 # 추가 검증 로직 삽입 가능
 
-echo '{"decision": "allow"}'
+echo '{"hookSpecificOutput":{"hookEventName":"Stop","permissionDecision":"allow"}}'
 `,
 };
 
@@ -401,15 +416,11 @@ timeout = 30
 
 const MCP_JSON = {
   mcpServers: {
-    "context7": {
+    context7: {
       url: "https://mcp.context7.com/mcp",
       headers: {
-        CONTEXT7_API_KEY: "${CONTEXT7_API_KEY}",
+        CONTEXT7_API_KEY: "\${CONTEXT7_API_KEY}",
       },
-    },
-    "omk-project": {
-      command: "node",
-      args: [".omk/mcp/omk-project-server.js"],
     },
   },
 };
@@ -439,7 +450,7 @@ coding_thinking = "enabled"
 const MEMORY_FILES: Record<string, string> = {
   "project.md": "# 프로젝트 메모리\n\n프로젝트 전반 컨텍스트를 기록합니다.\n",
   "decisions.md": "# 결정 사항\n\n중요한 아키텍처/설계 결정을 기록합니다.\n",
-  "commands.md": "# 자주 쓰는 명령어\n\n```bash\n# 예시\n```\n",
+  "commands.md": "# 자주 쓰는 명령어\n\n\`\`\`bash\n# 예시\n\`\`\`\n",
   "risks.md": "# 알려진 리스크\n\n- \n",
 };
 
@@ -458,7 +469,6 @@ export async function initCommand(options: { profile: string }): Promise<void> {
     ".omk/agents/roles",
     ".omk/prompts/role-addons",
     ".omk/hooks",
-    // skills and flows are now installed under .kimi/skills and .agents/skills
     ".omk/worktrees",
     ".omk/logs",
     ".kimi/skills",
@@ -469,8 +479,13 @@ export async function initCommand(options: { profile: string }): Promise<void> {
     await mkdir(join(root, d), { recursive: true });
   }
 
-  // 2. Write AGENTS.md
-  await writeFile(join(root, "AGENTS.md"), AGENTS_MD);
+  // 2. Write AGENTS.md (skip if exists)
+  const agentsMdPath = join(root, "AGENTS.md");
+  if (await pathExists(agentsMdPath)) {
+    console.log("   ℹ️ AGENTS.md 이미 존재 — 건너뜀");
+  } else {
+    await writeFile(agentsMdPath, AGENTS_MD);
+  }
 
   // 3. Write agents
   await writeFile(join(root, ".omk/agents/root.yaml"), ROOT_AGENT_YAML);
@@ -481,18 +496,24 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   // 4. Write prompts
   await writeFile(join(root, ".omk/prompts/root.md"), ROOT_PROMPT_MD);
 
-  // 5. Copy Kimi-specific skills to .kimi/skills
-  const kimiSkillsSrc = join(root, "templates/skills/kimi");
-  const kimiSkillsDest = join(root, ".kimi/skills");
+  // 5. Copy Kimi-specific skills from package templates to .kimi/skills
+  const kimiSkillsSrc = join(packageRoot, "templates", "skills", "kimi");
+  const kimiSkillsDest = join(root, ".kimi", "skills");
   if (await pathExists(kimiSkillsSrc)) {
+    console.log("   📦 Kimi skills 복사 중...");
     await copyTemplateDir(kimiSkillsSrc, kimiSkillsDest);
+  } else {
+    console.log("   ⚠️ Kimi skills 템플릿 없음 — templates/skills/kimi 확인");
   }
 
-  // 6. Copy portable skills to .agents/skills
-  const agentsSkillsSrc = join(root, "templates/skills/agents");
-  const agentsSkillsDest = join(root, ".agents/skills");
+  // 6. Copy portable skills from package templates to .agents/skills
+  const agentsSkillsSrc = join(packageRoot, "templates", "skills", "agents");
+  const agentsSkillsDest = join(root, ".agents", "skills");
   if (await pathExists(agentsSkillsSrc)) {
+    console.log("   📦 Portable skills 복사 중...");
     await copyTemplateDir(agentsSkillsSrc, agentsSkillsDest);
+  } else {
+    console.log("   ⚠️ Portable skills 템플릿 없음 — templates/skills/agents 확인");
   }
 
   // 7. Write hooks
@@ -522,7 +543,9 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   };
   for (const [name, content] of Object.entries(docs)) {
     const docPath = join(root, name);
-    if (!(await pathExists(docPath))) {
+    if (await pathExists(docPath)) {
+      console.log(`   ℹ️ ${name} 이미 존재 — 건너뜀`);
+    } else {
       await writeFile(docPath, content);
     }
   }

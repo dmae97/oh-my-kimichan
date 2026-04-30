@@ -2,7 +2,6 @@ import { readdir } from "fs/promises";
 import { join } from "path";
 import { getOmkPath, pathExists } from "../util/fs.js";
 import { runShell } from "../util/shell.js";
-import { getGitStatus } from "../util/git.js";
 import { getCurrentBranch } from "../util/git.js";
 
 export async function mergeCommand(options: { run?: string }): Promise<void> {
@@ -46,17 +45,15 @@ export async function mergeCommand(options: { run?: string }): Promise<void> {
     const wtPath = join(worktreesDir, w);
     console.log(`   Merging ${w}...`);
 
-    // Try cherry-pick or diff-based merge
     const diffResult = await runShell("git", ["-C", wtPath, "diff", currentBranch], { timeout: 15000 });
     if (diffResult.failed || !diffResult.stdout.trim()) {
       console.log(`     -> 변경사항 없음 또는 오류, 스킵`);
       continue;
     }
 
-    // Apply diff
     const applyResult = await runShell("git", ["apply", "--check"], {
       cwd: process.cwd(),
-      env: { GIT_DIFF: diffResult.stdout },
+      input: diffResult.stdout,
       timeout: 15000,
     });
     if (applyResult.failed) {
@@ -64,7 +61,6 @@ export async function mergeCommand(options: { run?: string }): Promise<void> {
       continue;
     }
 
-    // For MVP just show instructions
     console.log(`     -> diff ready. 수동 병합: git cherry-pick $(git -C ${wtPath} rev-parse HEAD)`);
   }
 

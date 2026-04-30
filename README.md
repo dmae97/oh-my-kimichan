@@ -14,28 +14,68 @@ Turn [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli) into a **worktree-b
 ## Install
 
 ```bash
-npm install -g oh-my-kimi
+npm install -g oh-my-kimichan
 ```
 
 ## Quick Start
 
 ```bash
-omk init --with-design-md
+omk init
 omk doctor
 omk chat
 ```
 
+## CLI Commands
+
+### ✅ Implemented
+
+| Command | Description |
+|---------|-------------|
+| `omk init` | Scaffold `.omk/`, `.kimi/skills/`, `.agents/skills/`, docs, hooks, agents |
+| `omk doctor` | Check Node, Kimi CLI, Git, jq, tmux, scaffold |
+| `omk chat` | Interactive Kimi with agent/config/MCP auto-detection |
+| `omk plan <goal>` | Plan-only mode |
+| `omk run <flow> <goal>` | Flow-based task execution |
+| `omk team` | tmux-based multi-agent team session |
+| `omk merge` | Merge worktree results (diff-based) |
+| `omk design init` | Create DESIGN.md with frontmatter |
+| `omk google stitch-install` | Install Google Stitch skills |
+| `omk sync` | Sync Kimi assets |
+
+### 🧪 Experimental
+
+| Command | Status | Notes |
+|---------|--------|-------|
+| `omk hud` | Partial | Run status display |
+| `omk design lint` | Stub | Validation not yet implemented |
+| `omk design diff` | Stub | Diff not yet implemented |
+| `omk design export` | Stub | Export not yet implemented |
+
+### 📋 Roadmap
+
+| Feature | Target |
+|---------|--------|
+| Wire mode controller | v0.2 |
+| Live HUD with metrics | v0.2 |
+| Merge queue + auto-apply | v0.3 |
+| Worktree auto-provision | v0.3 |
+| Model router | v0.4 |
+| MCP project server | v0.5 |
+| CI agent mode | v0.5 |
+
 ## Worktree Team Demo
 
 ```bash
-omk team "refactor this repo safely" --workers 4
+omk team
+# tmux 세션 내에서 창 전환: Ctrl+b, 0~3
+# 세션 분리: Ctrl+b, d
+# 재연결: omk team
 ```
 
 ## DESIGN.md Demo
 
 ```bash
 omk design init
-omk design lint
 ```
 
 ## Architecture
@@ -43,12 +83,12 @@ omk design lint
 ```
 User / omk CLI
   └── OMK Controller
-        ├── DAG Scheduler
-        ├── HUD / Trace Viewer
+        ├── DAG Scheduler      (planned)
+        ├── HUD / Trace Viewer (partial)
         ├── Memory & Context Broker
-        ├── Safety / Approval Gateway
+        ├── Safety / Approval Gateway (hooks)
         └── Kimi Native Layer
-              ├── Wire Mode (JSON-RPC)
+              ├── Wire Mode (JSON-RPC) — experimental
               ├── Print Mode (non-interactive)
               ├── Agents / Subagents
               ├── Skills / Flows
@@ -56,26 +96,10 @@ User / omk CLI
               └── MCP Servers
 ```
 
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `omk init` | Scaffold project |
-| `omk doctor` | Check environment |
-| `omk chat` | Interactive root coordinator |
-| `omk plan <goal>` | Plan-only mode |
-| `omk run <flow> <goal>` | DAG-based long task |
-| `omk team <goal> --workers N` | Parallel worktree team |
-| `omk hud` | Live status HUD |
-| `omk merge` | Merge results |
-| `omk design init` | Create DESIGN.md |
-| `omk design lint` | Validate DESIGN.md |
-| `omk google stitch-install` | Install Google Stitch skills |
-| `omk sync` | Sync assets |
-
 ## Skills
 
 ### Kimi-specific (`.kimi/skills/`)
+
 - `omk-kimi-runtime` — K2.6 runtime policy
 - `omk-plan-first` — Read-only planning
 - `omk-design-md` — DESIGN.md workflow
@@ -88,6 +112,7 @@ User / omk CLI
 - `omk-flow-release` — Release flow
 
 ### Portable (`.agents/skills/`)
+
 - `omk-project-rules` — Project rule discovery
 - `omk-repo-explorer` — Efficient repo exploration
 - `omk-context-broker` — Long-session memory
@@ -114,10 +139,21 @@ User / omk CLI
 ## Safety
 
 Default hooks block destructive commands and secret leakage:
-- `pre-shell-guard.sh`
-- `protect-secrets.sh`
-- `post-format.sh`
-- `stop-verify.sh`
+
+- `pre-shell-guard.sh` — Blocks `rm -rf /`, `sudo`, `git push --force`, etc.
+- `protect-secrets.sh` — Blocks `.env` edits and secret leakage
+- `post-format.sh` — Auto-formats modified files (prettier, rustfmt)
+- `stop-verify.sh` — Final verification on stop
+
+> ⚠️ Hooks require `jq` to be installed. Without `jq`, hooks fail-open and security policies are bypassed.
+
+## Requirements
+
+- Node.js >= 20
+- Kimi CLI (v1.39.0+)
+- `jq` (for hooks)
+- `git`
+- `tmux` (optional, for `omk team`)
 
 ## License
 
