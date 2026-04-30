@@ -1,0 +1,23 @@
+name: Bug Report
+description: Report a bug in oh-my-kimi
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: Description
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Reproduction
+      description: Steps to reproduce.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Version
+      description: oh-my-kimi version
+    validations:
+      required: true

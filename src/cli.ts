@@ -8,6 +8,8 @@ import { runCommand } from "./commands/run.js";
 import { hudCommand } from "./commands/hud.js";
 import { mergeCommand } from "./commands/merge.js";
 import { syncCommand } from "./commands/sync.js";
+import { designInitCommand, designLintCommand, designDiffCommand, designExportCommand } from "./commands/design.js";
+import { stitchInstallCommand } from "./commands/google.js";
 
 const program = new Command();
 
@@ -60,6 +62,30 @@ program
   .command("sync")
   .description("Kimi assets 재생성 및 동기화")
   .action(syncCommand);
+
+const design = program.command("design").description("Google DESIGN.md 관련 명령");
+design
+  .command("init")
+  .description("DESIGN.md 생성")
+  .action(designInitCommand);
+design
+  .command("lint [file]")
+  .description("DESIGN.md 검증")
+  .action(designLintCommand);
+design
+  .command("diff [from] [to]")
+  .description("DESIGN.md diff")
+  .action(designDiffCommand);
+design
+  .command("export <format> [file]")
+  .description("DESIGN.md export (tailwind 등)")
+  .action(designExportCommand);
+
+const google = program.command("google").description("Google 생태계 연동");
+google
+  .command("stitch-install")
+  .description("Google Stitch skills 설치")
+  .action(stitchInstallCommand);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error("Unexpected error:", err);

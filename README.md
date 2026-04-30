@@ -1,56 +1,44 @@
-# oh-my-kimichan 🚀
+# oh-my-kimi
 
-> **Kimi Code CLI용 multi-agent orchestration harness**
->
-> Kimi K2.6의 long-horizon coding, 256K context, thinking/non-thinking, multimodal, agent swarm 성향을 실제 개발 워크플로로 쓰기 위한 설치형 런타임.
+> **Kimi is the agent. oh-my-kimi is the team runtime.**
 
-## 개요
+Turn [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli) into a **worktree-based coding team** with DESIGN.md-aware UI generation, AGENTS.md compatibility, and live quality gates.
 
-`oh-my-kimichan`(이하 OMK)은 Kimi CLI 위에 올라가는 **오케스트레이션 레이어**입니다. Kimi CLI의 agent, subagent, skill, flow, hook, MCP, session, wire, print 기능을 그대로 활용하며, DAG 기반 작업 스케줄링, worktree 기반 병렬 팀, 메모리/컨텍스트 브로커, HUD, 품질 게이트를 추가합니다.
+- Kimi K2.6-aware workflows
+- Worktree-based parallel coding team
+- [Google DESIGN.md](https://github.com/google-labs-code/design.md) integration
+- AGENTS.md / GEMINI.md / CLAUDE.md compatibility
+- Quality gates before completion
+- Live HUD for workers, tests, risk, and merge state
 
-## 설치
+## Install
 
 ```bash
-npm install -g oh-my-kimichan
+npm install -g oh-my-kimi
 ```
 
-또는 로컬:
+## Quick Start
 
 ```bash
-git clone https://github.com/your-org/oh-my-kimichan.git
-cd oh-my-kimichan
-npm install
-npm run build
-npm link
-```
-
-## 사전 요구사항
-
-- Node.js >= 20
-- [Kimi CLI](https://moonshotai.github.io/kimi-cli/) 설치 및 인증 완료
-- Git
-- (선택) tmux — `omk team` 사용 시 권장
-
-## 빠른 시작
-
-```bash
-# 1. 프로젝트 초기화
-omk init
-
-# 2. 상태 검사
+omk init --with-design-md
 omk doctor
-
-# 3. 대화형 실행
 omk chat
-
-# 4. 계획 수립
-omk plan "NestJS auth module을 OAuth2 기반으로 리팩터링"
-
-# 5. DAG 기반 장기 작업
-omk run feature-dev "관리자 대시보드에 사용자 권한 관리 추가"
 ```
 
-## 아키텍처
+## Worktree Team Demo
+
+```bash
+omk team "refactor this repo safely" --workers 4
+```
+
+## DESIGN.md Demo
+
+```bash
+omk design init
+omk design lint
+```
+
+## Architecture
 
 ```
 User / omk CLI
@@ -68,86 +56,69 @@ User / omk CLI
               └── MCP Servers
 ```
 
-## CLI 명령어
+## CLI Commands
 
-| 명령 | 설명 |
-|------|------|
-| `omk init` | 프로젝트에 scaffold 생성 |
-| `omk doctor` | Kimi CLI 및 환경 검사 |
-| `omk chat` | 대화형 root coordinator 실행 |
-| `omk plan <goal>` | 계획 수립 |
-| `omk run <flow> <goal>` | DAG 기반 장기 작업 |
-| `omk team <goal> --workers N` | 병렬 팀 실행 |
-| `omk hud` | 현재 run 상태 보기 |
-| `omk merge --run latest` | 결과 병합 |
-| `omk sync` | Kimi assets 재생성 |
+| Command | Description |
+|---------|-------------|
+| `omk init` | Scaffold project |
+| `omk doctor` | Check environment |
+| `omk chat` | Interactive root coordinator |
+| `omk plan <goal>` | Plan-only mode |
+| `omk run <flow> <goal>` | DAG-based long task |
+| `omk team <goal> --workers N` | Parallel worktree team |
+| `omk hud` | Live status HUD |
+| `omk merge` | Merge results |
+| `omk design init` | Create DESIGN.md |
+| `omk design lint` | Validate DESIGN.md |
+| `omk google stitch-install` | Install Google Stitch skills |
+| `omk sync` | Sync assets |
 
-## 프로젝트 구조
+## Skills
 
-```
-project/
-  AGENTS.md
-  .omk/
-    config.toml
-    agents/
-      root.yaml
-      roles/
-        interviewer.yaml
-        architect.yaml
-        explorer.yaml
-        coder.yaml
-        reviewer.yaml
-        qa.yaml
-        integrator.yaml
-        researcher.yaml
-        vision-debugger.yaml
-    skills/
-      code-review/
-      release/
-      ui-review/
-      perf-audit/
-      industrial-control-loop/
-    flows/
-      feature-dev/
-      refactor/
-      bugfix/
-      pr-review/
-    hooks/
-      pre-shell-guard.sh
-      protect-secrets.sh
-      post-format.sh
-      stop-verify.sh
-    memory/
-      project.md
-      decisions.md
-      commands.md
-      risks.md
-    mcp.json
-  .kimi/skills   -> .omk/skills (symlink)
-  .agents/skills
-```
+### Kimi-specific (`.kimi/skills/`)
+- `omk-kimi-runtime` — K2.6 runtime policy
+- `omk-plan-first` — Read-only planning
+- `omk-design-md` — DESIGN.md workflow
+- `omk-multimodal-ui-review` — Screenshot/video review
+- `omk-flow-feature-dev` — Feature dev flow
+- `omk-flow-bugfix` — Bugfix flow
+- `omk-flow-pr-review` — PR review flow
+- `omk-flow-team-run` — Team run flow
+- `omk-flow-design-to-code` — Design-to-code flow
+- `omk-flow-release` — Release flow
 
-## Safety & Hooks
+### Portable (`.agents/skills/`)
+- `omk-project-rules` — Project rule discovery
+- `omk-repo-explorer` — Efficient repo exploration
+- `omk-context-broker` — Long-session memory
+- `omk-worktree-team` — Worktree team policy
+- `omk-task-router` — Task routing
+- `omk-quality-gate` — Completion gate
+- `omk-code-review` — Adversarial review
+- `omk-test-debug-loop` — Debug loop
+- `omk-security-review` — Security review
+- `omk-secret-guard` — Secret protection
+- `omk-typescript-strict` — TS strict mode
+- `omk-python-typing` — Python typing
+- `omk-git-commit-pr` — Commit/PR summary
+- `omk-backend-api-review` — Backend API review
+- `omk-frontend-ui-review` — Frontend UI review
+- `omk-frontend-implementation` — Frontend implementation
+- `omk-docs-release` — Documentation/release
+- `omk-research-verify` — Research verification
+- `omk-troubleshooting` — Troubleshooting
+- `omk-design-system` — Design system
+- `omk-industrial-control-loop` — Control-loop review
+- `omk-adaptorch-dag` — DAG orchestration
 
-OMK는 기본적으로 아래 보안 hook을 포함합니다:
+## Safety
 
-- **pre-shell-guard**: 위험 명령(`rm -rf /`, `sudo`, `git push --force` 등) 차단
-- **protect-secrets**: `.env` 직접 수정 및 secret 노출 차단
-- **post-format**: 저장 후 자동 포맷팅
-- **stop-verify**: 종료 시 최종 검증
+Default hooks block destructive commands and secret leakage:
+- `pre-shell-guard.sh`
+- `protect-secrets.sh`
+- `post-format.sh`
+- `stop-verify.sh`
 
-## Thinking / Model Router
-
-OMK는 작업 종류에 따라 Kimi K2.6의 thinking mode를 자동 전환합니다.
-
-| 작업 종류 | thinking | 비고 |
-|-----------|----------|------|
-| architecture, coding, review, interview, qa | enabled | long-horizon reasoning |
-| research, commit, summarize | disabled | fast path 또는 web/search 호환 |
-| vision | enabled | multimodal analysis |
-
-**주의**: K2.6은 `temperature`, `top_p` 커스텀을 허용하지 않습니다. OMK는 이를 노출하지 않습니다.
-
-## 라이선스
+## License
 
 MIT

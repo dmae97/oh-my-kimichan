@@ -4,45 +4,53 @@ import { getProjectRoot, pathExists } from "../util/fs.js";
 import { isGitRepo } from "../util/git.js";
 import { runShell } from "../util/shell.js";
 
-const AGENTS_MD = `# AGENTS.md — oh-my-kimichan 프로젝트 에이전트 가이드
+const AGENTS_MD = `# AGENTS.md
 
-> 이 프로젝트는 [oh-my-kimichan](https://github.com/your-org/oh-my-kimichan)으로 관리됩니다.
+## Project
 
-## 역할 구성
+oh-my-kimi is a Kimi Code CLI orchestration harness.
 
-- \`root\` — 전체 조정 및 DAG 관리
-- \`interviewer\` — 요구사항 인터뷰
-- \`architect\` — 아키텍처 설계 (read-only)
-- \`explorer\` — 코드베이스 탐색
-- \`coder\` — 구현 (worktree 기반)
-- \`reviewer\` — 코드 리뷰
-- \`qa\` — 테스트 및 검증
-- \`integrator\` — 병합 및 충돌 해결
-- \`researcher\` — 웹/문서 리서치 (thinking disabled)
-- \`vision-debugger\` — UI/스크린샷 분석 (multimodal)
+## Commands
 
-## 메모리 위치
+\`\`\`bash
+pnpm install
+pnpm build
+pnpm test
+pnpm lint
+pnpm typecheck
+\`\`\`
 
-- \`.omk/memory/project.md\` — 프로젝트 컨텍스트
-- \`.omk/memory/decisions.md\` — 결정 사항
-- \`.omk/memory/commands.md\` — 자주 쓰는 명령어
-- \`.omk/memory/risks.md\` — 알려진 리스크
+## Agent Rules
 
-## 품질 게이트
+* Read this file before implementation.
+* Read \`DESIGN.md\` before UI/frontend work.
+* Use \`.omk/memory/project.md\` for stable project facts.
+* Do not edit secrets.
+* Do not claim tests passed unless commands were run.
+* Prefer small, reviewable diffs.
+* Use worktrees for parallel implementation.
 
-모든 완료는 아래를 통과해야 합니다:
+## Quality Gates
 
-1. lint 통과
-2. typecheck 통과
-3. test 통과
-4. build 통과
-5. reviewer 승인
+Before completion, run available checks:
 
-## 안전 규칙
+\`\`\`bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+\`\`\`
 
-- 원본 브랜치에서 destructive 명령 금지
-- \`--print\` 모드는 worktree/sandbox에서만 사용
-- secret/credential 수정 금지
+## Protected Files
+
+\`\`\`txt
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+service-account*.json
+\`\`\`
 `;
 
 const ROOT_AGENT_YAML = `version: 1
@@ -151,6 +159,95 @@ agent:
     vision: true
 `,
 };
+
+const DESIGN_MD = `# DESIGN.md
+
+## Overview
+
+Project visual identity and design system.
+
+## Colors
+
+- Primary: #111827
+- Accent: #7C3AED
+- Success: #059669
+- Warning: #D97706
+- Danger: #DC2626
+
+## Typography
+
+- Inter, system-ui
+
+## Rules
+
+- Use tokens before inventing new values.
+- Keep components compact and status-aware.
+`;
+
+const GEMINI_MD = `# GEMINI.md
+
+@./AGENTS.md
+@./DESIGN.md
+
+Use AGENTS.md as the canonical project instruction source.
+Use DESIGN.md as the canonical visual identity source.
+`;
+
+const CLAUDE_MD = `# CLAUDE.md
+
+@./AGENTS.md
+@./DESIGN.md
+
+Use AGENTS.md as the canonical project instruction source.
+Use DESIGN.md for UI/frontend work.
+`;
+
+const ROADMAP_MD = `# Roadmap
+
+## v0.1
+- init / doctor / chat
+- P0 skills
+- AGENTS.md / DESIGN.md generation
+- quality gate hooks
+
+## v0.2
+- Wire controller
+- HUD
+- run state
+- worker logs
+
+## v0.3
+- worktree team
+- merge queue
+- reviewer / qa / integrator agents
+
+## v0.4
+- Google DESIGN.md integration
+- Stitch skills installer
+- screenshot UI review
+
+## v0.5
+- MCP project server
+- plugin pack
+- CI agent mode
+`;
+
+const SECURITY_MD = `# Security Policy
+
+## Reporting Vulnerabilities
+
+Please report security issues via GitHub Issues with the \`security\` label.
+
+## Built-in Protections
+
+oh-my-kimi includes default hooks to block destructive commands and secret leakage.
+
+## Best Practices
+
+- Review hooks before running in production repositories.
+- Use \`--print\` mode only in disposable worktrees.
+- Never commit secrets into agent memory files.
+`;
 
 const ROOT_PROMPT_MD = `# OMK Root Coordinator System Prompt
 
@@ -413,6 +510,21 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   // 9. Write memory files
   for (const [name, content] of Object.entries(MEMORY_FILES)) {
     await writeFile(join(root, ".omk/memory", name), content);
+  }
+
+  // 10. Write project docs (skip if already exist)
+  const docs: Record<string, string> = {
+    "DESIGN.md": DESIGN_MD,
+    "GEMINI.md": GEMINI_MD,
+    "CLAUDE.md": CLAUDE_MD,
+    "ROADMAP.md": ROADMAP_MD,
+    "SECURITY.md": SECURITY_MD,
+  };
+  for (const [name, content] of Object.entries(docs)) {
+    const docPath = join(root, name);
+    if (!(await pathExists(docPath))) {
+      await writeFile(docPath, content);
+    }
   }
 
   console.log("✅ oh-my-kimichan scaffold 생성 완료!");

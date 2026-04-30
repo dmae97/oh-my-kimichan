@@ -8,7 +8,8 @@ description: Discover and follow project rules from AGENTS.md, package files, li
 Before changing code:
 
 1. Read `AGENTS.md` if present.
-2. Inspect package manager files:
+2. Read `DESIGN.md` for UI/frontend tasks if present.
+3. Inspect package manager files:
    - `package.json`
    - `pnpm-lock.yaml`
    - `yarn.lock`
