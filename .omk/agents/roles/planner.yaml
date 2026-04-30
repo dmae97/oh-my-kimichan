@@ -1,0 +1,11 @@
+version: 1
+agent:
+  extend: default
+  name: omk-planner
+  system_prompt_args:
+    OMK_ROLE: "planner"
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell

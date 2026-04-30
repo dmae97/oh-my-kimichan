@@ -4,7 +4,8 @@ agent:
   name: omk-architect
   system_prompt_args:
     OMK_ROLE: "architect"
-  thinking: enabled
-  restrictions:
-    write: false
-    shell: false
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell

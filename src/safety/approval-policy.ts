@@ -1,4 +1,4 @@
-export type ApprovalPolicy = "interactive" | "auto" | "yolo";
+export type ApprovalPolicy = "interactive" | "auto" | "yolo" | "block";
 
 export interface ApprovalContext {
   tool: string;
@@ -7,16 +7,27 @@ export interface ApprovalContext {
   runId?: string;
 }
 
+const SAFE_TOOLS = [
+  "ReadFile", "Glob", "Grep", "SearchWeb", "FetchURL",
+  "ctx_read", "ctx_tree", "ctx_search", "ctx_multi_read", "ctx_overview",
+  "browser_snapshot", "list_console_messages",
+];
+
+const DESTRUCTIVE_TOOLS = ["Shell", "WriteFile", "StrReplaceFile", "applyDiff"];
+
 export function decideApproval(
   policy: ApprovalPolicy,
   ctx: ApprovalContext
 ): "allow" | "block" | "ask" {
   if (policy === "yolo") return "allow";
+  if (policy === "block") return "block";
   if (policy === "auto") {
-    // Auto-approve read-only and safe tools
-    const safeTools = ["ReadFile", "Glob", "Grep", "SearchWeb", "FetchURL"];
-    if (safeTools.includes(ctx.tool)) return "allow";
+    if (SAFE_TOOLS.includes(ctx.tool)) return "allow";
+    if (DESTRUCTIVE_TOOLS.includes(ctx.tool)) return "ask";
     return "ask";
   }
+  // interactive
+  if (DESTRUCTIVE_TOOLS.includes(ctx.tool)) return "ask";
+  if (SAFE_TOOLS.includes(ctx.tool)) return "allow";
   return "ask";
 }

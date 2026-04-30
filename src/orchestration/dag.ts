@@ -16,6 +16,35 @@ export interface Dag {
 }
 
 export function createDag(def: { nodes: Omit<DagNode, "status" | "retries">[] }): Dag {
+  // 순환 의존성 감지
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const nodeMap = new Map(def.nodes.map((n) => [n.id, n]));
+
+  function visit(id: string, path: string[]): void {
+    if (visiting.has(id)) {
+      const cycle = path.slice(path.indexOf(id)).concat(id).join(" -> ");
+      throw new Error(`DAG circular dependency detected: ${cycle}`);
+    }
+    if (visited.has(id)) return;
+    visiting.add(id);
+    const node = nodeMap.get(id);
+    if (node) {
+      for (const dep of node.dependsOn) {
+        if (!nodeMap.has(dep)) {
+          throw new Error(`DAG missing dependency: node "${id}" depends on unknown "${dep}"`);
+        }
+        visit(dep, [...path, id]);
+      }
+    }
+    visiting.delete(id);
+    visited.add(id);
+  }
+
+  for (const n of def.nodes) {
+    visit(n.id, []);
+  }
+
   return {
     nodes: def.nodes.map((n) => ({
       ...n,

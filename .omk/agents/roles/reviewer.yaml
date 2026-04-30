@@ -4,6 +4,8 @@ agent:
   name: omk-reviewer
   system_prompt_args:
     OMK_ROLE: "reviewer"
-  thinking: enabled
-  restrictions:
-    write: false
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell

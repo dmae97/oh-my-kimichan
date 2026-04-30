@@ -4,6 +4,8 @@ agent:
   name: omk-interviewer
   system_prompt_args:
     OMK_ROLE: "interviewer"
-  thinking: enabled
-  restrictions:
-    write: false
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell

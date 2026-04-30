@@ -2,9 +2,19 @@
 # PreShellUse Guard — 위험 명령 차단
 set -e
 
+# jq/python3 없으면 보안 게이트를 닫음 (deny by default)
+if command -v python3 &>/dev/null; then
+  PY=python3
+elif command -v python &>/dev/null; then
+  PY=python
+else
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"python3 not installed — pre-shell-guard cannot validate commands"}}'
+  exit 0
+fi
+
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
-ARGS=$(echo "$INPUT" | jq -r '.tool_input.args // empty')
+COMMAND=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("command",""))')
+ARGS=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("args",""))')
 
 FULL="$COMMAND $ARGS"
 
@@ -23,9 +33,9 @@ BLOCKED=(
 
 for pattern in "${BLOCKED[@]}"; do
   if [[ "$FULL" == *"$pattern"* ]]; then
-    echo '{"decision": "block", "reason": "Potentially destructive command blocked by pre-shell-guard"}'
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Potentially destructive command blocked by pre-shell-guard"}}'
     exit 0
   fi
 done
 
-echo '{"decision": "allow"}'
+echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'

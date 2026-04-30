@@ -1,49 +1,14 @@
-import { mkdir, writeFile, symlink, access, constants } from "fs/promises";
-import { join, relative } from "path";
-import { getProjectRoot } from "../util/fs.js";
+import { mkdir, writeFile, readFile, symlink, access, constants, copyFile, readdir } from "fs/promises";
+import { join, relative, dirname } from "path";
+import { fileURLToPath } from "node:url";
+import { getProjectRoot, pathExists, syncAllKimiGlobals } from "../util/fs.js";
 import { isGitRepo } from "../util/git.js";
 import { runShell } from "../util/shell.js";
+import { style, header, status } from "../util/theme.js";
 
-const AGENTS_MD = `# AGENTS.md — oh-my-kimichan 프로젝트 에이전트 가이드
-
-> 이 프로젝트는 [oh-my-kimichan](https://github.com/your-org/oh-my-kimichan)으로 관리됩니다.
-
-## 역할 구성
-
-- \`root\` — 전체 조정 및 DAG 관리
-- \`interviewer\` — 요구사항 인터뷰
-- \`architect\` — 아키텍처 설계 (read-only)
-- \`explorer\` — 코드베이스 탐색
-- \`coder\` — 구현 (worktree 기반)
-- \`reviewer\` — 코드 리뷰
-- \`qa\` — 테스트 및 검증
-- \`integrator\` — 병합 및 충돌 해결
-- \`researcher\` — 웹/문서 리서치 (thinking disabled)
-- \`vision-debugger\` — UI/스크린샷 분석 (multimodal)
-
-## 메모리 위치
-
-- \`.omk/memory/project.md\` — 프로젝트 컨텍스트
-- \`.omk/memory/decisions.md\` — 결정 사항
-- \`.omk/memory/commands.md\` — 자주 쓰는 명령어
-- \`.omk/memory/risks.md\` — 알려진 리스크
-
-## 품질 게이트
-
-모든 완료는 아래를 통과해야 합니다:
-
-1. lint 통과
-2. typecheck 통과
-3. test 통과
-4. build 통과
-5. reviewer 승인
-
-## 안전 규칙
-
-- 원본 브랜치에서 destructive 명령 금지
-- \`--print\` 모드는 worktree/sandbox에서만 사용
-- secret/credential 수정 금지
-`;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const packageRoot = join(__dirname, "..", "..");
 
 const ROOT_AGENT_YAML = `version: 1
 agent:
@@ -52,20 +17,22 @@ agent:
   system_prompt_path: ../prompts/root.md
   system_prompt_args:
     OMK_ROLE: "root-coordinator"
-    OMK_MEMORY_PATH: ".omk/memory/project.md"
   subagents:
-    architect:
-      path: ./roles/architect.yaml
-      description: "Read-only architecture planning"
     explorer:
       path: ./roles/explorer.yaml
-      description: "Fast codebase exploration"
+      description: "Read-only repository exploration and context mapping"
+    planner:
+      path: ./roles/planner.yaml
+      description: "Architecture, refactor, migration, and implementation planning"
+    coder:
+      path: ./roles/coder.yaml
+      description: "Scoped implementation in the current project"
     reviewer:
       path: ./roles/reviewer.yaml
-      description: "Adversarial code review"
+      description: "Adversarial code review and risk detection"
     qa:
       path: ./roles/qa.yaml
-      description: "Test and verification"
+      description: "Run and analyze lint, typecheck, test, and build results"
 `;
 
 const ROLE_YAMLS: Record<string, string> = {
@@ -75,9 +42,11 @@ agent:
   name: omk-interviewer
   system_prompt_args:
     OMK_ROLE: "interviewer"
-  thinking: enabled
-  restrictions:
-    write: false
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell
 `,
   architect: `version: 1
 agent:
@@ -85,10 +54,23 @@ agent:
   name: omk-architect
   system_prompt_args:
     OMK_ROLE: "architect"
-  thinking: enabled
-  restrictions:
-    write: false
-    shell: false
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell
+`,
+  planner: `version: 1
+agent:
+  extend: default
+  name: omk-planner
+  system_prompt_args:
+    OMK_ROLE: "planner"
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell
 `,
   explorer: `version: 1
 agent:
@@ -96,7 +78,6 @@ agent:
   name: omk-explorer
   system_prompt_args:
     OMK_ROLE: "explorer"
-  thinking: disabled
 `,
   coder: `version: 1
 agent:
@@ -104,7 +85,6 @@ agent:
   name: omk-coder
   system_prompt_args:
     OMK_ROLE: "coder"
-  thinking: enabled
 `,
   reviewer: `version: 1
 agent:
@@ -112,9 +92,11 @@ agent:
   name: omk-reviewer
   system_prompt_args:
     OMK_ROLE: "reviewer"
-  thinking: enabled
-  restrictions:
-    write: false
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell
 `,
   qa: `version: 1
 agent:
@@ -122,7 +104,6 @@ agent:
   name: omk-qa
   system_prompt_args:
     OMK_ROLE: "qa"
-  thinking: enabled
 `,
   integrator: `version: 1
 agent:
@@ -130,7 +111,6 @@ agent:
   name: omk-integrator
   system_prompt_args:
     OMK_ROLE: "integrator"
-  thinking: enabled
 `,
   researcher: `version: 1
 agent:
@@ -138,7 +118,6 @@ agent:
   name: omk-researcher
   system_prompt_args:
     OMK_ROLE: "researcher"
-  thinking: disabled
 `,
   "vision-debugger": `version: 1
 agent:
@@ -146,195 +125,192 @@ agent:
   name: omk-vision-debugger
   system_prompt_args:
     OMK_ROLE: "vision-debugger"
-  thinking: enabled
-  capabilities:
-    vision: true
 `,
 };
 
-const ROOT_PROMPT_MD = `# OMK Root Coordinator System Prompt
+const DESIGN_MD = `---
+title: "Design System"
+description: "Project visual identity and design system"
+version: "1.0"
+---
 
-당신은 oh-my-kimichan의 루트 코디네이터입니다.
+# DESIGN.md
 
-## 역할
-- 사용자 요구사항을 인터뷰하고 명확히 합니다.
-- DAG 기반 실행 계획을 수립합니다.
-- Worker를 분배하고 진행 상황을 추적합니다.
-- 품질 게이트 통과 전까지 완료를 금지합니다.
-- Merge Queue를 관리합니다.
+## Overview
 
-## 제약
-- Shell 실행은 approval gateway를 거칩니다.
-- 파일 쓰기는 worktree 할당된 범위 내에서만 가능합니다.
-- 256K context를 낭비하지 않도록 선택적 읽기를 수행합니다.
+Project visual identity and design system.
 
-## 도구
-- Kimi built-in Agent tool
-- AskUserQuestion
-- SetTodoList
-- ReadFile, Glob, Grep (read-only)
-- OMK external tools (Wire 등록)
+## Colors
 
-## 메모리 경로
-- {{OMK_MEMORY_PATH}}
+- Primary: #111827
+- Accent: #7C3AED
+- Success: #059669
+- Warning: #D97706
+- Danger: #DC2626
+
+## Typography
+
+- Inter, system-ui
+
+## Rules
+
+- Use tokens before inventing new values.
+- Keep components compact and status-aware.
 `;
 
-const SKILL_TEMPLATES: Record<string, string> = {
-  "code-review": `---
-name: code-review
-description: 코드 리뷰 수행
-type: skill
----
+const GEMINI_MD = `# GEMINI.md
 
-# 코드 리뷰 스킬
+@./AGENTS.md
+@./DESIGN.md
 
-## 목표
-제공된 diff나 파일에 대해 체계적인 코드 리뷰를 수행합니다.
+Use AGENTS.md as the canonical project instruction source.
+Use DESIGN.md as the canonical visual identity source.
+`;
 
-## 체크리스트
-- [ ] 보안 취약점 (SQL Injection, XSS, secret 노출)
-- [ ] 에러 핸들링
-- [ ] 타입 안전성
-- [ ] 성능 문제
-- [ ] 테스트 커버리지
-- [ ] 네이밍/가독성
+const CLAUDE_MD = `# CLAUDE.md
 
-## 출력 형식
-\`\`\`json
-{
-  "summary": "...",
-  "issues": [
-    { "severity": "critical|warning|info", "line": 0, "message": "..." }
-  ],
-  "approved": false
+@./AGENTS.md
+@./DESIGN.md
+
+Use AGENTS.md as the canonical project instruction source.
+Use DESIGN.md for UI/frontend work.
+`;
+
+const ROADMAP_MD = `# Roadmap
+
+## v0.1
+- init / doctor / chat / team
+- P0 skills
+- AGENTS.md / DESIGN.md generation
+- quality gate hooks
+
+## v0.2
+- Wire controller
+- HUD
+- run state
+- worker logs
+
+## v0.3
+- worktree team
+- merge queue
+- reviewer / qa / integrator agents
+
+## v0.4
+- Google DESIGN.md integration
+- Stitch skills installer
+- screenshot UI review
+
+## v0.5
+- MCP project server
+- plugin pack
+- CI agent mode
+`;
+
+const SECURITY_MD = `# Security Policy
+
+## Reporting Vulnerabilities
+
+Please report security issues via GitHub Issues with the \`security\` label.
+
+## Built-in Protections
+
+oh-my-kimi includes default hooks to block destructive commands and secret leakage.
+
+## Best Practices
+
+- Review hooks before running in production repositories.
+- Use \`--print\` mode only in disposable worktrees.
+- Never commit secrets into agent memory files.
+`;
+
+const ROOT_PROMPT_MD = `# oh-my-kimi Root Agent
+
+You are the oh-my-kimi root coordinator.
+
+You must operate as a Kimi-native coding orchestrator.
+
+## Loaded Project Instructions
+
+\${KIMI_AGENTS_MD}
+
+## Loaded Skills
+
+\${KIMI_SKILLS}
+
+## Global Rules
+
+- Apply AGENTS.md silently.
+- Do not repeat boilerplate.
+- Use SetTodoList for multi-step tasks.
+- Use Agent tool for non-trivial tasks.
+- Use skills when relevant.
+- Use MCP tools when configured and useful.
+- Prefer plan-first execution.
+- Prefer small, reviewable diffs.
+- Verify before completion.
+- Never claim tests passed unless they were run.
+
+## Required Workflow
+
+For non-trivial tasks:
+
+1. Read project instructions.
+2. Create todos.
+3. Launch an appropriate subagent:
+   - explore for repository discovery
+   - plan for architecture/refactor/risky work
+   - coder for implementation
+4. Read relevant skills.
+5. Use MCP if useful.
+6. Implement minimal changes.
+7. Run quality gates.
+8. Review final diff.
+9. Return factual final report.
+
+## Final Report Format
+
+\`\`\`txt
+Changed:
+Files:
+Commands:
+Result:
+Risk:
+\`\`\`
+`;
+
+async function copyTemplateDir(src: string, dest: string): Promise<void> {
+  const entries = await readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = join(src, entry.name);
+    const destPath = join(dest, entry.name);
+    if (entry.isDirectory()) {
+      await mkdir(destPath, { recursive: true });
+      await copyTemplateDir(srcPath, destPath);
+    } else {
+      await mkdir(dirname(destPath), { recursive: true });
+      await copyFile(srcPath, destPath);
+    }
+  }
 }
-\`\`\`
-`,
-  release: `---
-name: release
-description: 릴리스 워크플로우
-type: skill
----
-
-# 릴리스 스킬
-
-1. 버전 범프 (package.json, Cargo.toml 등)
-2. CHANGELOG.md 업데이트
-3. git tag 생성
-4. 빌드/테스트 통과 확인
-5. 배포 명령 실행
-`,
-  "ui-review": `---
-name: ui-review
-description: UI/스크린샷 리뷰
-type: skill
----
-
-# UI 리뷰 스킬
-
-스크린샷이나 비디오를 분석하여:
-- 레이아웃 문제
-- 접근성(a11y) 위반
-- 반응형 깨짐
-- 시각적 일관성
-을 보고합니다.
-`,
-  "perf-audit": `---
-name: perf-audit
-description: 성능 감사
-type: skill
----
-
-# 성능 감사 스킬
-
-- 번들 사이즈 분석
-- 불필요한 리렌더링 탐지
-- 쿼리 N+1 탐지
-- 메모리 누수 의심 지점
-`,
-  "industrial-control-loop": `---
-name: industrial-control-loop
-description: 제어 루프 및 산업 자동화 코드 분석
-type: skill
----
-
-# 산업 제어 루프 스킬
-
-- PLC/ladder logic 검토
-- PID 파라미터 타당성
-- 안전 인터락(interlock) 확인
-- 고장 모드 분석
-- 피드백 루프 안정성
-`,
-};
-
-const FLOW_TEMPLATES: Record<string, string> = {
-  "feature-dev": `---
-name: feature-dev
-description: Full feature development workflow
-type: flow
----
-
-\`\`\`mermaid
-flowchart TD
-  BEGIN --> interview[Clarify user goal and constraints]
-  interview --> explore[Explore repository and summarize architecture]
-  explore --> plan[Write implementation plan]
-  plan --> gate{Is plan specific and testable?}
-  gate -->|No| plan
-  gate -->|Yes| implement[Implement in isolated worktree or assigned scope]
-  implement --> test[Run lint/typecheck/test/build]
-  test --> review{Any critical issue?}
-  review -->|Yes| implement
-  review -->|No| END
-\`\`\`
-`,
-  refactor: `---
-name: refactor
-description: 안전한 리팩터링 워크플로우
-type: flow
----
-
-1. 현재 동작을 보존하는 테스트 작성
-2. 리팩터링 수행
-3. 테스트 통과 확인
-4. diff 리뷰
-5. 병합
-`,
-  bugfix: `---
-name: bugfix
-description: 버그 수정 워크플로우
-type: flow
----
-
-1. 버그 재현 테스트 작성
-2. 루트 코즈 분석
-3. 최소 수정
-4. 회귀 테스트
-5. 리뷰 및 병합
-`,
-  "pr-review": `---
-name: pr-review
-description: Pull Request 리뷰 워크플로우
-type: flow
----
-
-1. PR 설명 및 컨텍스트 파악
-2. diff 분석
-3. 코드 리뷰 스킬 실행
-4. CI 결과 확인
-5. 승인/변경 요청
-`,
-};
 
 const HOOK_SCRIPTS: Record<string, string> = {
   "pre-shell-guard.sh": `#!/usr/bin/env bash
 # PreShellUse Guard — 위험 명령 차단
 set -e
 
-INPUT=\$(cat)
-COMMAND=\$(echo "\$INPUT" | jq -r '.tool_input.command // empty')
-ARGS=\$(echo "\$INPUT" | jq -r '.tool_input.args // empty')
+# jq/python3 없으면 보안 게이트를 닫음 (deny by default)
+if command -v python3 &>/dev/null; then
+  PY=python3
+elif command -v python &>/dev/null; then
+  PY=python
+else
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"python3 not installed — pre-shell-guard cannot validate commands"}}'
+  exit 0
+fi
+
+INPUT=$(cat)
+COMMAND=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("command",""))')
+ARGS=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("args",""))')
 
 FULL="$COMMAND $ARGS"
 
@@ -344,67 +320,103 @@ BLOCKED=(
   "rm -rf ~"
   "sudo"
   "git push --force"
+  "git push -f"
   "git clean -fdx"
   "chmod -R 777"
   "docker system prune"
   "kubectl delete"
   "aws s3 rm --recursive"
+  "curl | bash"
+  "curl | sh"
+  "wget | bash"
+  "wget | sh"
+  "mkfs"
+  "dd if="
+  "> /dev/"
+  ":(){ :|:& };:"
 )
 
 for pattern in "\${BLOCKED[@]}"; do
-  if [[ "\$FULL" == *"\$pattern"* ]]; then
-    echo '{"decision": "block", "reason": "Potentially destructive command blocked by pre-shell-guard"}'
+  if [[ "$FULL" == *"$pattern"* ]]; then
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Potentially destructive command blocked by pre-shell-guard"}}'
     exit 0
   fi
 done
 
-echo '{"decision": "allow"}'
+echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
 `,
   "protect-secrets.sh": `#!/usr/bin/env bash
 # Secret/환경변수 보호
 set -e
 
-INPUT=\$(cat)
-FILEPATH=\$(echo "\$INPUT" | jq -r '.tool_input.file_path // empty')
-CONTENT=\$(echo "\$INPUT" | jq -r '.tool_input.content // empty')
-
-# .env 수정 차단
-if [[ "\$FILEPATH" == *".env"* ]] || [[ "\$FILEPATH" == *".env.local"* ]]; then
-  echo '{"decision": "block", "reason": "Direct .env modification blocked"}'
+# jq/python3 없으면 보안 게이트를 닫음 (deny by default)
+if command -v python3 &>/dev/null; then
+  PY=python3
+elif command -v python &>/dev/null; then
+  PY=python
+else
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"python3 not installed — protect-secrets cannot validate files"}}'
   exit 0
 fi
 
-# 키워드 탐지
-if echo "\$CONTENT" | grep -qiE '(password|secret|api_key|token|private_key)'; then
-  echo '{"decision": "block", "reason": "Potential secret leak detected"}'
+INPUT=$(cat)
+FILEPATH=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("file_path",""))')
+CONTENT=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("content",""))')
+
+# 민감 파일 직접 수정 차단
+SENSITIVE_PATHS=(".env" ".pem" ".key" "id_rsa" "id_ed25519" "credentials" "service-account" ".p12" ".pfx" ".keystore")
+for sp in "\${SENSITIVE_PATHS[@]}"; do
+  if [[ "$FILEPATH" == *"$sp"* ]]; then
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Direct modification of sensitive file blocked: '"$sp"'"}}'
+    exit 0
+  fi
+done
+
+# 키워드 탐지 (JWT, cloud tokens, private keys 포함)
+if echo "$CONTENT" | grep -qiE '(password|secret|api_key|auth|bearer|token|private_key|aws_access_key_id|aws_secret_access_key|akiai|asiai|ghp_|github_pat|sk-|glpat-|npm_|pypi_|docker_auth|private.?key|BEGIN .* PRIVATE KEY|ssh-rsa|ssh-ed25519)'; then
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Potential secret leak detected"}}'
   exit 0
 fi
 
-echo '{"decision": "allow"}'
+echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
 `,
   "post-format.sh": `#!/usr/bin/env bash
-# 저장 후 자동 포맷팅
+# 저장 후 자동 포맷팅 (단일 파일 대상)
 set -e
 
-# 프로젝트 루트 감지 및 포맷터 실행
-if [ -f "package.json" ]; then
-  npx prettier --write . >/dev/null 2>&1 || true
+if command -v python3 &>/dev/null; then
+  PY=python3
+elif command -v python &>/dev/null; then
+  PY=python
+else
+  echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","permissionDecision":"allow"}}'
+  exit 0
 fi
 
-if [ -f "Cargo.toml" ]; then
-  cargo fmt >/dev/null 2>&1 || true
+INPUT=$(cat)
+FILEPATH=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("file_path",""))')
+
+if [ -z "$FILEPATH" ]; then
+  echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","permissionDecision":"allow"}}'
+  exit 0
 fi
 
-echo '{"decision": "allow"}'
+# 프로젝트 루트 감지 및 포맷터 실행 (대상 파일만)
+if [ -f "package.json" ] && [ -f "$FILEPATH" ]; then
+  npx prettier --write "$FILEPATH" >/dev/null 2>&1 || true
+fi
+
+if [ -f "Cargo.toml" ] && [ -f "$FILEPATH" ]; then
+  rustfmt "$FILEPATH" >/dev/null 2>&1 || true
+fi
+
+echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","permissionDecision":"allow"}}'
 `,
   "stop-verify.sh": `#!/usr/bin/env bash
 # Stop 시 최종 검증
 set -e
 
-INPUT=\$(cat)
-# 추가 검증 로직 삽입 가능
-
-echo '{"decision": "allow"}'
+echo '{"hookSpecificOutput":{"hookEventName":"Stop","permissionDecision":"allow"}}'
 `,
 };
 
@@ -437,15 +449,79 @@ timeout = 30
 
 const MCP_JSON = {
   mcpServers: {
-    "context7": {
+    context7: {
       url: "https://mcp.context7.com/mcp",
       headers: {
-        CONTEXT7_API_KEY: "${CONTEXT7_API_KEY}",
+        CONTEXT7_API_KEY: "\${CONTEXT7_API_KEY}",
       },
+    },
+    "lean-ctx": {
+      command: "lean-ctx",
+      args: [],
+    },
+    github: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-github",
+      ],
+    },
+    "gh_grep": {
+      url: "https://mcp.grep.app",
+      transport: "http",
+    },
+    fetch: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec uvx mcp-server-fetch",
+      ],
+    },
+    playwright: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @playwright/mcp@latest --isolated",
+      ],
+    },
+    "chrome-devtools": {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y chrome-devtools-mcp@latest --isolated",
+      ],
+    },
+    firecrawl: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y firecrawl-mcp",
+      ],
+    },
+    "sequential-thinking": {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-sequential-thinking",
+      ],
+    },
+    memory: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-memory",
+      ],
+    },
+    filesystem: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-filesystem /home/dmae/.kimi",
+      ],
     },
     "omk-project": {
       command: "node",
-      args: [".omk/mcp/omk-project-server.js"],
+      args: [join(packageRoot, "dist/mcp/omk-project-server.js")],
     },
   },
 };
@@ -475,7 +551,7 @@ coding_thinking = "enabled"
 const MEMORY_FILES: Record<string, string> = {
   "project.md": "# 프로젝트 메모리\n\n프로젝트 전반 컨텍스트를 기록합니다.\n",
   "decisions.md": "# 결정 사항\n\n중요한 아키텍처/설계 결정을 기록합니다.\n",
-  "commands.md": "# 자주 쓰는 명령어\n\n```bash\n# 예시\n```\n",
+  "commands.md": "# 자주 쓰는 명령어\n\n\`\`\`bash\n# 예시\n\`\`\`\n",
   "risks.md": "# 알려진 리스크\n\n- \n",
 };
 
@@ -485,82 +561,147 @@ async function ensureExecutable(path: string): Promise<void> {
 
 export async function initCommand(options: { profile: string }): Promise<void> {
   const root = getProjectRoot();
-  console.log(`🚀 oh-my-kimichan init (profile: ${options.profile})\n`);
+  console.log(header(`oh-my-kimichan init (profile: ${options.profile})`));
 
-  // 1. Create directories
+  // 1. Create directories (병렬)
   const dirs = [
     ".omk/memory",
     ".omk/runs",
     ".omk/agents/roles",
     ".omk/prompts/role-addons",
     ".omk/hooks",
-    ".omk/skills",
-    ".omk/flows",
     ".omk/worktrees",
     ".omk/logs",
     ".kimi/skills",
     ".kimi/hooks",
     ".agents/skills",
   ];
-  for (const d of dirs) {
-    await mkdir(join(root, d), { recursive: true });
+  await Promise.all(dirs.map((d) => mkdir(join(root, d), { recursive: true })));
+
+  // 2. Write AGENTS.md (skip if exists)
+  const agentsMdPath = join(root, "AGENTS.md");
+  if (await pathExists(agentsMdPath)) {
+    console.log("   ℹ️ AGENTS.md 이미 존재 — 건너뜀");
+  } else {
+    const agentsMdContent = await readFile(join(packageRoot, "templates", "AGENTS.md"), "utf8");
+    await writeFile(agentsMdPath, agentsMdContent);
   }
 
-  // 2. Write AGENTS.md
-  await writeFile(join(root, "AGENTS.md"), AGENTS_MD);
-
-  // 3. Write agents
-  await writeFile(join(root, ".omk/agents/root.yaml"), ROOT_AGENT_YAML);
-  for (const [name, content] of Object.entries(ROLE_YAMLS)) {
-    await writeFile(join(root, ".omk/agents/roles", `${name}.yaml`), content);
+  // 2.5 Write .kimi/AGENTS.md (Kimi-specific rules)
+  const kimiAgentsMdPath = join(root, ".kimi", "AGENTS.md");
+  if (await pathExists(kimiAgentsMdPath)) {
+    console.log("   ℹ️ .kimi/AGENTS.md 이미 존재 — 건너뜀");
+  } else {
+    const kimiAgentsMdContent = await readFile(join(packageRoot, "templates", ".kimi", "AGENTS.md"), "utf8");
+    await writeFile(kimiAgentsMdPath, kimiAgentsMdContent);
   }
+
+  // 3. Write / migrate agents (병렬)
+  const rootYamlPath = join(root, ".omk/agents/root.yaml");
+  if (await pathExists(rootYamlPath)) {
+    // 기존 root.yaml 마이그레이션: 상대 경로 버그 수정
+    const existing = await readFile(rootYamlPath, "utf8");
+    if (existing.includes("system_prompt_path: ./prompts/root.md")) {
+      const migrated = existing.replace(
+        /system_prompt_path:\s*\.\/prompts\/root\.md/,
+        "system_prompt_path: ../prompts/root.md"
+      );
+      await writeFile(rootYamlPath, migrated);
+      console.log(status.ok("기존 root.yaml 마이그레이션 완료 (prompts 경로 수정)"));
+    }
+  } else {
+    await writeFile(rootYamlPath, ROOT_AGENT_YAML);
+  }
+  await Promise.all(
+    Object.entries(ROLE_YAMLS).map(([name, content]) =>
+      writeFile(join(root, ".omk/agents/roles", `${name}.yaml`), content)
+    )
+  );
 
   // 4. Write prompts
   await writeFile(join(root, ".omk/prompts/root.md"), ROOT_PROMPT_MD);
 
-  // 5. Write skills
-  for (const [name, content] of Object.entries(SKILL_TEMPLATES)) {
-    const skillDir = join(root, ".omk/skills", name);
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(join(skillDir, "SKILL.md"), content);
+  // 5+6. Copy skills from package templates (병렬)
+  const kimiSkillsSrc = join(packageRoot, "templates", "skills", "kimi");
+  const agentsSkillsSrc = join(packageRoot, "templates", "skills", "agents");
+  const skillCopies = [];
+  if (await pathExists(kimiSkillsSrc)) {
+    console.log(style.blue("   📦 Kimi skills 복사 중..."));
+    skillCopies.push(copyTemplateDir(kimiSkillsSrc, join(root, ".kimi", "skills")));
+  } else {
+    console.log(status.warn("Kimi skills 템플릿 없음 — templates/skills/kimi 확인"));
   }
+  if (await pathExists(agentsSkillsSrc)) {
+    console.log(style.blue("   📦 Portable skills 복사 중..."));
+    skillCopies.push(copyTemplateDir(agentsSkillsSrc, join(root, ".agents", "skills")));
+  } else {
+    console.log(status.warn("Portable skills 템플릿 없음 — templates/skills/agents 확인"));
+  }
+  if (skillCopies.length > 0) await Promise.all(skillCopies);
 
-  // 6. Write flows
-  for (const [name, content] of Object.entries(FLOW_TEMPLATES)) {
-    const flowDir = join(root, ".omk/flows", name);
-    await mkdir(flowDir, { recursive: true });
-    await writeFile(join(flowDir, "SKILL.md"), content);
-  }
-
-  // 7. Write hooks
-  for (const [name, content] of Object.entries(HOOK_SCRIPTS)) {
-    const hookPath = join(root, ".omk/hooks", name);
-    await writeFile(hookPath, content);
-    await ensureExecutable(hookPath);
-  }
+  // 7. Write hooks (병렬)
+  await Promise.all(
+    Object.entries(HOOK_SCRIPTS).map(async ([name, content]) => {
+      const hookPath = join(root, ".omk/hooks", name);
+      await writeFile(hookPath, content);
+      await ensureExecutable(hookPath);
+    })
+  );
 
   // 8. Write configs
   await writeFile(join(root, ".omk/config.toml"), CONFIG_TOML);
   await writeFile(join(root, ".omk/kimi.config.toml"), KIMI_CONFIG_TOML);
   await writeFile(join(root, ".omk/mcp.json"), JSON.stringify(MCP_JSON, null, 2));
 
-  // 9. Write memory files
-  for (const [name, content] of Object.entries(MEMORY_FILES)) {
-    await writeFile(join(root, ".omk/memory", name), content);
+  // 9. Write memory files (병렬)
+  await Promise.all(
+    Object.entries(MEMORY_FILES).map(([name, content]) =>
+      writeFile(join(root, ".omk/memory", name), content)
+    )
+  );
+
+  // 10. Write project docs (skip if already exist)
+  const docs: Record<string, string> = {
+    "DESIGN.md": DESIGN_MD,
+    "GEMINI.md": GEMINI_MD,
+    "CLAUDE.md": CLAUDE_MD,
+    "ROADMAP.md": ROADMAP_MD,
+    "SECURITY.md": SECURITY_MD,
+  };
+  for (const [name, content] of Object.entries(docs)) {
+    const docPath = join(root, name);
+    if (await pathExists(docPath)) {
+      console.log(`   ℹ️ ${name} 이미 존재 — 건너뜀`);
+    } else {
+      await writeFile(docPath, content);
+    }
   }
 
-  // 10. Symlinks .kimi/skills -> .omk/skills
+  console.log(status.success("oh-my-kimi initialized."));
+  console.log();
+  console.log("Created:");
+  console.log("- AGENTS.md");
+  console.log("- .kimi/AGENTS.md");
+  console.log("- DESIGN.md");
+  console.log("- .omk/agents/root.yaml");
+  console.log("- .kimi/skills/");
+  console.log("- .agents/skills/");
+  console.log("- .omk/memory/");
+  console.log();
+  console.log("Default behavior:");
+  console.log("- AGENTS.md is loaded into Kimi root prompt.");
+  console.log("- Todo list is required for multi-step work.");
+  console.log("- Subagents are required for non-trivial work.");
+  console.log("- Skills are auto-discovered.");
+  console.log("- MCP tools are used when configured.");
+
+  // ~/.kimi/ 에 hooks + MCP + skills 무조건 글로벌 동기화
   try {
-    const fromKimiSkills = join(root, ".kimi/skills");
-    const toOmkSkills = relative(join(root, ".kimi"), join(root, ".omk/skills"));
-    await access(fromKimiSkills, constants.F_OK);
-    // if exists and empty, remove it to allow symlink
-    await runShell("rm", ["-rf", fromKimiSkills], { timeout: 5000 });
-    await symlink(toOmkSkills, fromKimiSkills, "dir");
-  } catch {
-    // ignore symlink errors
+    await syncAllKimiGlobals();
+    console.log(status.ok("~/.kimi/ 글로벌 동기화 완료 (hooks + MCP + skills)"));
+  } catch (err) {
+    console.warn("⚠️  글로벌 동기화 실패:", (err as Error).message);
   }
 
-  console.log("✅ oh-my-kimichan scaffold 생성 완료!");
-  console.log("   다음 단계: omk doctor → omk chat");
+  console.log(style.purpleBold("   다음 단계: ") + style.cream("omk doctor → omk chat"));
 }

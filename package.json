@@ -1,6 +1,6 @@
 {
-  "name": "oh-my-kimichan",
-  "version": "0.1.0",
+  "name": "@dmae97/oh-my-kimichan",
+  "version": "0.2.1",
   "description": "Kimi Code CLI용 multi-agent orchestration harness. Kimi K2.6 위에 올라가는 하네스 + 팀 런타임 + 스킬/훅/워크플로 배포판",
   "type": "module",
   "bin": {
@@ -11,6 +11,7 @@
     "build": "tsc",
     "dev": "tsx src/cli.ts",
     "check": "tsc --noEmit",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -23,22 +24,37 @@
     "coding",
     "k2.6"
   ],
-  "author": "",
+  "author": "dmae97",
   "license": "MIT",
   "dependencies": {
     "commander": "^14.0.0",
     "execa": "^9.0.0",
     "fs-extra": "^11.0.0",
-    "yaml": "^2.0.0",
-    "zod": "^3.0.0",
-    "@inquirer/prompts": "^7.0.0"
+    "node-pty": "^1.1.0",
+    "yaml": "^2.0.0"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^25.6.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^6.0.3"
   },
+  "files": [
+    "dist",
+    "templates",
+    "README.md",
+    "SECURITY.md",
+    "ROADMAP.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dmae97/oh-my-kimichan.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dmae97/oh-my-kimichan/issues"
+  },
+  "homepage": "https://github.com/dmae97/oh-my-kimichan#readme",
   "engines": {
     "node": ">=20.0.0"
   }

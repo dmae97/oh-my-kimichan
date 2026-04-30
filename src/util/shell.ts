@@ -10,12 +10,21 @@ export interface ShellResult {
   failed: boolean;
 }
 
+function isExecaError(err: unknown): err is ExecaError {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    ("stdout" in err || "stderr" in err || "exitCode" in err)
+  );
+}
+
 export async function runShell(
   command: string,
   args: string[] = [],
-  options: { cwd?: string; env?: Record<string, string>; timeout?: number; logPath?: string } = {}
+  options: { cwd?: string; env?: Record<string, string>; timeout?: number; logPath?: string; input?: string } = {}
 ): Promise<ShellResult> {
-  const { cwd, env, timeout = 30000, logPath } = options;
+  const { cwd, env, timeout = 30000, logPath, input } = options;
+  let logStream: ReturnType<typeof createWriteStream> | undefined;
 
   try {
     const subprocess = execa(command, args, {
@@ -24,15 +33,17 @@ export async function runShell(
       timeout,
       reject: false,
       all: true,
+      input,
     });
 
     if (logPath) {
       await mkdir(dirname(logPath), { recursive: true });
-      const logStream = createWriteStream(logPath, { flags: "a" });
+      logStream = createWriteStream(logPath, { flags: "a" });
       subprocess.all?.pipe(logStream);
     }
 
     const result = await subprocess;
+    logStream?.end();
     return {
       stdout: String(result.stdout ?? ""),
       stderr: String(result.stderr ?? ""),
@@ -40,11 +51,20 @@ export async function runShell(
       failed: result.failed ?? result.exitCode !== 0,
     };
   } catch (err) {
-    const e = err as ExecaError;
+    logStream?.end();
+    if (isExecaError(err)) {
+      return {
+        stdout: String(err.stdout ?? ""),
+        stderr: String(err.stderr ?? ""),
+        exitCode: err.exitCode ?? 1,
+        failed: true,
+      };
+    }
+    // ExecaError가 아닌 경우 (spawn 실패 등)
     return {
-      stdout: String(e.stdout ?? ""),
-      stderr: String(e.stderr ?? ""),
-      exitCode: e.exitCode ?? 1,
+      stdout: "",
+      stderr: err instanceof Error ? err.message : String(err),
+      exitCode: 1,
       failed: true,
     };
   }
