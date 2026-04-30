@@ -211,11 +211,12 @@ export class KimiWireClient {
     if (!this.proc?.stdin) throw new Error("Wire client not started");
     const id = nextId();
     const req: JsonRpcRequest<TParams> = { jsonrpc: "2.0", id, method, params };
+    const timeoutMs = Number(process.env.OMK_WIRE_TIMEOUT_MS || "120000");
     const promise = new Promise<JsonRpcResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Wire RPC timeout: ${method} (id: ${id})`));
-      }, 60000);
+        reject(new Error(`Wire RPC timeout: ${method} (id: ${id}, timeout: ${timeoutMs}ms)`));
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
     });
     this.proc.stdin.write(JSON.stringify(req) + "\n");
@@ -263,6 +264,12 @@ export class KimiWireClient {
   }
 
   async stop(): Promise<void> {
+    // pending 전부 정리 — 메모리 누수/데드락 방지
+    for (const [id, p] of this.pending) {
+      clearTimeout(p.timer);
+      p.reject(new Error(`Wire client stopped before response to request ${id}`));
+    }
+    this.pending.clear();
     if (this.rl) {
       this.rl.close();
       this.rl = undefined;

@@ -48,6 +48,18 @@ agent:
     - applyDiff
     - Shell
 `,
+  architect: `version: 1
+agent:
+  extend: default
+  name: omk-architect
+  system_prompt_args:
+    OMK_ROLE: "architect"
+  exclude_tools:
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell
+`,
   planner: `version: 1
 agent:
   extend: default
@@ -55,9 +67,10 @@ agent:
   system_prompt_args:
     OMK_ROLE: "planner"
   exclude_tools:
-    - "kimi_cli.tools.file:WriteFile"
-    - "kimi_cli.tools.file:StrReplaceFile"
-    - "kimi_cli.tools.shell:Shell"
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell
 `,
   explorer: `version: 1
 agent:
@@ -80,9 +93,10 @@ agent:
   system_prompt_args:
     OMK_ROLE: "reviewer"
   exclude_tools:
-    - "kimi_cli.tools.file:WriteFile"
-    - "kimi_cli.tools.file:StrReplaceFile"
-    - "kimi_cli.tools.shell:Shell"
+    - WriteFile
+    - StrReplaceFile
+    - applyDiff
+    - Shell
 `,
   qa: `version: 1
 agent:
@@ -306,11 +320,20 @@ BLOCKED=(
   "rm -rf ~"
   "sudo"
   "git push --force"
+  "git push -f"
   "git clean -fdx"
   "chmod -R 777"
   "docker system prune"
   "kubectl delete"
   "aws s3 rm --recursive"
+  "curl | bash"
+  "curl | sh"
+  "wget | bash"
+  "wget | sh"
+  "mkfs"
+  "dd if="
+  "> /dev/"
+  ":(){ :|:& };:"
 )
 
 for pattern in "\${BLOCKED[@]}"; do
@@ -340,14 +363,17 @@ INPUT=$(cat)
 FILEPATH=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("file_path",""))')
 CONTENT=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("content",""))')
 
-# .env 수정 차단
-if [[ "$FILEPATH" == *".env"* ]] || [[ "$FILEPATH" == *".env.local"* ]]; then
-  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Direct .env modification blocked"}}'
-  exit 0
-fi
+# 민감 파일 직접 수정 차단
+SENSITIVE_PATHS=(".env" ".pem" ".key" "id_rsa" "id_ed25519" "credentials" "service-account" ".p12" ".pfx" ".keystore")
+for sp in "\${SENSITIVE_PATHS[@]}"; do
+  if [[ "$FILEPATH" == *"$sp"* ]]; then
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Direct modification of sensitive file blocked: '"$sp"'"}}'
+    exit 0
+  fi
+done
 
-# 키워드 탐지
-if echo "$CONTENT" | grep -qiE '(password|secret|api_key|token|private_key)'; then
+# 키워드 탐지 (JWT, cloud tokens, private keys 포함)
+if echo "$CONTENT" | grep -qiE '(password|secret|api_key|auth|bearer|token|private_key|aws_access_key_id|aws_secret_access_key|akiai|asiai|ghp_|github_pat|sk-|glpat-|npm_|pypi_|docker_auth|private.?key|BEGIN .* PRIVATE KEY|ssh-rsa|ssh-ed25519)'; then
   echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Potential secret leak detected"}}'
   exit 0
 fi
@@ -428,6 +454,70 @@ const MCP_JSON = {
       headers: {
         CONTEXT7_API_KEY: "\${CONTEXT7_API_KEY}",
       },
+    },
+    "lean-ctx": {
+      command: "lean-ctx",
+      args: [],
+    },
+    github: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-github",
+      ],
+    },
+    "gh_grep": {
+      url: "https://mcp.grep.app",
+      transport: "http",
+    },
+    fetch: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec uvx mcp-server-fetch",
+      ],
+    },
+    playwright: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @playwright/mcp@latest --isolated",
+      ],
+    },
+    "chrome-devtools": {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y chrome-devtools-mcp@latest --isolated",
+      ],
+    },
+    firecrawl: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y firecrawl-mcp",
+      ],
+    },
+    "sequential-thinking": {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-sequential-thinking",
+      ],
+    },
+    memory: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-memory",
+      ],
+    },
+    filesystem: {
+      command: "bash",
+      args: [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-filesystem /home/dmae/.kimi",
+      ],
     },
     "omk-project": {
       command: "node",
