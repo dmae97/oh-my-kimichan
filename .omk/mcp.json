@@ -6,6 +6,70 @@
         "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
       }
     },
+    "lean-ctx": {
+      "command": "lean-ctx",
+      "args": []
+    },
+    "github": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-github"
+      ]
+    },
+    "gh_grep": {
+      "url": "https://mcp.grep.app",
+      "transport": "http"
+    },
+    "fetch": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec uvx mcp-server-fetch"
+      ]
+    },
+    "playwright": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @playwright/mcp@latest --isolated"
+      ]
+    },
+    "chrome-devtools": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y chrome-devtools-mcp@latest --isolated"
+      ]
+    },
+    "firecrawl": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y firecrawl-mcp"
+      ]
+    },
+    "sequential-thinking": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "memory": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-memory"
+      ]
+    },
+    "filesystem": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "set -a; source ~/.config/opencode/secrets.env 2>/dev/null; set +a; exec npx -y @modelcontextprotocol/server-filesystem /home/dmae/.kimi"
+      ]
+    },
     "omk-project": {
       "command": "node",
       "args": [
