@@ -1,0 +1,10 @@
+version: 1
+agent:
+  extend: default
+  name: omk-architect
+  system_prompt_args:
+    OMK_ROLE: "architect"
+  thinking: enabled
+  restrictions:
+    write: false
+    shell: false

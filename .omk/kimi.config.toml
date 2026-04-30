@@ -1,0 +1,25 @@
+# oh-my-kimichan generated Kimi config
+# 생명주기 hook 설정
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "Shell"
+command = ".omk/hooks/pre-shell-guard.sh"
+timeout = 5
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "WriteFile|StrReplaceFile"
+command = ".omk/hooks/protect-secrets.sh"
+timeout = 5
+
+[[hooks]]
+event = "PostToolUse"
+matcher = "WriteFile|StrReplaceFile"
+command = ".omk/hooks/post-format.sh"
+timeout = 20
+
+[[hooks]]
+event = "Stop"
+command = ".omk/hooks/stop-verify.sh"
+timeout = 30

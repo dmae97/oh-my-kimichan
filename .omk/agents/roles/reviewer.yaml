@@ -1,0 +1,9 @@
+version: 1
+agent:
+  extend: default
+  name: omk-reviewer
+  system_prompt_args:
+    OMK_ROLE: "reviewer"
+  thinking: enabled
+  restrictions:
+    write: false

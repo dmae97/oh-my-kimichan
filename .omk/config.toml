@@ -1,0 +1,20 @@
+# oh-my-kimichan 프로젝트 설정
+[project]
+name = "my-project"
+description = ""
+
+[orchestration]
+default_workers = 2
+max_retries = 3
+approval_policy = "interactive"  # interactive | auto | yolo
+
+[quality]
+lint = "auto"      # auto | 명령어
+test = "auto"
+typecheck = "auto"
+build = "auto"
+
+[router]
+default_model = "kimi-k2.6"
+research_thinking = "disabled"
+coding_thinking = "enabled"

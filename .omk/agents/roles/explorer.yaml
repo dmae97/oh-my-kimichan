@@ -1,0 +1,7 @@
+version: 1
+agent:
+  extend: default
+  name: omk-explorer
+  system_prompt_args:
+    OMK_ROLE: "explorer"
+  thinking: disabled

@@ -1,0 +1,9 @@
+version: 1
+agent:
+  extend: default
+  name: omk-interviewer
+  system_prompt_args:
+    OMK_ROLE: "interviewer"
+  thinking: enabled
+  restrictions:
+    write: false

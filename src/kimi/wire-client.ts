@@ -1,0 +1,249 @@
+import { spawn, type ChildProcess } from "child_process";
+import { createInterface } from "readline";
+
+export interface JsonRpcRequest<TParams = unknown> {
+  jsonrpc: "2.0";
+  id: string;
+  method: string;
+  params?: TParams;
+}
+
+export interface JsonRpcResponse<TResult = unknown> {
+  jsonrpc: "2.0";
+  id: string;
+  result?: TResult;
+  error?: {
+    code: number;
+    message: string;
+    data?: unknown;
+  };
+}
+
+export interface KimiInitializeParams {
+  protocol_version: string;
+  client: {
+    name: string;
+    version: string;
+  };
+  capabilities: {
+    supports_question: boolean;
+    supports_plan_mode: boolean;
+  };
+  external_tools: Array<{
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  }>;
+}
+
+export interface KimiPromptParams {
+  user_input: string;
+}
+
+export interface KimiPromptResult {
+  status: "finished" | "cancelled";
+}
+
+export type WireEvent =
+  | { type: "status"; contextUsage: number; maxContextTokens: number; tokenUsage: number; planMode: boolean }
+  | { type: "message"; role: "assistant" | "user"; content: string }
+  | { type: "tool_use"; name: string; input: unknown }
+  | { type: "tool_result"; name: string; output: unknown }
+  | { type: "error"; message: string };
+
+let requestId = 0;
+function nextId(): string {
+  return `omk-${++requestId}`;
+}
+
+export class KimiWireClient {
+  private proc?: ChildProcess;
+  private rl?: ReturnType<typeof createInterface>;
+  private pending = new Map<string, (value: JsonRpcResponse) => void>();
+  private eventHandlers: Array<(event: WireEvent) => void> = [];
+
+  constructor(
+    private options: {
+      agentFile?: string;
+      configFile?: string;
+      mcpConfigFile?: string;
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+    } = {}
+  ) {}
+
+  onEvent(handler: (event: WireEvent) => void): () => void {
+    this.eventHandlers.push(handler);
+    return () => {
+      this.eventHandlers = this.eventHandlers.filter((h) => h !== handler);
+    };
+  }
+
+  private emit(event: WireEvent): void {
+    for (const h of this.eventHandlers) {
+      try {
+        h(event);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  async start(): Promise<void> {
+    const args = ["--wire"];
+    if (this.options.agentFile) args.push("--agent-file", this.options.agentFile);
+    if (this.options.configFile) args.push("--config-file", this.options.configFile);
+    if (this.options.mcpConfigFile) args.push("--mcp-config-file", this.options.mcpConfigFile);
+
+    this.proc = spawn("kimi", args, {
+      cwd: this.options.cwd,
+      env: this.options.env ?? process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    this.rl = createInterface({ input: this.proc.stdout! });
+
+    this.rl.on("line", (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const msg = JSON.parse(trimmed) as JsonRpcResponse | JsonRpcRequest;
+        if ("id" in msg && "result" in msg) {
+          const resolve = this.pending.get(msg.id);
+          if (resolve) {
+            this.pending.delete(msg.id);
+            resolve(msg as JsonRpcResponse);
+          }
+        } else if ("method" in msg) {
+          // server->client notification or request
+          this.handleServerMessage(msg as JsonRpcRequest);
+        }
+      } catch {
+        // non-JSON line, treat as assistant message
+        this.emit({ type: "message", role: "assistant", content: trimmed });
+      }
+    });
+
+    this.proc.stderr?.on("data", (data: Buffer) => {
+      const text = data.toString("utf-8");
+      this.emit({ type: "error", message: text });
+    });
+
+    this.proc.on("exit", (code) => {
+      this.emit({ type: "error", message: `Kimi process exited with code ${code}` });
+    });
+
+    // wait a bit for process to be ready
+    await new Promise((r) => setTimeout(r, 500));
+
+    await this.call("initialize", {
+      protocol_version: "2025-03-11",
+      client: { name: "oh-my-kimichan", version: "0.1.0" },
+      capabilities: { supports_question: true, supports_plan_mode: true },
+      external_tools: [
+        {
+          name: "omk_claim_task",
+          description: "DAG 노드 작업을 할당받습니다",
+          parameters: { type: "object", properties: {} },
+        },
+        {
+          name: "omk_update_task",
+          description: "작업 상태를 업데이트합니다",
+          parameters: {
+            type: "object",
+            properties: {
+              task_id: { type: "string" },
+              status: { type: "string", enum: ["running", "done", "failed", "blocked"] },
+            },
+            required: ["task_id", "status"],
+          },
+        },
+        {
+          name: "omk_read_memory",
+          description: "프로젝트 메모리를 읽습니다",
+          parameters: {
+            type: "object",
+            properties: { path: { type: "string" } },
+            required: ["path"],
+          },
+        },
+        {
+          name: "omk_write_memory",
+          description: "프로젝트 메모리를 기록합니다",
+          parameters: {
+            type: "object",
+            properties: { path: { type: "string" }, content: { type: "string" } },
+            required: ["path", "content"],
+          },
+        },
+        {
+          name: "omk_emit_metric",
+          description: "메트릭을 기록합니다",
+          parameters: {
+            type: "object",
+            properties: { key: { type: "string" }, value: { type: "number" } },
+            required: ["key", "value"],
+          },
+        },
+        {
+          name: "omk_report_blocker",
+          description: "블로커를 보고합니다",
+          parameters: {
+            type: "object",
+            properties: { reason: { type: "string" } },
+            required: ["reason"],
+          },
+        },
+      ],
+    });
+  }
+
+  private async call<TParams, TResult>(method: string, params?: TParams): Promise<TResult> {
+    if (!this.proc?.stdin) throw new Error("Wire client not started");
+    const id = nextId();
+    const req: JsonRpcRequest<TParams> = { jsonrpc: "2.0", id, method, params };
+    const promise = new Promise<JsonRpcResponse>((resolve) => {
+      this.pending.set(id, resolve);
+    });
+    this.proc.stdin.write(JSON.stringify(req) + "\n");
+    const res = await promise;
+    if (res.error) throw new Error(res.error.message);
+    return res.result as TResult;
+  }
+
+  private handleServerMessage(msg: JsonRpcRequest): void {
+    if (msg.method === "status") {
+      const p = msg.params as Record<string, unknown>;
+      this.emit({
+        type: "status",
+        contextUsage: Number(p.context_usage ?? 0),
+        maxContextTokens: Number(p.max_context_tokens ?? 256000),
+        tokenUsage: Number(p.token_usage ?? 0),
+        planMode: Boolean(p.plan_mode ?? false),
+      });
+    }
+  }
+
+  async prompt(userInput: string): Promise<KimiPromptResult> {
+    return this.call("prompt", { user_input: userInput });
+  }
+
+  async steer(userInput: string): Promise<void> {
+    await this.call("steer", { user_input: userInput });
+  }
+
+  async cancel(): Promise<void> {
+    await this.call("cancel", {});
+  }
+
+  async stop(): Promise<void> {
+    if (this.rl) {
+      this.rl.close();
+      this.rl = undefined;
+    }
+    if (this.proc) {
+      this.proc.kill("SIGTERM");
+      this.proc = undefined;
+    }
+  }
+}

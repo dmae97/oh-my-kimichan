@@ -1,0 +1,9 @@
+version: 1
+agent:
+  extend: default
+  name: omk-vision-debugger
+  system_prompt_args:
+    OMK_ROLE: "vision-debugger"
+  thinking: enabled
+  capabilities:
+    vision: true

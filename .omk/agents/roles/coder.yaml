@@ -1,0 +1,7 @@
+version: 1
+agent:
+  extend: default
+  name: omk-coder
+  system_prompt_args:
+    OMK_ROLE: "coder"
+  thinking: enabled
