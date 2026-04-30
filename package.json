@@ -39,6 +39,22 @@
     "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   },
+  "files": [
+    "dist",
+    "templates",
+    "README.md",
+    "SECURITY.md",
+    "ROADMAP.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dmae97/oh-my-kimichan.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dmae97/oh-my-kimichan/issues"
+  },
+  "homepage": "https://github.com/dmae97/oh-my-kimichan#readme",
   "engines": {
     "node": ">=20.0.0"
   }
