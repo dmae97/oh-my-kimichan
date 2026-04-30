@@ -1,51 +1,35 @@
-# Worker B Manifest: Engine Layer
+# Integration Manifest
 
-## Identity
-- **Role:** Engine Worker
-- **Phase:** 1 (Parallel with Platform)
-- **Worktree:** `.omk/worktrees/engine`
-- **Branch:** `work/engine`
+## Merged Workers
 
-## Owned Files (Read/Write)
-```
-src/orchestration/
-  dag.ts              (modify)
-  executor.ts         (new)
-  scheduler.ts        (new)
-  state-persister.ts  (new)
-src/kimi/
-  wire-client.ts      (modify)
-src/safety/
-  approval-policy.ts  (modify)
-  guard-hooks.ts      (new)
-```
+| Worker | Branch | Status |
+|--------|--------|--------|
+| B Engine | `work/engine` | Merged |
+| C Platform | `work/platform` | Merged |
 
-## Forbidden Files (Import-Only)
-- `src/cli.ts`
-- `src/commands/*.ts`
-- `src/util/*.ts`
-- `src/mcp/*.ts`
-- `src/memory/*.ts`
+## Files Added
 
-## Contract Imports (Read-Only)
+### Contracts (Phase 0)
 - `src/contracts/orchestration.ts`
 - `src/contracts/safety.ts`
 - `src/contracts/hud.ts`
 
-## Goal
-Build the core execution engine that turns the existing DAG data structure into an actual parallel task executor.
+### Engine (Worker B)
+- `src/orchestration/executor.ts`
+- `src/orchestration/scheduler.ts`
+- `src/orchestration/state-persister.ts`
+- `src/safety/guard-hooks.ts`
 
-## Acceptance Criteria
-1. `src/orchestration/executor.ts` exports `createExecutor(): DagExecutor`
-2. Executor runs DAG nodes in parallel up to `options.workers` concurrency
-3. Executor persists state to `.omk/runs/<id>/state.json` after each node completion
-4. `src/orchestration/scheduler.ts` manages runnable node queue with dependency resolution
-5. `src/kimi/wire-client.ts` implements `TaskRunner` contract (or adapter exported)
-6. `src/safety/approval-policy.ts` implements `PolicyEngine` contract
-7. `src/safety/guard-hooks.ts` provides Node.js equivalent of bash shell guards
-8. `npm run check` passes in this worktree
+### Platform (Worker C)
+- `src/util/worktree.ts`
+- `src/util/run-dir.ts`
+- `src/util/kimi-runner.ts` — combined with existing `runKimiInteractive`
 
-## Integration Contract
-- Worker A (Commands) will import `createExecutor` from `src/orchestration/executor.ts`
-- Worker C (Platform) will provide `createWorktree()` and `getRunDir()` via `src/util/*`
-- Do NOT modify `src/commands/run.ts` — Worker A handles the integration
+### Modified
+- `src/kimi/wire-client.ts` — `createKimiTaskRunner`
+- `src/safety/approval-policy.ts` — `createPolicyEngine`
+- `src/util/shell.ts` — `runShellStreaming`
+- `src/util/git.ts` — `removeWorktree`
+- `src/util/fs.ts` — `getRunPath`
+- `src/memory/memory-store.ts` — `readRunMemory`, `writeRunMemory`
+- `src/mcp/omk-project-server.ts` — `omk_list_worktrees`, `omk_run_quality_gate`

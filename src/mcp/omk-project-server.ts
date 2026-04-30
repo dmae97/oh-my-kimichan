@@ -2,6 +2,7 @@
 import { createInterface } from "readline";
 import { readFile, writeFile, readdir, access } from "fs/promises";
 import { join, resolve, relative, dirname } from "path";
+import { execSync } from "child_process";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -193,6 +194,84 @@ async function handleGetApprovalPolicy(): Promise<{ policy: string }> {
   return { policy };
 }
 
+async function handleListWorktrees(): Promise<{ worktrees: string[] }> {
+  const worktreesDir = join(OMK_DIR, "worktrees");
+  if (!(await pathExists(worktreesDir))) return { worktrees: [] };
+
+  const result: string[] = [];
+  const runEntries = await readdir(worktreesDir, { withFileTypes: true });
+  for (const runEntry of runEntries) {
+    if (!runEntry.isDirectory()) continue;
+    const runPath = join(worktreesDir, runEntry.name);
+    const nodeEntries = await readdir(runPath, { withFileTypes: true });
+    for (const nodeEntry of nodeEntries) {
+      if (nodeEntry.isDirectory()) {
+        result.push(join(runPath, nodeEntry.name));
+      }
+    }
+  }
+  return { worktrees: result };
+}
+
+async function handleRunQualityGate(): Promise<{
+  lint: { command: string; exitCode: number; stdout: string; stderr: string };
+  typecheck: { command: string; exitCode: number; stdout: string; stderr: string };
+  test: { command: string; exitCode: number; stdout: string; stderr: string };
+  build: { command: string; exitCode: number; stdout: string; stderr: string };
+}> {
+  const config = await readFile(OMK_CONFIG_PATH, "utf-8").catch(() => "");
+
+  function getSetting(key: string): string {
+    // Match both top-level and [quality] section entries
+    const regex = new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, "m");
+    return config.match(regex)?.[1] ?? "auto";
+  }
+
+  function detectPm(): string {
+    try {
+      execSync("test -f pnpm-lock.yaml", { cwd: PROJECT_ROOT, encoding: "utf-8", stdio: "pipe" });
+      return "pnpm";
+    } catch { /* ignore */ }
+    try {
+      execSync("test -f yarn.lock", { cwd: PROJECT_ROOT, encoding: "utf-8", stdio: "pipe" });
+      return "yarn";
+    } catch { /* ignore */ }
+    try {
+      execSync("test -f bun.lockb", { cwd: PROJECT_ROOT, encoding: "utf-8", stdio: "pipe" });
+      return "bun";
+    } catch { /* ignore */ }
+    return "npm";
+  }
+
+  const pm = detectPm();
+
+  function runGate(setting: string, defaultCmd: string): { command: string; exitCode: number; stdout: string; stderr: string } {
+    if (setting === "off") {
+      return { command: "", exitCode: 0, stdout: "", stderr: "skipped (off)" };
+    }
+    const command = setting === "auto" ? `${pm} run ${defaultCmd}` : setting;
+    try {
+      const stdout = execSync(command, { cwd: PROJECT_ROOT, encoding: "utf-8", stdio: "pipe", timeout: 120000 });
+      return { command, exitCode: 0, stdout: stdout ?? "", stderr: "" };
+    } catch (err: unknown) {
+      const e = err as { stdout?: string; stderr?: string; status?: number };
+      return {
+        command,
+        exitCode: e.status ?? 1,
+        stdout: String(e.stdout ?? ""),
+        stderr: String(e.stderr ?? ""),
+      };
+    }
+  }
+
+  const lint = runGate(getSetting("lint"), "lint");
+  const typecheck = runGate(getSetting("typecheck"), "typecheck");
+  const test = runGate(getSetting("test"), "test");
+  const build = runGate(getSetting("build"), "build");
+
+  return { lint, typecheck, test, build };
+}
+
 // ─── Tool registry ──────────────────────────────────────────────────────
 
 const TOOLS: Tool[] = [
@@ -251,6 +330,16 @@ const TOOLS: Tool[] = [
     description: "Get approval policy from config",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "omk_list_worktrees",
+    description: "List all worktrees under .omk/worktrees/",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "omk_run_quality_gate",
+    description: "Run lint, typecheck, test, and build quality gates",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
 
 async function handleToolCall(name: string, args: unknown): Promise<unknown> {
@@ -277,6 +366,10 @@ async function handleToolCall(name: string, args: unknown): Promise<unknown> {
       return handleGetQualitySettings();
     case "omk_get_approval_policy":
       return handleGetApprovalPolicy();
+    case "omk_list_worktrees":
+      return handleListWorktrees();
+    case "omk_run_quality_gate":
+      return handleRunQualityGate();
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

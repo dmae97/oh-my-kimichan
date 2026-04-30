@@ -70,6 +70,11 @@ export function getOmkPath(subPath?: string): string {
   return subPath ? join(root, ".omk", subPath) : join(root, ".omk");
 }
 
+export function getRunPath(runId: string, subPath?: string): string {
+  const runDir = getOmkPath(join("runs", runId));
+  return subPath ? join(runDir, subPath) : runDir;
+}
+
 export function getKimiConfigPath(): string {
   return join(homedir(), ".kimi", "config.toml");
 }
