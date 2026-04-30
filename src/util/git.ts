@@ -27,6 +27,10 @@ export async function listWorktrees(cwd?: string): Promise<string[]> {
   return result.stdout.split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.replace("worktree ", ""));
 }
 
+export async function removeWorktree(path: string, cwd?: string): Promise<void> {
+  await runShell("git", ["worktree", "remove", "--force", path], { cwd, timeout: 15000 });
+}
+
 export async function getGitStatus(cwd?: string): Promise<{ clean: boolean; changes: number }> {
   const result = await runShell("git", ["status", "--porcelain"], { cwd, timeout: 5000 });
   if (result.failed) return { clean: false, changes: -1 };
