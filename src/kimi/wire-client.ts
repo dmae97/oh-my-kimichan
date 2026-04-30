@@ -60,7 +60,7 @@ function nextId(): string {
 export class KimiWireClient {
   private proc?: ChildProcess;
   private rl?: ReturnType<typeof createInterface>;
-  private pending = new Map<string, { resolve: (value: JsonRpcResponse) => void; reject: (error: Error) => void }>();
+  private pending = new Map<string, { resolve: (value: JsonRpcResponse) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
   private eventHandlers: Array<(event: WireEvent) => void> = [];
 
   constructor(
@@ -112,6 +112,7 @@ export class KimiWireClient {
         if ("id" in msg && ("result" in msg || "error" in msg)) {
           const pending = this.pending.get(msg.id);
           if (pending) {
+            clearTimeout(pending.timer);
             this.pending.delete(msg.id);
             if ("error" in msg && msg.error) {
               pending.reject(new Error(msg.error.message));
@@ -134,6 +135,12 @@ export class KimiWireClient {
 
     this.proc.on("exit", (code) => {
       this.emit({ type: "error", message: `Kimi process exited with code ${code}` });
+      // 프로세스 종료 시 pending Promise 전부 reject — 메모리 누수/데드락 방지
+      for (const [id, p] of this.pending) {
+        clearTimeout(p.timer);
+        p.reject(new Error(`Kimi process exited (code ${code}) before response to request ${id}`));
+      }
+      this.pending.clear();
     });
 
     await new Promise((r) => setTimeout(r, 500));
@@ -205,7 +212,11 @@ export class KimiWireClient {
     const id = nextId();
     const req: JsonRpcRequest<TParams> = { jsonrpc: "2.0", id, method, params };
     const promise = new Promise<JsonRpcResponse>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Wire RPC timeout: ${method} (id: ${id})`));
+      }, 60000);
+      this.pending.set(id, { resolve, reject, timer });
     });
     this.proc.stdin.write(JSON.stringify(req) + "\n");
     const res = await promise;

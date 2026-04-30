@@ -9,7 +9,7 @@
     "omk-project": {
       "command": "node",
       "args": [
-        ".omk/mcp/omk-project-server.js"
+        "/mnt/m/oh-my-kimichan/dist/mcp/omk-project-server.js"
       ]
     }
   }

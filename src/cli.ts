@@ -8,9 +8,30 @@ import { runCommand } from "./commands/run.js";
 import { hudCommand } from "./commands/hud.js";
 import { mergeCommand } from "./commands/merge.js";
 import { syncCommand } from "./commands/sync.js";
-import { designInitCommand, designLintCommand, designDiffCommand, designExportCommand } from "./commands/design.js";
+import { designInitCommand, designLintCommand, designDiffCommand, designExportCommand, designListCommand, designApplyCommand, designSearchCommand } from "./commands/design.js";
 import { stitchInstallCommand } from "./commands/google.js";
 import { teamCommand } from "./commands/team.js";
+import { style, header } from "./util/theme.js";
+
+const CUSTOM_HELP = `
+${header("oh-my-kimichan")}
+${style.gray("Kimi CLI, but better. The orchestration layer that turns Kimi CLI into a powerful coding team.")}
+
+${style.pinkBold("사용 가능한 명령어:")}
+  ${style.mint("omk init")}               프로젝트 scaffold 생성
+  ${style.mint("omk doctor")}             환경 검사
+  ${style.mint("omk chat")}               Kimi 대화형 실행
+  ${style.mint("omk plan")} ${style.gray("<goal>")}        계획 수립
+  ${style.mint("omk run")} ${style.gray("<flow> <goal>")}  flow 실행
+  ${style.mint("omk team")}               tmux 기반 다중 에이전트 실행
+  ${style.mint("omk hud")}                실행 상태 HUD
+  ${style.mint("omk merge")}              결과 병합
+  ${style.mint("omk sync")}               assets 동기화
+  ${style.mint("omk design")}             DESIGN.md 관리
+  ${style.mint("omk google")}             Google 생태계 연동
+
+${style.gray("전체 도움말: omk --help")}
+`;
 
 const program = new Command();
 
@@ -18,25 +39,20 @@ program
   .name("omk")
   .description("oh-my-kimichan: Kimi Code CLI용 multi-agent orchestration harness")
   .version("0.1.0")
+  .addHelpText("before", CUSTOM_HELP)
+  .configureOutput({
+    writeErr: (str) => process.stderr.write(style.red(str)),
+    outputError: (str, write) => write(style.red(`✖ ${str}`)),
+  })
   .argument("[command]", "subcommand to run")
-  .action(async () => {
-    console.log("oh-my-kimichan v0.1.0");
-    console.log("");
-    console.log("사용 가능한 명령어:");
-    console.log("  omk init         — 프로젝트 scaffold 생성");
-    console.log("  omk doctor       — 환경 검사");
-    console.log("  omk chat         — Kimi 대화형 실행");
-    console.log("  omk plan <goal>  — 계획 수립");
-    console.log("  omk run <flow> <goal> — flow 실행");
-    console.log("  omk team         — tmux 기반 다중 에이전트 실행");
-    console.log("  omk hud          — 실행 상태 HUD");
-    console.log("  omk merge        — 결과 병합");
-    console.log("  omk sync         — assets 동기화");
-    console.log("  omk design       — DESIGN.md 관리");
-    console.log("  omk google       — Google 생태계 연동");
-    console.log("");
-    console.log("도움말: omk --help");
-    process.exit(0);
+  .action(async (command) => {
+    if (command) {
+      console.error(`❌ 알 수 없는 명령어: ${command}`);
+      console.log(CUSTOM_HELP);
+      process.exit(1);
+    }
+    // 인자 없이 omk 실행 시 기본 동작: chat
+    await chatCommand({});
   });
 
 program
@@ -89,11 +105,23 @@ program
   .description("Kimi assets 재생성 및 동기화")
   .action(syncCommand);
 
-const design = program.command("design").description("Google DESIGN.md 관련 명령");
+const design = program.command("design").description("Google DESIGN.md / awesome-design-md 연동 명령");
 design
   .command("init")
-  .description("DESIGN.md 생성")
+  .description("기본 DESIGN.md 템플릿 생성")
   .action(designInitCommand);
+design
+  .command("list")
+  .description("awesome-design-md 컬렉션 목록 표시")
+  .action(designListCommand);
+design
+  .command("apply <name>")
+  .description("awesome-design-md에서 DESIGN.md 다운로드 및 적용")
+  .action(designApplyCommand);
+design
+  .command("search <keyword>")
+  .description("awesome-design-md 컬렉션 검색")
+  .action(designSearchCommand);
 design
   .command("lint [file]")
   .description("DESIGN.md 검증")

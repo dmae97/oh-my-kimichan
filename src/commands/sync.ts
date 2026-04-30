@@ -1,21 +1,25 @@
-import { getProjectRoot, pathExists } from "../util/fs.js";
+import { getProjectRoot, pathExists, getOmkPath, syncAllKimiGlobals } from "../util/fs.js";
 import { runShell } from "../util/shell.js";
 import { mkdir, symlink } from "fs/promises";
 import { join, relative } from "path";
+import { style, header, status } from "../util/theme.js";
 
 export async function syncCommand(): Promise<void> {
   const root = getProjectRoot();
-  console.log("🔄 oh-my-kimichan sync\n");
+  console.log(header("oh-my-kimichan sync"));
 
-  // Ensure .agents/skills exists
+  // ~/.kimi/ 에 hooks + MCP + skills 무조건 글로벌 동기화
+  // + 로컬 디렉토리 생성도 병렬
   const agentsSkills = join(root, ".agents/skills");
-  await mkdir(agentsSkills, { recursive: true });
-
-  // Ensure .kimi/skills exists
   const kimiSkills = join(root, ".kimi/skills");
-  await mkdir(kimiSkills, { recursive: true });
-
-  console.log("✅ .kimi/skills 확인");
-  console.log("✅ .agents/skills 확인");
-  console.log("\n🎉 동기화 완료");
+  await Promise.all([
+    syncAllKimiGlobals(),
+    mkdir(agentsSkills, { recursive: true }),
+    mkdir(kimiSkills, { recursive: true }),
+  ]);
+  console.log(status.ok("~/.kimi/ 글로벌 동기화 완료 (hooks + MCP + skills)"));
+  console.log("");
+  console.log(status.ok(".kimi/skills 확인"));
+  console.log(status.ok(".agents/skills 확인"));
+  console.log("\n" + status.success("동기화 완료"));
 }

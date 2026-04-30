@@ -1,62 +1,14 @@
-import { mkdir, writeFile, symlink, access, constants, copyFile, readdir } from "fs/promises";
+import { mkdir, writeFile, readFile, symlink, access, constants, copyFile, readdir } from "fs/promises";
 import { join, relative, dirname } from "path";
 import { fileURLToPath } from "node:url";
-import { getProjectRoot, pathExists } from "../util/fs.js";
+import { getProjectRoot, pathExists, syncAllKimiGlobals } from "../util/fs.js";
 import { isGitRepo } from "../util/git.js";
 import { runShell } from "../util/shell.js";
+import { style, header, status } from "../util/theme.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const packageRoot = join(__dirname, "..", "..");
-
-const AGENTS_MD = `# AGENTS.md
-
-## Project
-
-oh-my-kimi is a Kimi Code CLI orchestration harness.
-
-## Commands
-
-\`\`\`bash
-pnpm install
-pnpm build
-pnpm test
-pnpm lint
-pnpm typecheck
-\`\`\`
-
-## Agent Rules
-
-* Read this file before implementation.
-* Read \`DESIGN.md\` before UI/frontend work.
-* Use \`.omk/memory/project.md\` for stable project facts.
-* Do not edit secrets.
-* Do not claim tests passed unless commands were run.
-* Prefer small, reviewable diffs.
-* Use worktrees for parallel implementation.
-
-## Quality Gates
-
-Before completion, run available checks:
-
-\`\`\`bash
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
-\`\`\`
-
-## Protected Files
-
-\`\`\`txt
-.env
-.env.*
-*.pem
-*.key
-credentials.json
-service-account*.json
-\`\`\`
-`;
 
 const ROOT_AGENT_YAML = `version: 1
 agent:
@@ -65,20 +17,22 @@ agent:
   system_prompt_path: ../prompts/root.md
   system_prompt_args:
     OMK_ROLE: "root-coordinator"
-    OMK_MEMORY_PATH: ".omk/memory/project.md"
   subagents:
-    architect:
-      path: ./roles/architect.yaml
-      description: "Read-only architecture planning"
     explorer:
       path: ./roles/explorer.yaml
-      description: "Fast codebase exploration"
+      description: "Read-only repository exploration and context mapping"
+    planner:
+      path: ./roles/planner.yaml
+      description: "Architecture, refactor, migration, and implementation planning"
+    coder:
+      path: ./roles/coder.yaml
+      description: "Scoped implementation in the current project"
     reviewer:
       path: ./roles/reviewer.yaml
-      description: "Adversarial code review"
+      description: "Adversarial code review and risk detection"
     qa:
       path: ./roles/qa.yaml
-      description: "Test and verification"
+      description: "Run and analyze lint, typecheck, test, and build results"
 `;
 
 const ROLE_YAMLS: Record<string, string> = {
@@ -94,17 +48,16 @@ agent:
     - applyDiff
     - Shell
 `,
-  architect: `version: 1
+  planner: `version: 1
 agent:
   extend: default
-  name: omk-architect
+  name: omk-planner
   system_prompt_args:
-    OMK_ROLE: "architect"
+    OMK_ROLE: "planner"
   exclude_tools:
-    - WriteFile
-    - StrReplaceFile
-    - applyDiff
-    - Shell
+    - "kimi_cli.tools.file:WriteFile"
+    - "kimi_cli.tools.file:StrReplaceFile"
+    - "kimi_cli.tools.shell:Shell"
 `,
   explorer: `version: 1
 agent:
@@ -127,9 +80,9 @@ agent:
   system_prompt_args:
     OMK_ROLE: "reviewer"
   exclude_tools:
-    - WriteFile
-    - StrReplaceFile
-    - applyDiff
+    - "kimi_cli.tools.file:WriteFile"
+    - "kimi_cli.tools.file:StrReplaceFile"
+    - "kimi_cli.tools.shell:Shell"
 `,
   qa: `version: 1
 agent:
@@ -256,31 +209,59 @@ oh-my-kimi includes default hooks to block destructive commands and secret leaka
 - Never commit secrets into agent memory files.
 `;
 
-const ROOT_PROMPT_MD = `# OMK Root Coordinator System Prompt
+const ROOT_PROMPT_MD = `# oh-my-kimi Root Agent
 
-당신은 oh-my-kimichan의 루트 코디네이터입니다.
+You are the oh-my-kimi root coordinator.
 
-## 역할
-- 사용자 요구사항을 인터뷰하고 명확히 합니다.
-- DAG 기반 실행 계획을 수립합니다.
-- Worker를 분배하고 진행 상황을 추적합니다.
-- 품질 게이트 통과 전까지 완료를 금지합니다.
-- Merge Queue를 관리합니다.
+You must operate as a Kimi-native coding orchestrator.
 
-## 제약
-- Shell 실행은 approval gateway를 거칩니다.
-- 파일 쓰기는 worktree 할당된 범위 내에서만 가능합니다.
-- 256K context를 낭비하지 않도록 선택적 읽기를 수행합니다.
+## Loaded Project Instructions
 
-## 도구
-- Kimi built-in Agent tool
-- AskUserQuestion
-- SetTodoList
-- ReadFile, Glob, Grep (read-only)
-- OMK external tools (Wire 등록)
+\${KIMI_AGENTS_MD}
 
-## 메모리 경로
-- \${OMK_MEMORY_PATH}
+## Loaded Skills
+
+\${KIMI_SKILLS}
+
+## Global Rules
+
+- Apply AGENTS.md silently.
+- Do not repeat boilerplate.
+- Use SetTodoList for multi-step tasks.
+- Use Agent tool for non-trivial tasks.
+- Use skills when relevant.
+- Use MCP tools when configured and useful.
+- Prefer plan-first execution.
+- Prefer small, reviewable diffs.
+- Verify before completion.
+- Never claim tests passed unless they were run.
+
+## Required Workflow
+
+For non-trivial tasks:
+
+1. Read project instructions.
+2. Create todos.
+3. Launch an appropriate subagent:
+   - explore for repository discovery
+   - plan for architecture/refactor/risky work
+   - coder for implementation
+4. Read relevant skills.
+5. Use MCP if useful.
+6. Implement minimal changes.
+7. Run quality gates.
+8. Review final diff.
+9. Return factual final report.
+
+## Final Report Format
+
+\`\`\`txt
+Changed:
+Files:
+Commands:
+Result:
+Risk:
+\`\`\`
 `;
 
 async function copyTemplateDir(src: string, dest: string): Promise<void> {
@@ -303,9 +284,19 @@ const HOOK_SCRIPTS: Record<string, string> = {
 # PreShellUse Guard — 위험 명령 차단
 set -e
 
+# jq/python3 없으면 보안 게이트를 닫음 (deny by default)
+if command -v python3 &>/dev/null; then
+  PY=python3
+elif command -v python &>/dev/null; then
+  PY=python
+else
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"python3 not installed — pre-shell-guard cannot validate commands"}}'
+  exit 0
+fi
+
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
-ARGS=$(echo "$INPUT" | jq -r '.tool_input.args // empty')
+COMMAND=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("command",""))')
+ARGS=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("args",""))')
 
 FULL="$COMMAND $ARGS"
 
@@ -335,9 +326,19 @@ echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"
 # Secret/환경변수 보호
 set -e
 
+# jq/python3 없으면 보안 게이트를 닫음 (deny by default)
+if command -v python3 &>/dev/null; then
+  PY=python3
+elif command -v python &>/dev/null; then
+  PY=python
+else
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"python3 not installed — protect-secrets cannot validate files"}}'
+  exit 0
+fi
+
 INPUT=$(cat)
-FILEPATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
-CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // empty')
+FILEPATH=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("file_path",""))')
+CONTENT=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("content",""))')
 
 # .env 수정 차단
 if [[ "$FILEPATH" == *".env"* ]] || [[ "$FILEPATH" == *".env.local"* ]]; then
@@ -357,8 +358,17 @@ echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"
 # 저장 후 자동 포맷팅 (단일 파일 대상)
 set -e
 
+if command -v python3 &>/dev/null; then
+  PY=python3
+elif command -v python &>/dev/null; then
+  PY=python
+else
+  echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","permissionDecision":"allow"}}'
+  exit 0
+fi
+
 INPUT=$(cat)
-FILEPATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILEPATH=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("file_path",""))')
 
 if [ -z "$FILEPATH" ]; then
   echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","permissionDecision":"allow"}}'
@@ -379,9 +389,6 @@ echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","permissionDecision":
   "stop-verify.sh": `#!/usr/bin/env bash
 # Stop 시 최종 검증
 set -e
-
-INPUT=$(cat)
-# 추가 검증 로직 삽입 가능
 
 echo '{"hookSpecificOutput":{"hookEventName":"Stop","permissionDecision":"allow"}}'
 `,
@@ -422,6 +429,10 @@ const MCP_JSON = {
         CONTEXT7_API_KEY: "\${CONTEXT7_API_KEY}",
       },
     },
+    "omk-project": {
+      command: "node",
+      args: [join(packageRoot, "dist/mcp/omk-project-server.js")],
+    },
   },
 };
 
@@ -460,9 +471,9 @@ async function ensureExecutable(path: string): Promise<void> {
 
 export async function initCommand(options: { profile: string }): Promise<void> {
   const root = getProjectRoot();
-  console.log(`🚀 oh-my-kimichan init (profile: ${options.profile})\n`);
+  console.log(header(`oh-my-kimichan init (profile: ${options.profile})`));
 
-  // 1. Create directories
+  // 1. Create directories (병렬)
   const dirs = [
     ".omk/memory",
     ".omk/runs",
@@ -475,63 +486,76 @@ export async function initCommand(options: { profile: string }): Promise<void> {
     ".kimi/hooks",
     ".agents/skills",
   ];
-  for (const d of dirs) {
-    await mkdir(join(root, d), { recursive: true });
-  }
+  await Promise.all(dirs.map((d) => mkdir(join(root, d), { recursive: true })));
 
   // 2. Write AGENTS.md (skip if exists)
   const agentsMdPath = join(root, "AGENTS.md");
   if (await pathExists(agentsMdPath)) {
     console.log("   ℹ️ AGENTS.md 이미 존재 — 건너뜀");
   } else {
-    await writeFile(agentsMdPath, AGENTS_MD);
+    const agentsMdContent = await readFile(join(packageRoot, "templates", "AGENTS.md"), "utf8");
+    await writeFile(agentsMdPath, agentsMdContent);
   }
 
-  // 3. Write agents
-  await writeFile(join(root, ".omk/agents/root.yaml"), ROOT_AGENT_YAML);
-  for (const [name, content] of Object.entries(ROLE_YAMLS)) {
-    await writeFile(join(root, ".omk/agents/roles", `${name}.yaml`), content);
+  // 2.5 Write .kimi/AGENTS.md (Kimi-specific rules)
+  const kimiAgentsMdPath = join(root, ".kimi", "AGENTS.md");
+  if (await pathExists(kimiAgentsMdPath)) {
+    console.log("   ℹ️ .kimi/AGENTS.md 이미 존재 — 건너뜀");
+  } else {
+    const kimiAgentsMdContent = await readFile(join(packageRoot, "templates", ".kimi", "AGENTS.md"), "utf8");
+    await writeFile(kimiAgentsMdPath, kimiAgentsMdContent);
   }
+
+  // 3. Write agents (병렬)
+  const agentWrites = [
+    writeFile(join(root, ".omk/agents/root.yaml"), ROOT_AGENT_YAML),
+    ...Object.entries(ROLE_YAMLS).map(([name, content]) =>
+      writeFile(join(root, ".omk/agents/roles", `${name}.yaml`), content)
+    ),
+  ];
+  await Promise.all(agentWrites);
 
   // 4. Write prompts
   await writeFile(join(root, ".omk/prompts/root.md"), ROOT_PROMPT_MD);
 
-  // 5. Copy Kimi-specific skills from package templates to .kimi/skills
+  // 5+6. Copy skills from package templates (병렬)
   const kimiSkillsSrc = join(packageRoot, "templates", "skills", "kimi");
-  const kimiSkillsDest = join(root, ".kimi", "skills");
-  if (await pathExists(kimiSkillsSrc)) {
-    console.log("   📦 Kimi skills 복사 중...");
-    await copyTemplateDir(kimiSkillsSrc, kimiSkillsDest);
-  } else {
-    console.log("   ⚠️ Kimi skills 템플릿 없음 — templates/skills/kimi 확인");
-  }
-
-  // 6. Copy portable skills from package templates to .agents/skills
   const agentsSkillsSrc = join(packageRoot, "templates", "skills", "agents");
-  const agentsSkillsDest = join(root, ".agents", "skills");
-  if (await pathExists(agentsSkillsSrc)) {
-    console.log("   📦 Portable skills 복사 중...");
-    await copyTemplateDir(agentsSkillsSrc, agentsSkillsDest);
+  const skillCopies = [];
+  if (await pathExists(kimiSkillsSrc)) {
+    console.log(style.blue("   📦 Kimi skills 복사 중..."));
+    skillCopies.push(copyTemplateDir(kimiSkillsSrc, join(root, ".kimi", "skills")));
   } else {
-    console.log("   ⚠️ Portable skills 템플릿 없음 — templates/skills/agents 확인");
+    console.log(status.warn("Kimi skills 템플릿 없음 — templates/skills/kimi 확인"));
   }
+  if (await pathExists(agentsSkillsSrc)) {
+    console.log(style.blue("   📦 Portable skills 복사 중..."));
+    skillCopies.push(copyTemplateDir(agentsSkillsSrc, join(root, ".agents", "skills")));
+  } else {
+    console.log(status.warn("Portable skills 템플릿 없음 — templates/skills/agents 확인"));
+  }
+  if (skillCopies.length > 0) await Promise.all(skillCopies);
 
-  // 7. Write hooks
-  for (const [name, content] of Object.entries(HOOK_SCRIPTS)) {
-    const hookPath = join(root, ".omk/hooks", name);
-    await writeFile(hookPath, content);
-    await ensureExecutable(hookPath);
-  }
+  // 7. Write hooks (병렬)
+  await Promise.all(
+    Object.entries(HOOK_SCRIPTS).map(async ([name, content]) => {
+      const hookPath = join(root, ".omk/hooks", name);
+      await writeFile(hookPath, content);
+      await ensureExecutable(hookPath);
+    })
+  );
 
   // 8. Write configs
   await writeFile(join(root, ".omk/config.toml"), CONFIG_TOML);
   await writeFile(join(root, ".omk/kimi.config.toml"), KIMI_CONFIG_TOML);
   await writeFile(join(root, ".omk/mcp.json"), JSON.stringify(MCP_JSON, null, 2));
 
-  // 9. Write memory files
-  for (const [name, content] of Object.entries(MEMORY_FILES)) {
-    await writeFile(join(root, ".omk/memory", name), content);
-  }
+  // 9. Write memory files (병렬)
+  await Promise.all(
+    Object.entries(MEMORY_FILES).map(([name, content]) =>
+      writeFile(join(root, ".omk/memory", name), content)
+    )
+  );
 
   // 10. Write project docs (skip if already exist)
   const docs: Record<string, string> = {
@@ -550,6 +574,31 @@ export async function initCommand(options: { profile: string }): Promise<void> {
     }
   }
 
-  console.log("✅ oh-my-kimichan scaffold 생성 완료!");
-  console.log("   다음 단계: omk doctor → omk chat");
+  console.log(status.success("oh-my-kimi initialized."));
+  console.log();
+  console.log("Created:");
+  console.log("- AGENTS.md");
+  console.log("- .kimi/AGENTS.md");
+  console.log("- DESIGN.md");
+  console.log("- .omk/agents/root.yaml");
+  console.log("- .kimi/skills/");
+  console.log("- .agents/skills/");
+  console.log("- .omk/memory/");
+  console.log();
+  console.log("Default behavior:");
+  console.log("- AGENTS.md is loaded into Kimi root prompt.");
+  console.log("- Todo list is required for multi-step work.");
+  console.log("- Subagents are required for non-trivial work.");
+  console.log("- Skills are auto-discovered.");
+  console.log("- MCP tools are used when configured.");
+
+  // ~/.kimi/ 에 hooks + MCP + skills 무조건 글로벌 동기화
+  try {
+    await syncAllKimiGlobals();
+    console.log(status.ok("~/.kimi/ 글로벌 동기화 완료 (hooks + MCP + skills)"));
+  } catch (err) {
+    console.warn("⚠️  글로벌 동기화 실패:", (err as Error).message);
+  }
+
+  console.log(style.purpleBold("   다음 단계: ") + style.cream("omk doctor → omk chat"));
 }

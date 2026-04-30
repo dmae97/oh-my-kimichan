@@ -4,4 +4,3 @@ agent:
   name: omk-explorer
   system_prompt_args:
     OMK_ROLE: "explorer"
-  thinking: disabled

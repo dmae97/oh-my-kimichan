@@ -4,4 +4,3 @@ agent:
   name: omk-researcher
   system_prompt_args:
     OMK_ROLE: "researcher"
-  thinking: disabled

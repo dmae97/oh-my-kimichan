@@ -4,4 +4,3 @@ agent:
   name: omk-integrator
   system_prompt_args:
     OMK_ROLE: "integrator"
-  thinking: enabled

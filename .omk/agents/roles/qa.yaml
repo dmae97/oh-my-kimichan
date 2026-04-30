@@ -4,4 +4,3 @@ agent:
   name: omk-qa
   system_prompt_args:
     OMK_ROLE: "qa"
-  thinking: enabled

@@ -1,7 +1,9 @@
 import { mkdir, writeFile, readdir } from "fs/promises";
 import { join } from "path";
-import { getOmkPath, getProjectRoot, pathExists, readTextFile } from "../util/fs.js";
-import { runShell } from "../util/shell.js";
+
+import { getOmkPath, getProjectRoot, pathExists, readTextFile, injectKimiGlobals } from "../util/fs.js";
+import { execa } from "execa";
+import { style, header, status, label } from "../util/theme.js";
 
 export async function runCommand(flow: string, goal: string, options: { workers?: string }): Promise<void> {
   const root = getProjectRoot();
@@ -16,8 +18,8 @@ export async function runCommand(flow: string, goal: string, options: { workers?
   }
 
   if (!resolvedFlowPath) {
-    console.error(`❌ flow '${flow}'를 찾을 수 없습니다.`);
-    console.error("   사용 가능한 flows:");
+    console.error(status.error(`flow '${flow}'를 찾을 수 없습니다.`));
+    console.error(style.gray("   사용 가능한 flows:"));
     const flowsDir = getOmkPath("flows");
     try {
       const entries = await readdir(flowsDir, { withFileTypes: true });
@@ -45,13 +47,13 @@ export async function runCommand(flow: string, goal: string, options: { workers?
   await writeFile(join(runDir, "goal.md"), `# Goal\n\n${goal}\n`);
   await writeFile(join(runDir, "plan.md"), `# Plan\n\nFlow: ${flow}\nWorkers: ${options.workers ?? 1}\n`);
 
-  console.log(`🏃 Run started: ${runId}`);
-  console.log(`   Flow: ${flow}`);
-  console.log(`   Goal: ${goal}`);
-  console.log(`   Workers: ${options.workers ?? 1}\n`);
+  console.log(header("Run started"));
+  console.log(label("Run ID", runId));
+  console.log(label("Flow", flow));
+  console.log(label("Goal", goal));
+  console.log(label("Workers", String(options.workers ?? 1)) + "\n");
 
   const agentFile = getOmkPath("agents/root.yaml");
-  const configFile = getOmkPath("kimi.config.toml");
 
   const flowContent = await readTextFile(resolvedFlowPath);
   const promptText = [
@@ -66,18 +68,20 @@ export async function runCommand(flow: string, goal: string, options: { workers?
 
   const args: string[] = [];
   args.push("--agent-file", agentFile);
-  if (await pathExists(configFile)) args.push("--config-file", configFile);
+  // ⚠️ --config-file 을 사용하면 kimi 가 "Login requires the default config file" 에러를 낸다.
+  //    hooks 는 mergeKimiHooks() 로 ~/.kimi/config.toml 에 주입한다.
 
-  console.log("🤖 Kimi root coordinator를 시작합니다. 대화형으로 진행하세요.");
-  console.log("   (run 정보는 .omk/runs/" + runId + " 에 기록됩니다)\n");
+  // ~/.kimi/ 에 hooks + MCP + skills 무조건 글로벌 동기화
+  await injectKimiGlobals(args);
 
-  const result = await runShell("kimi", args, {
+  console.log(style.purpleBold("🤖 Kimi root coordinator를 시작합니다. 대화형으로 진행하세요."));
+  console.log(style.gray("   (run 정보는 .omk/runs/" + runId + " 에 기록됩니다)\n"));
+
+  args.push("-p", promptText);
+
+  await execa("kimi", args, {
     cwd: root,
-    timeout: 0,
-    env: { OMK_RUN_ID: runId, OMK_FLOW: flow, OMK_GOAL: goal, OMK_PROMPT: promptText },
+    stdio: "inherit",
+    env: { OMK_RUN_ID: runId, OMK_FLOW: flow, OMK_GOAL: goal },
   });
-
-  if (result.failed) {
-    process.exit(result.exitCode);
-  }
 }

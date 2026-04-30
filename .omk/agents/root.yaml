@@ -2,20 +2,22 @@ version: 1
 agent:
   extend: default
   name: omk-root
-  system_prompt_path: ../prompts/root.md
+  system_prompt_path: /mnt/m/oh-my-kimichan/.omk/prompts/root.md
   system_prompt_args:
     OMK_ROLE: "root-coordinator"
-    OMK_MEMORY_PATH: ".omk/memory/project.md"
   subagents:
-    architect:
-      path: ./roles/architect.yaml
-      description: "Read-only architecture planning"
     explorer:
       path: ./roles/explorer.yaml
-      description: "Fast codebase exploration"
+      description: "Read-only repository exploration and context mapping"
+    planner:
+      path: ./roles/planner.yaml
+      description: "Architecture, refactor, migration, and implementation planning"
+    coder:
+      path: ./roles/coder.yaml
+      description: "Scoped implementation in the current project"
     reviewer:
       path: ./roles/reviewer.yaml
-      description: "Adversarial code review"
+      description: "Adversarial code review and risk detection"
     qa:
       path: ./roles/qa.yaml
-      description: "Test and verification"
+      description: "Run and analyze lint, typecheck, test, and build results"
