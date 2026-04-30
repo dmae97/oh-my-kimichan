@@ -1,41 +1,37 @@
 import { execa } from "execa";
 import { getOmkPath, pathExists, injectKimiGlobals } from "../util/fs.js";
-import { style, header } from "../util/theme.js";
+import { style, header, status } from "../util/theme.js";
 import { readFile } from "fs/promises";
 import { dirname, join, isAbsolute } from "path";
 import YAML from "yaml";
+import { initCommand } from "./init.js";
 
-export async function chatCommand(options: { agentFile?: string }): Promise<void> {
-  const agentFile = options.agentFile ?? getOmkPath("agents/root.yaml");
-
-  if (!(await pathExists(agentFile))) {
-    console.error(style.red("✖ root agent YAML이 없습니다. omk init을 먼저 실행하세요."));
-    process.exit(1);
-  }
-
-  // root.yaml 의 system_prompt_path 가 가리키는 파일이 존재하는지 사전 검증
+async function verifyAgentPrompt(agentFile: string): Promise<boolean> {
+  if (!(await pathExists(agentFile))) return false;
   try {
     const raw = await readFile(agentFile, "utf8");
     const parsed = YAML.parse(raw);
     const promptPath = parsed?.agent?.system_prompt_path as string | undefined;
-    if (promptPath) {
-      const resolved = isAbsolute(promptPath)
-        ? promptPath
-        : join(dirname(agentFile), promptPath);
-      if (!(await pathExists(resolved))) {
-        console.error(
-          style.red(
-            `✖ system_prompt_path 가 가리키는 파일을 찾을 수 없습니다: ${resolved}`
-          )
-        );
-        console.error(
-          style.gray("  힌트: omk init을 다시 실행하여 경로를 마이그레이션하세요.")
-        );
-        process.exit(1);
-      }
-    }
+    if (!promptPath) return true;
+    const resolved = isAbsolute(promptPath)
+      ? promptPath
+      : join(dirname(agentFile), promptPath);
+    return await pathExists(resolved);
   } catch {
-    // YAML 파싱 실패 시 무시 (kimi CLI 가 직접 에러를 보여줌)
+    return false;
+  }
+}
+
+export async function chatCommand(options: { agentFile?: string }): Promise<void> {
+  const agentFile = options.agentFile ?? getOmkPath("agents/root.yaml");
+
+  const promptOk = await verifyAgentPrompt(agentFile);
+  if (!promptOk) {
+    console.log(
+      status.warn("omk 환경이 초기화되지 않았거나 경로가 잘못되었습니다. 자동 초기화를 진행합니다...")
+    );
+    await initCommand({ profile: "default" });
+    console.log(status.ok("자동 초기화 완료. chat을 계속합니다.\n"));
   }
 
   console.log(header("Kimi root coordinator"));
