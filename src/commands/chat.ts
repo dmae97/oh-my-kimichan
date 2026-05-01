@@ -1,11 +1,12 @@
 import { getOmkPath, getProjectRoot, pathExists, injectKimiGlobals } from "../util/fs.js";
-import { style, header, status } from "../util/theme.js";
+import { style, header, status, kimichanCliHero } from "../util/theme.js";
 import { readFile } from "fs/promises";
 import { dirname, join, isAbsolute } from "path";
 import YAML from "yaml";
 import { initCommand } from "./init.js";
 import { runKimiInteractive } from "../util/kimi-runner.js";
 import { createOmkSessionEnv, createOmkSessionId } from "../util/session.js";
+import { t } from "../util/i18n.js";
 
 async function verifyAgentPrompt(agentFile: string): Promise<boolean> {
   if (!(await pathExists(agentFile))) return false;
@@ -23,35 +24,57 @@ async function verifyAgentPrompt(agentFile: string): Promise<boolean> {
   }
 }
 
-export async function chatCommand(options: { agentFile?: string }): Promise<void> {
+export async function chatCommand(options: { agentFile?: string; runId?: string; workers?: string; maxStepsPerTurn?: string }): Promise<void> {
   const root = getProjectRoot();
   const agentFile = options.agentFile ?? getOmkPath("agents/root.yaml");
   const sessionId = createOmkSessionId("chat");
+  const runId = options.runId;
 
   const promptOk = await verifyAgentPrompt(agentFile);
   if (!promptOk) {
     console.log(
-      status.warn("omk 환경이 초기화되지 않았거나 경로가 잘못되었습니다. 자동 초기화를 진행합니다...")
+      status.warn(t("chat.notInitialized"))
     );
     await initCommand({ profile: "default" });
-    console.log(status.ok("자동 초기화 완료. chat을 계속합니다.\n"));
+    console.log(status.ok(t("chat.autoInitComplete")));
   }
 
-  console.log(header("Kimi root coordinator"));
   console.log(style.gray("agent: ") + style.cream(agentFile) + "\n");
+
+  // ── Print OMK status summary (HUD/TODO preview before entering chat) ──
+  try {
+    const { renderHudDashboard } = await import("./hud.js");
+    const hud = await renderHudDashboard({ runId, terminalWidth: process.stdout.columns });
+    // Trim HUD to 20 lines compactly
+    const lines = hud.split("\n");
+    const summary = lines.slice(0, Math.min(lines.length, 20)).join("\n");
+    console.log(summary);
+    console.log(style.gray(t("chat.scrollUpForHud")));
+  } catch {
+    // Ignore HUD failure
+  }
+
   const args: string[] = [];
   args.push("--agent-file", agentFile);
-  // ⚠️ --config-file 을 사용하면 kimi 가 "Login requires the default config file" 에러를 낸다.
-  //    hooks 는 mergeKimiHooks() 로 ~/.kimi/config.toml 에 주입한다.
+  // ⚠️ Using --config-file causes kimi to throw "Login requires the default config file".
+  //    Hooks are injected via mergeKimiHooks() into ~/.kimi/config.toml.
 
-  // ~/.kimi/ 에 hooks + MCP + skills 무조건 글로벌 동기화
+  // Always sync hooks + MCP + skills globally to ~/.kimi/
   await injectKimiGlobals(args);
+  if (process.env.OMK_DEBUG === "1") {
+    console.error("[OMK_DEBUG] chat args:", args);
+  }
 
-  // ── node-pty 로 Kimi CLI 실행 (배너를 가로채 커스텀 배너로 교체) ──
+  // ── Run Kimi CLI via node-pty (intercept banner and replace with custom banner) ──
   console.log(style.purple("🌸 oh-my-kimichan is wrapping Kimi CLI..."));
+
+  const env = createOmkSessionEnv(root, sessionId);
+  if (runId) {
+    env.OMK_RUN_ID = runId;
+  }
 
   await runKimiInteractive(args, {
     cwd: root,
-    env: createOmkSessionEnv(root, sessionId),
+    env,
   });
 }

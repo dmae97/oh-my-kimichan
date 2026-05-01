@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, writeFile, rename, unlink } from "fs/promises";
 import { dirname, isAbsolute, relative, resolve, join } from "path";
 import type { RunState } from "../contracts/orchestration.js";
 
@@ -34,7 +34,14 @@ export function createStatePersister(basePath: string = ".omk/runs"): StatePersi
     async save(state: RunState): Promise<void> {
       const filePath = safePath(basePath, join(state.runId, "state.json"));
       await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, JSON.stringify(state, null, 2), "utf-8");
+      const tempPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+      try {
+        await writeFile(tempPath, JSON.stringify(state, null, 2), "utf-8");
+        await rename(tempPath, filePath);
+      } catch (err) {
+        try { await unlink(tempPath); } catch { /* ignore cleanup error */ }
+        throw err;
+      }
     },
   };
 }

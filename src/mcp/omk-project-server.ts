@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import { createInterface } from "readline";
-import { readFile, writeFile, readdir, access } from "fs/promises";
+import { readFile, writeFile, readdir, access, realpath } from "fs/promises";
 import { join, resolve, relative } from "path";
 import { execFileSync } from "child_process";
 import { MemoryStore } from "../memory/memory-store.js";
 import { canWriteConfig, configWriteDeniedMessage } from "./config-permissions.js";
 import { runQualityGate, type QualityGateResults } from "./quality-gate.js";
+import { saveCheckpoint, listCheckpoints, restoreCheckpoint } from "../util/checkpoint.js";
+import { getOmkVersionSync } from "../util/version.js";
+import { saveSnippet, getSnippet, deleteSnippet, searchSnippets } from "../util/snippet.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -44,7 +47,7 @@ const OMK_CONFIG_PATH = join(OMK_DIR, "config.toml");
 
 const PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "omk-project";
-const SERVER_VERSION = "0.1.0";
+const SERVER_VERSION = getOmkVersionSync();
 const MEMORY_STORE = new MemoryStore(OMK_MEMORY_DIR, {
   projectRoot: PROJECT_ROOT,
   source: "omk-project-mcp",
@@ -52,16 +55,39 @@ const MEMORY_STORE = new MemoryStore(OMK_MEMORY_DIR, {
 
 // ─── Security helpers ───────────────────────────────────────────────────
 
-function safePath(inputPath: string, baseDir: string): string {
-  if (inputPath.includes("..") || inputPath.startsWith("/") || inputPath.startsWith("\\")) {
-    throw new Error(`Invalid path: ${inputPath}`);
+async function safePath(inputPath: string, baseDir: string): Promise<string> {
+  // 1. Reject null bytes
+  if (inputPath.includes("\0")) {
+    throw new Error(`Invalid path: null byte detected`);
   }
-  const full = resolve(join(baseDir, inputPath));
-  const rel = relative(baseDir, full);
+
+  // 2. Normalize backslashes to forward slashes
+  let normalized = inputPath.replace(/\\/g, "/");
+
+  // 3. Decode percent-encoded sequences
+  try {
+    normalized = decodeURIComponent(normalized);
+  } catch {
+    throw new Error(`Invalid path: malformed percent-encoding`);
+  }
+
+  // Re-check null bytes after decoding
+  if (normalized.includes("\0")) {
+    throw new Error(`Invalid path: null byte detected after decoding`);
+  }
+
+  const full = resolve(join(baseDir, normalized));
+
+  // 4. Resolve symlinks with realpath
+  const realFull = await realpath(full).catch(() => full);
+
+  // 5. Final guard: ensure resolved path is still under baseDir
+  const rel = relative(baseDir, realFull);
   if (rel.startsWith("..") || rel === "..") {
     throw new Error(`Path traversal detected: ${inputPath}`);
   }
-  return full;
+
+  return realFull;
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -76,13 +102,13 @@ async function pathExists(path: string): Promise<boolean> {
 // ─── Tool handlers ──────────────────────────────────────────────────────
 
 async function handleReadMemory(args: { path: string }): Promise<{ content: string }> {
-  safePath(args.path, OMK_MEMORY_DIR);
+  await safePath(args.path, OMK_MEMORY_DIR);
   const content = await MEMORY_STORE.read(args.path);
   return { content };
 }
 
 async function handleWriteMemory(args: { path: string; content: string }): Promise<{ success: boolean }> {
-  safePath(args.path, OMK_MEMORY_DIR);
+  await safePath(args.path, OMK_MEMORY_DIR);
   await MEMORY_STORE.write(args.path, args.content);
   return { success: true };
 }
@@ -145,7 +171,7 @@ async function handleListAgents(): Promise<{ agents: string[] }> {
 }
 
 async function handleReadAgent(args: { name: string }): Promise<{ content: string }> {
-  const full = safePath(`${args.name}.yaml`, OMK_AGENTS_DIR);
+  const full = await safePath(`${args.name}.yaml`, OMK_AGENTS_DIR);
   const content = await readFile(full, "utf-8").catch(() => "");
   return { content };
 }
@@ -180,7 +206,7 @@ function parseRunDate(runId: string): string {
 }
 
 async function handleReadRun(args: { runId: string }): Promise<{ goal: string; plan: string }> {
-  const runDir = safePath(args.runId, OMK_RUNS_DIR);
+  const runDir = await safePath(args.runId, OMK_RUNS_DIR);
   const goal = await readFile(join(runDir, "goal.md"), "utf-8").catch(() => "");
   const plan = await readFile(join(runDir, "plan.md"), "utf-8").catch(() => "");
   return { goal, plan };
@@ -263,6 +289,19 @@ async function handleListWorktrees(): Promise<{ worktrees: string[] }> {
 async function handleRunQualityGate(): Promise<QualityGateResults> {
   const config = await readFile(OMK_CONFIG_PATH, "utf-8").catch(() => "");
   return runQualityGate(PROJECT_ROOT, config);
+}
+
+async function handleSaveCheckpoint(args: { runId: string; label: string; metadata?: Record<string, unknown> }): Promise<{ checkpointId: string; path: string }> {
+  return saveCheckpoint(args.runId, args.label, args.metadata);
+}
+
+async function handleListCheckpoints(args: { runId?: string }): Promise<{ checkpoints: Array<{ checkpointId: string; runId: string; label: string; createdAt: string }> }> {
+  const checkpoints = await listCheckpoints(args.runId);
+  return { checkpoints };
+}
+
+async function handleRestoreCheckpoint(args: { checkpointId: string; runId: string }): Promise<{ success: boolean; restoredFiles: string[]; message: string }> {
+  return restoreCheckpoint(args.checkpointId, args.runId);
 }
 
 // ─── Tool registry ──────────────────────────────────────────────────────
@@ -391,6 +430,83 @@ const TOOLS: Tool[] = [
     description: "Run lint, typecheck, test, and build quality gates",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "omk_save_checkpoint",
+    description: "Save a D-Mail checkpoint: captures git diff, todos, and run state to .omk/checkpoints/",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", description: "Run ID to associate with this checkpoint" },
+        label: { type: "string", description: "Human-readable label for the checkpoint" },
+        metadata: { type: "object", description: "Optional extra metadata to store" },
+      },
+      required: ["runId", "label"],
+    },
+  },
+  {
+    name: "omk_list_checkpoints",
+    description: "List D-Mail checkpoints. Optionally filter by runId.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", description: "Optional run ID filter" },
+      },
+    },
+  },
+  {
+    name: "omk_restore_checkpoint",
+    description: "Restore a D-Mail checkpoint: apply git patch and restore todos/state to the run directory.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        checkpointId: { type: "string" },
+        runId: { type: "string" },
+      },
+      required: ["checkpointId", "runId"],
+    },
+  },
+  {
+    name: "omk_save_snippet",
+    description: "Save a reusable code snippet to .omk/snippets/",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Snippet name (alphanumeric, -, _)" },
+        content: { type: "string", description: "Snippet body" },
+        tags: { type: "array", items: { type: "string" }, description: "Optional tags" },
+      },
+      required: ["name", "content"],
+    },
+  },
+  {
+    name: "omk_search_snippets",
+    description: "Search saved snippets by query (name, content, or tags). Empty query returns all.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query" },
+        limit: { type: "number", description: "Max results (default 20)" },
+      },
+    },
+  },
+  {
+    name: "omk_get_snippet",
+    description: "Retrieve a single snippet by name",
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    },
+  },
+  {
+    name: "omk_delete_snippet",
+    description: "Delete a snippet by name",
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    },
+  },
 ];
 
 async function handleToolCall(name: string, args: unknown): Promise<unknown> {
@@ -435,6 +551,20 @@ async function handleToolCall(name: string, args: unknown): Promise<unknown> {
       return handleListWorktrees();
     case "omk_run_quality_gate":
       return handleRunQualityGate();
+    case "omk_save_checkpoint":
+      return handleSaveCheckpoint(args as { runId: string; label: string; metadata?: Record<string, unknown> });
+    case "omk_list_checkpoints":
+      return handleListCheckpoints(args as { runId?: string });
+    case "omk_restore_checkpoint":
+      return handleRestoreCheckpoint(args as { checkpointId: string; runId: string });
+    case "omk_save_snippet":
+      return saveSnippet((args as { name: string; content: string; tags?: string[] }).name, (args as { name: string; content: string; tags?: string[] }).content, (args as { name: string; content: string; tags?: string[] }).tags);
+    case "omk_search_snippets":
+      return searchSnippets((args as { query?: string; limit?: number }).query ?? "", (args as { query?: string; limit?: number }).limit);
+    case "omk_get_snippet":
+      return getSnippet((args as { name: string }).name);
+    case "omk_delete_snippet":
+      return deleteSnippet((args as { name: string }).name);
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

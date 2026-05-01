@@ -12,7 +12,7 @@ yolo_mode = true                 # safe guards still block secrets/destructive s
 [runtime]
 # auto chooses lite on <=18GB RAM hosts to make 16GB laptops usable.
 resource_profile = "auto"        # auto | lite | standard
-mcp_scope = "project"            # lite default: project; all loads ~/.kimi/mcp.json too
+mcp_scope = "all"                # lite default: project; all loads ~/.kimi/mcp.json too
 skills_scope = "project"         # lite default: project; all loads ~/.kimi/skills too
 max_workers = 1                  # can override with OMK_MAX_WORKERS
 max_output_mb = 4                # cap buffered shell/quality output
@@ -54,6 +54,10 @@ uri = "bolt://localhost:7687"
 username = "neo4j"
 database = "neo4j"
 auth = "basic"             # basic | none
+
+[locale]
+# UI language: en (default) | ko | ja
+language = "en"
 
 [theme]
 logo_image = "kimichan.png"

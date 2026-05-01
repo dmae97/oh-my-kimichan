@@ -8,7 +8,7 @@
  */
 
 import { createHash } from "crypto";
-import { readdir, readFile, stat } from "fs/promises";
+import { open, readdir, readFile, stat } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -72,6 +72,11 @@ interface KimiCredentials {
 
 type JsonObject = Record<string, unknown>;
 
+const SMALL_WIRE_FILE_BYTES = 512 * 1024;
+const WIRE_HEAD_BYTES = 64 * 1024;
+const WIRE_TAIL_BYTES = 256 * 1024;
+const SESSION_LOOKBACK_SECONDS = 8 * 24 * 60 * 60;
+
 function getKstDate(ts: number): Date {
   const d = new Date(ts * 1000);
   // KST is UTC+9
@@ -103,25 +108,59 @@ function overlappedSeconds(st: SessionTime, windowStartSec: number, windowEndSec
   return Math.max(0, Math.min(st.end, windowEndSec) - Math.max(st.start, windowStartSec));
 }
 
+function timestampFromLine(line: string): number | undefined {
+  try {
+    const obj = JSON.parse(line) as JsonObject;
+    return typeof obj.timestamp === "number" ? obj.timestamp : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function firstTimestamp(content: string): number | undefined {
+  for (const line of content.split(/\r?\n/)) {
+    const timestamp = timestampFromLine(line);
+    if (timestamp !== undefined) return timestamp;
+  }
+  return undefined;
+}
+
+function lastTimestamp(content: string): number | undefined {
+  const lines = content.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const timestamp = timestampFromLine(lines[i]);
+    if (timestamp !== undefined) return timestamp;
+  }
+  return undefined;
+}
+
+async function readFileSlice(path: string, start: number, length: number): Promise<string> {
+  const handle = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, start);
+    return buffer.subarray(0, bytesRead).toString("utf-8");
+  } finally {
+    await handle.close();
+  }
+}
+
 async function scanWireJsonl(path: string): Promise<SessionTime | null> {
   try {
-    const content = await readFile(path, "utf-8");
-    const lines = content.trim().split("\n").filter((l) => l.trim());
-    if (lines.length === 0) return null;
-
     let start: number | undefined;
     let end: number | undefined;
+    const info = await stat(path);
 
-    for (const line of lines) {
-      try {
-        const obj = JSON.parse(line) as JsonObject;
-        if (typeof obj.timestamp === "number") {
-          if (start === undefined) start = obj.timestamp;
-          end = obj.timestamp;
-        }
-      } catch {
-        // ignore malformed line
-      }
+    if (info.size <= SMALL_WIRE_FILE_BYTES) {
+      const content = await readFile(path, "utf-8");
+      start = firstTimestamp(content);
+      end = lastTimestamp(content);
+    } else {
+      const head = await readFileSlice(path, 0, Math.min(WIRE_HEAD_BYTES, info.size));
+      const tailStart = Math.max(0, info.size - WIRE_TAIL_BYTES);
+      const tail = await readFileSlice(path, tailStart, Math.min(WIRE_TAIL_BYTES, info.size));
+      start = firstTimestamp(head);
+      end = lastTimestamp(tail);
     }
 
     if (typeof start !== "number" || typeof end !== "number") return null;
@@ -154,7 +193,17 @@ async function scanRunFallback(runPath: string): Promise<SessionTime | null> {
   return null;
 }
 
-async function scanSessionTimes(homeDir: string): Promise<SessionTime[]> {
+async function shouldScanRun(runPath: string, nowSec: number): Promise<boolean> {
+  try {
+    const info = await stat(runPath);
+    const latestSec = Math.floor(Math.max(info.mtimeMs, info.ctimeMs, info.birthtimeMs) / 1000);
+    return latestSec >= nowSec - SESSION_LOOKBACK_SECONDS;
+  } catch {
+    return false;
+  }
+}
+
+async function scanSessionTimes(homeDir: string, nowSec: number): Promise<SessionTime[]> {
   const sessionsDir = join(homeDir, ".kimi", "sessions");
   const times: SessionTime[] = [];
   try {
@@ -166,6 +215,7 @@ async function scanSessionTimes(homeDir: string): Promise<SessionTime[]> {
         .catch(() => [] as string[]);
       for (const runId of runs) {
         const runPath = join(sessionPath, runId);
+        if (!await shouldScanRun(runPath, nowSec)) continue;
         const st = (await scanWireJsonl(join(runPath, "wire.jsonl"))) ??
                    (await scanRunFallback(runPath));
         if (!st) continue;
@@ -210,7 +260,7 @@ export async function getKimiUsage(options: GetKimiUsageOptions = {}): Promise<U
   let totalSecondsWeek = 0;
   let sessionCountWeek = 0;
 
-  const sessions = await scanSessionTimes(homeDir);
+  const sessions = await scanSessionTimes(homeDir, nowSec);
   for (const st of sessions) {
     const duration = Math.max(0, st.end - st.start);
     if (isSameKstDay(st.date, nowKst)) {

@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "node:url";
 import { defaultLspConfigJson } from "../lsp/default-config.js";
+import { t } from "../util/i18n.js";
 
 interface LspCommandOptions {
   printConfig?: boolean;
@@ -36,7 +37,7 @@ export async function lspCommand(server: string = "typescript", options: LspComm
   }
 
   if (!isBundledLspServer(server)) {
-    throw new Error(`지원하지 않는 LSP 서버입니다: ${server}`);
+    throw new Error(t("lsp.unsupportedServer", server));
   }
 
   const command = resolveBundledLspBinary(server);

@@ -6,8 +6,9 @@
  * narrow terminals and in logs that do not handle image-style ANSI art.
  */
 export const KIMICHAN_SIMPLE_ASCII_ART = [
-  "      /\\_/\\",
-  "     ( •ᴗ• )   Plan first. Ship small. Stay safe!",
-  "     / >☕      kimi❯ [AI-native] [agent-first] [safe]",
-  "  ── hoodie black · violet terminal · mint checks ──",
+  "       /\\_/\\  ♡",
+  "    ฅ( ˶• ᴗ •˶ )ฅ  Plan first. Ship small. Stay safe!",
+  "      / づ☕        kimi❯ chocomint ready",
+  "     /| hoodie |\\   purple paws · mint checks",
+  "  ── violet terminal · cozy agent mode ──",
 ].join("\n");

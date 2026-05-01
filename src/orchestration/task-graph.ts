@@ -5,6 +5,8 @@ export class TaskDagGraph {
   private readonly predecessorIds = new Map<string, string[]>();
   private readonly successorIds = new Map<string, string[]>();
   private readonly order = new Map<string, number>();
+  private readonly criticalPathDepthCache = new Map<string, number>();
+  private readonly downstreamCountCache = new Map<string, number>();
   private topologicalIds?: string[];
 
   constructor(nodes: DagNode[]) {
@@ -57,9 +59,11 @@ export class TaskDagGraph {
   }
 
   runnableNodes(): DagNode[] {
-    return this.topologicalOrder().filter((node) => (
-      node.status === "pending" && this.predecessors(node.id).every((dep) => dep.status === "done")
-    ));
+    return this.topologicalOrder()
+      .filter((node) => (
+        node.status === "pending" && this.predecessors(node.id).every((dep) => dep.status === "done")
+      ))
+      .sort((a, b) => this.compareRunnable(a.id, b.id));
   }
 
   private computeTopologicalIds(): string[] {
@@ -126,6 +130,52 @@ export class TaskDagGraph {
 
   private compareOrder(a: string, b: string): number {
     return (this.order.get(a) ?? 0) - (this.order.get(b) ?? 0);
+  }
+
+  private compareRunnable(a: string, b: string): number {
+    return this.runnableScore(b) - this.runnableScore(a) || this.compareOrder(a, b);
+  }
+
+  private runnableScore(id: string): number {
+    const node = this.nodeById.get(id);
+    if (!node) return 0;
+    const explicitPriority = Number.isFinite(node.priority) ? node.priority ?? 0 : 0;
+    const evidenceProducer = (node.outputs ?? []).some((output) => output.gate && output.gate !== "none") ? 1 : 0;
+    const costPenalty = Math.max(0, (node.cost ?? 1) - 1);
+    return (
+      3 * this.criticalPathDepth(id)
+      + 2 * this.downstreamCount(id)
+      + 1.5 * evidenceProducer
+      + explicitPriority
+      - node.retries
+      - costPenalty
+    );
+  }
+
+  private criticalPathDepth(id: string): number {
+    const cached = this.criticalPathDepthCache.get(id);
+    if (cached !== undefined) return cached;
+    const successors = this.successorIds.get(id) ?? [];
+    const depth = successors.length === 0 ? 0 : 1 + Math.max(...successors.map((successor) => this.criticalPathDepth(successor)));
+    this.criticalPathDepthCache.set(id, depth);
+    return depth;
+  }
+
+  private downstreamCount(id: string): number {
+    const cached = this.downstreamCountCache.get(id);
+    if (cached !== undefined) return cached;
+    const visited = new Set<string>();
+    const visit = (nodeId: string): void => {
+      for (const successor of this.successorIds.get(nodeId) ?? []) {
+        if (visited.has(successor)) continue;
+        visited.add(successor);
+        visit(successor);
+      }
+    };
+    visit(id);
+    const count = visited.size;
+    this.downstreamCountCache.set(id, count);
+    return count;
   }
 }
 

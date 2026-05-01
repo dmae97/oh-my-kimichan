@@ -4,21 +4,22 @@ import { getOmkPath, pathExists, getProjectRoot } from "../util/fs.js";
 import { runShell } from "../util/shell.js";
 import { getCurrentBranch } from "../util/git.js";
 import { style, header, status, label } from "../util/theme.js";
+import { t } from "../util/i18n.js";
 
-export async function mergeCommand(options: { run?: string }): Promise<void> {
+export async function mergeCommand(options: { run?: string; runId?: string }): Promise<void> {
   const root = getProjectRoot();
   const runsDir = getOmkPath("runs");
   if (!(await pathExists(runsDir))) {
-    console.error(status.error("실행 기록이 없습니다."));
+    console.error(status.error(t("merge.noRuns")));
     process.exit(1);
   }
 
-  let runId = options.run ?? "latest";
+  let runId = options.run ?? options.runId ?? "latest";
   if (runId === "latest") {
     const entries = await readdir(runsDir, { withFileTypes: true });
     const runs = entries.filter((e) => e.isDirectory()).sort().reverse();
     if (runs.length === 0) {
-      console.error(status.error("실행 기록이 없습니다."));
+      console.error(status.error(t("merge.noRuns")));
       process.exit(1);
     }
     runId = runs[0].name;
@@ -26,7 +27,7 @@ export async function mergeCommand(options: { run?: string }): Promise<void> {
 
   const worktreesDir = getOmkPath(`worktrees/${runId}`);
   if (!(await pathExists(worktreesDir))) {
-    console.log(status.info("해당 run에 worktree가 없습니다. 단순 완료로 처리합니다."));
+    console.log(status.info(t("merge.noWorktrees")));
     return;
   }
 
@@ -40,7 +41,7 @@ export async function mergeCommand(options: { run?: string }): Promise<void> {
 
   const currentBranch = await getCurrentBranch();
   if (!currentBranch) {
-    console.error(status.error("Git 브랜치를 확인할 수 없습니다."));
+    console.error(status.error(t("merge.branchCheckFailed")));
     process.exit(1);
   }
 
@@ -50,7 +51,7 @@ export async function mergeCommand(options: { run?: string }): Promise<void> {
 
     const diffResult = await runShell("git", ["-C", wtPath, "diff", currentBranch], { timeout: 15000 });
     if (diffResult.failed || !diffResult.stdout.trim()) {
-      console.log(style.gray("     → 변경사항 없음 또는 오류, 스킵"));
+      console.log(style.gray(t("merge.noChanges")));
       continue;
     }
 
@@ -60,12 +61,12 @@ export async function mergeCommand(options: { run?: string }): Promise<void> {
       timeout: 15000,
     });
     if (applyResult.failed) {
-      console.log(style.orange("     → 충돌 가능성, 수동 해결 필요"));
+      console.log(style.orange(t("merge.conflictPossible")));
       continue;
     }
 
-    console.log(style.mint("     → diff ready. 수동 병합: ") + style.cream(`git cherry-pick $(git -C ${wtPath} rev-parse HEAD)`));
+    console.log(style.mint(t("merge.diffReady")) + style.cream(`git cherry-pick $(git -C ${wtPath} rev-parse HEAD)`));
   }
 
-  console.log("\n" + status.success("Merge 준비 완료. 위 안내에 따라 수동 병합하세요."));
+  console.log("\n" + status.success(t("merge.ready")));
 }

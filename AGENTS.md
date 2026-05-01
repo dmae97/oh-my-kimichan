@@ -117,6 +117,20 @@ Expected output:
 
 Do not ask subagents to modify unrelated files.
 
+### Parallel Agent Limits
+
+When `OMK_WORKERS` is set (e.g. via `omk chat --workers <n>`):
+
+- Respect the worker count. Do not spawn more parallel agents than `OMK_WORKERS`.
+- When `OMK_WORKERS=1`, run agents sequentially.
+- When `OMK_WORKERS=auto`, use the resource profile default (usually 2–4).
+
+When `--max-steps-per-turn` is set (e.g. via `omk chat --max-steps-per-turn <n>`):
+
+- Treat it as the tool-use budget for the current turn.
+- Prioritize tools: use the most impactful tool first.
+- If the limit is reached, stop tool use and summarize findings to the user.
+
 ---
 
 ## Skills Policy

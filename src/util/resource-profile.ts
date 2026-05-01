@@ -18,6 +18,8 @@ export interface OmkResourceSettings {
   renderLogo: boolean;
   mcpScope: OmkRuntimeScope;
   skillsScope: OmkRuntimeScope;
+  ensembleDefaultEnabled: boolean;
+  localeLanguage: string;
 }
 
 type FlatToml = Record<string, string>;
@@ -79,6 +81,8 @@ async function loadOmkResourceSettings(): Promise<OmkResourceSettings> {
   const mcpScope = normalizeScope(env.OMK_MCP_SCOPE ?? config["runtime.mcp_scope"], profile === "lite" ? "project" : "all");
   const skillsScope = normalizeScope(env.OMK_SKILLS_SCOPE ?? config["runtime.skills_scope"], profile === "lite" ? "project" : "all");
 
+  const localeLanguage = normalizeLocaleLanguage(env.OMK_LANGUAGE ?? config["locale.language"]) ?? "en";
+
   return {
     requestedProfile,
     profile,
@@ -90,10 +94,12 @@ async function loadOmkResourceSettings(): Promise<OmkResourceSettings> {
     renderLogo,
     mcpScope,
     skillsScope,
+    ensembleDefaultEnabled: profile !== "lite",
+    localeLanguage,
   };
 }
 
-function getProjectRoot(): string {
+export function getProjectRoot(): string {
   if (process.env.OMK_PROJECT_ROOT) return resolve(process.env.OMK_PROJECT_ROOT);
   try {
     const gitRoot = execSync("git rev-parse --show-toplevel", {
@@ -108,7 +114,7 @@ function getProjectRoot(): string {
   return resolve(process.cwd());
 }
 
-async function readSimpleToml(path: string): Promise<FlatToml> {
+export async function readSimpleToml(path: string): Promise<FlatToml> {
   try {
     const content = await readFile(path, "utf-8");
     return parseSimpleToml(content);
@@ -189,6 +195,14 @@ function normalizeScope(value: string | undefined, fallback: OmkRuntimeScope): O
   if (normalized === "project" || normalized === "local") return "project";
   if (normalized === "all" || normalized === "global") return "all";
   return fallback;
+}
+
+function normalizeLocaleLanguage(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "ko" || normalized === "kr" || normalized === "korean") return "ko";
+  if (normalized === "en" || normalized === "eng" || normalized === "english") return "en";
+  if (normalized === "ja" || normalized === "jp" || normalized === "japanese") return "ja";
+  return undefined;
 }
 
 function parsePositiveInt(value: string | undefined): number | undefined {

@@ -72,6 +72,10 @@ export const style = {
   bgPurple: (s: string) => esc(bgRgb(P.purple.r, P.purple.g, P.purple.b) + ";" + rgb(255, 255, 255)) + s + esc("0"),
   bgPink: (s: string) => esc(bgRgb(P.pink.r, P.pink.g, P.pink.b) + ";" + rgb(255, 255, 255)) + s + esc("0"),
   bgDark: (s: string) => esc(bgRgb(P.dark.r, P.dark.g, P.dark.b) + ";" + rgb(P.cream.r, P.cream.g, P.cream.b)) + s + esc("0"),
+
+  // Parallel UI extras
+  orangeBold: (s: string) => esc("1;" + rgb(P.orange.r, P.orange.g, P.orange.b)) + s + esc("0"),
+  redBold: (s: string) => esc("1;" + rgb(P.red.r, P.red.g, P.red.b)) + s + esc("0"),
 };
 
 // ── Semantic helpers ─────────────────────────────────────────
@@ -276,7 +280,7 @@ export function kimichanStatusChips(): string {
   return chips.join(" ");
 }
 
-export function kimichanCliHero(): string {
+export function kimichanCliHero(footer?: string): string {
   const heroLines = [
     gradient("✦ oh-my-kimichan ✦"),
     style.creamBold("Kimi CLI, but better."),
@@ -286,6 +290,10 @@ export function kimichanCliHero(): string {
     "",
     kimichanStatusChips(),
   ];
+
+  if (footer) {
+    heroLines.push("", style.gray(footer));
+  }
 
   return box(heroLines, "Kimichan Mascot Theme");
 }
@@ -301,13 +309,105 @@ export function kimichanMetaBox(meta?: { directory?: string; session?: string; m
   return box(metaLines, "Session Info") + "\n";
 }
 
-export function kimichanBanner(meta?: { directory?: string; session?: string; model?: string }): string {
+export function kimichanBanner(meta?: { directory?: string; session?: string; model?: string }, footer?: string): string {
   const parts: string[] = [
-    kimichanCliHero(),
+    kimichanCliHero(footer),
   ];
 
   const metaBox = kimichanMetaBox(meta);
   if (metaBox) parts.push(metaBox);
 
   return parts.join("\n");
+}
+
+// ── Parallel Execution UI Kit ────────────────────────────────
+
+const ROLE_COLORS: Record<string, (s: string) => string> = {
+  orchestrator: style.purple,
+  coordinator: style.purple,
+  planner: style.blue,
+  explorer: style.blue,
+  coder: style.mint,
+  reviewer: style.pink,
+  qa: style.orange,
+  architect: style.lightPurple,
+  router: style.cream,
+  default: style.gray,
+};
+
+export function roleColor(role: string): (s: string) => string {
+  return ROLE_COLORS[role] ?? ROLE_COLORS.default;
+}
+
+export function parallelStatusBadge(nodeStatus: string, role: string): string {
+  const color = roleColor(role);
+  const badgeBg = nodeStatus === "running" ? style.bgPurple
+    : nodeStatus === "done" ? style.bgDark
+    : nodeStatus === "failed" ? style.bgPink
+    : style.gray;
+  const icon = nodeStatus === "running" ? "▶"
+    : nodeStatus === "done" ? "✓"
+    : nodeStatus === "failed" ? "✕"
+    : nodeStatus === "blocked" ? "■"
+    : "□";
+  return badgeBg(` ${icon} ${nodeStatus.toUpperCase()} `) + " " + color(`[${role}]`);
+}
+
+export function workerLabel(id: string, role: string): string {
+  const color = roleColor(role);
+  return color(`${role}`) + style.gray(":") + " " + style.creamBold(id);
+}
+
+export function safetyChip(policy: string): string {
+  if (policy === "yolo") return style.mintBold("[SAFETY:YOLO]") + " " + style.gray("auto-allow with hook guards");
+  if (policy === "auto") return style.orangeBold("[SAFETY:AUTO]") + " " + style.gray("safe tools auto, destructive ask");
+  if (policy === "interactive") return style.pinkBold("[SAFETY:INTERACTIVE]") + " " + style.gray("human approval required");
+  if (policy === "block") return style.redBold("[SAFETY:BLOCK]") + " " + style.gray("all blocked");
+  return style.gray(`[SAFETY:${policy}]`);
+}
+
+export function ensembleQuorumBar(successWeight: number, totalWeight: number, quorumWeight: number, width = 20): string {
+  const ratio = totalWeight > 0 ? Math.min(1, successWeight / totalWeight) : 0;
+  const quorumRatio = totalWeight > 0 ? Math.min(1, quorumWeight / totalWeight) : 0;
+  const filled = Math.round(ratio * width);
+  const quorumPos = Math.round(quorumRatio * width);
+  const empty = width - filled;
+
+  const bar: string[] = [];
+  for (let i = 0; i < width; i++) {
+    if (i === quorumPos) {
+      bar.push(style.creamBold("|"));
+    } else if (i < filled) {
+      bar.push(style.mint("█"));
+    } else {
+      bar.push(style.gray("░"));
+    }
+  }
+
+  const pct = style.creamBold(`${Math.round(ratio * 100)}%`);
+  return `  ${style.gray("quorum")} ${bar.join("")} ${pct} ${style.gray(`(need ${quorumWeight.toFixed(1)})`)}`;
+}
+
+export function workerOutputBox(lines: string[], workerId: string, role: string): string {
+  const color = roleColor(role);
+  const title = `${workerId} (${role})`;
+  const prefix = color(`┃ `);
+  const innerWidth = Math.max(...lines.map((l) => stripAnsi(l).length), stripAnsi(title).length + 4);
+  const top = color(`┏━ ${style.pinkBold(title)} ${"━".repeat(Math.max(0, innerWidth - stripAnsi(title).length - 4))}┓`);
+  const bottom = color(`┗${"━".repeat(innerWidth + 2)}┛`);
+  const body = lines.map((l) => prefix + padEndAnsi(l, innerWidth) + color(" ┃"));
+  return [top, ...body, bottom].join("\n");
+}
+
+export function approvalPromptBox(toolName: string, nodeId: string): string {
+  return box([
+    style.pinkBold(`⚠️  Approval required for ${toolName}`),
+    style.gray(`Requested by node: ${nodeId}`),
+    "",
+    style.cream("Allow this operation? (y/n/describe):")
+  ], "Safety Gate");
+}
+
+export function orangeBold(s: string): string {
+  return esc("1;" + rgb(P.orange.r, P.orange.g, P.orange.b)) + s + esc("0");
 }

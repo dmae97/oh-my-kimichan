@@ -6,6 +6,7 @@ import { isGitRepo } from "../util/git.js";
 import { runShell } from "../util/shell.js";
 import { style, header, status } from "../util/theme.js";
 import { defaultLspConfigJson } from "../lsp/default-config.js";
+import { t } from "../util/i18n.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -33,6 +34,10 @@ agent:
     - "kimi_cli.tools.background:TaskList"
     - "kimi_cli.tools.background:TaskOutput"
     - "kimi_cli.tools.background:TaskStop"
+    # D-Mail checkpoints: real save/restore substance via MCP tools
+    #   omk_save_checkpoint   -> capture git diff + todos + state
+    #   omk_list_checkpoints  -> browse saved checkpoints
+    #   omk_restore_checkpoint -> apply patch and restore run files
     - "kimi_cli.tools.dmail:SendDMail"
 `;
 
@@ -326,10 +331,10 @@ async function copyTemplateDir(src: string, dest: string): Promise<void> {
 
 const HOOK_SCRIPTS: Record<string, string> = {
   "pre-shell-guard.sh": `#!/usr/bin/env bash
-# PreShellUse Guard — 위험 명령 차단
+# PreShellUse Guard — blocks dangerous commands
 set -e
 
-# jq/python3 없으면 보안 게이트를 닫음 (deny by default)
+# Close security gate if jq/python3 is missing (deny by default)
 if command -v python3 &>/dev/null; then
   PY=python3
 elif command -v python &>/dev/null; then
@@ -345,7 +350,7 @@ ARGS=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.
 
 FULL="$COMMAND $ARGS"
 
-# 차단 목록
+# Block list
 BLOCKED=(
   "rm -rf /"
   "rm -rf ~"
@@ -377,10 +382,10 @@ done
 echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
 `,
   "protect-secrets.sh": `#!/usr/bin/env bash
-# Secret/환경변수 보호
+# Secret/environment variable protection
 set -e
 
-# jq/python3 없으면 보안 게이트를 닫음 (deny by default)
+# Close security gate if jq/python3 is missing (deny by default)
 if command -v python3 &>/dev/null; then
   PY=python3
 elif command -v python &>/dev/null; then
@@ -394,7 +399,7 @@ INPUT=$(cat)
 FILEPATH=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("file_path",""))')
 CONTENT=$(echo "$INPUT" | $PY -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("content",""))')
 
-# 민감 파일 직접 수정 차단
+# Block direct modification of sensitive files
 SENSITIVE_PATHS=(".env" ".pem" ".key" "id_rsa" "id_ed25519" "credentials" "service-account" ".p12" ".pfx" ".keystore")
 for sp in "\${SENSITIVE_PATHS[@]}"; do
   if [[ "$FILEPATH" == *"$sp"* ]]; then
@@ -403,7 +408,7 @@ for sp in "\${SENSITIVE_PATHS[@]}"; do
   fi
 done
 
-# 키워드 탐지 (JWT, cloud tokens, private keys 포함)
+# Keyword detection (JWT, cloud tokens, private keys, etc.)
 if echo "$CONTENT" | grep -qiE '(password|secret|api_key|auth|bearer|token|private_key|aws_access_key_id|aws_secret_access_key|akiai|asiai|ghp_|github_pat|sk-|glpat-|npm_|pypi_|docker_auth|private.?key|BEGIN .* PRIVATE KEY|ssh-rsa|ssh-ed25519)'; then
   echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Potential secret leak detected"}}'
   exit 0
@@ -412,7 +417,7 @@ fi
 echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
 `,
   "post-format.sh": `#!/usr/bin/env bash
-# 저장 후 자동 포맷팅 (단일 파일 대상)
+# Auto-format after save (single file target)
 set -e
 
 if command -v python3 &>/dev/null; then
@@ -432,7 +437,7 @@ if [ -z "$FILEPATH" ]; then
   exit 0
 fi
 
-# 프로젝트 루트 감지 및 포맷터 실행 (대상 파일만)
+# Detect project root and run formatter (target file only)
 if [ -f "package.json" ] && [ -f "$FILEPATH" ]; then
   npx prettier --write "$FILEPATH" >/dev/null 2>&1 || true
 fi
@@ -444,7 +449,7 @@ fi
 echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","permissionDecision":"allow"}}'
 `,
   "stop-verify.sh": `#!/usr/bin/env bash
-# Stop 시 최종 검증
+# Final verification on Stop
 set -e
 
 echo '{"hookSpecificOutput":{"hookEventName":"Stop","permissionDecision":"allow"}}'
@@ -452,7 +457,7 @@ echo '{"hookSpecificOutput":{"hookEventName":"Stop","permissionDecision":"allow"
 };
 
 const KIMI_CONFIG_TOML = `# oh-my-kimichan generated Kimi config
-# 생명주기 hook 설정
+# Lifecycle hook settings
 
 [[hooks]]
 event = "PreToolUse"
@@ -489,7 +494,7 @@ const MCP_JSON = {
   },
 };
 
-const CONFIG_TOML = `# oh-my-kimichan 프로젝트 설정
+const CONFIG_TOML = `# oh-my-kimichan project settings
 [project]
 name = "my-project"
 description = ""
@@ -503,8 +508,8 @@ yolo_mode = true                 # safe guards still block secrets/destructive s
 [runtime]
 # auto chooses lite on <=18GB RAM hosts to make 16GB laptops usable.
 resource_profile = "auto"        # auto | lite | standard
-mcp_scope = "project"            # lite default: project; all loads ~/.kimi/mcp.json too
-skills_scope = "project"         # lite default: project; all loads ~/.kimi/skills too
+mcp_scope = "all"                # force .omk + .kimi + ~/.kimi MCP discovery
+skills_scope = "all"             # force project .kimi + ~/.kimi skills discovery
 max_workers = 1                  # can override with OMK_MAX_WORKERS
 max_output_mb = 4                # cap buffered shell/quality output
 wire_output_mb = 1               # cap per-task retained wire output
@@ -517,7 +522,7 @@ max_parallel = 1
 quorum_ratio = 0.5
 
 [quality]
-lint = "auto"      # auto | 명령어
+lint = "auto"      # auto | command
 test = "auto"
 typecheck = "auto"
 build = "auto"
@@ -546,12 +551,16 @@ username = "neo4j"
 database = "neo4j"
 auth = "basic"             # basic | none
 
+[locale]
+# UI language: en (default) | ko | ja
+language = "en"
+
 [theme]
-# 터미널 웰컴 배너에 사용할 커스텀 로고 이미지 경로
-# 상대경로는 프로젝트 루트 기준, 절대경로도 가능
-# 예: logo_image = "kimichan.png"  또는  logo_image = "M:\\oh-my-kimichan\\kimichan.png"
-# 지원 형식: PNG, JPEG, GIF (터미널이 iTerm/Konsole 등이면 고해상도, 아니면 ANSI 블록)
-#logo_image = ""
+# Custom logo image path for terminal welcome banner
+# Relative paths are resolved from project root; absolute paths also work
+# Example: logo_image = "kimichan.png"  or  logo_image = "M:\\oh-my-kimichan\\kimichan.png"
+# Supported formats: PNG, JPEG, GIF (high-res on iTerm/Konsole, else ANSI block)
+logo_image = "kimichan.png"
 
 [router]
 default_model = "kimi-k2.6"
@@ -560,10 +569,10 @@ coding_thinking = "enabled"
 `;
 
 const MEMORY_FILES: Record<string, string> = {
-  "project.md": "# 프로젝트 메모리\n\n프로젝트 로컬 온톨로지 그래프(.omk/memory/graph-state.json)가 source of truth이며, 이 파일은 읽기 쉬운 미러입니다.\n",
-  "decisions.md": "# 결정 사항\n\n중요한 아키텍처/설계 결정을 기록합니다. 로컬 그래프 메모리의 Decision 노드로도 분해됩니다.\n",
-  "commands.md": "# 자주 쓰는 명령어\n\n로컬 그래프 메모리와 함께 유지되는 Command 미러입니다.\n\n\`\`\`bash\n# 예시\n\`\`\`\n",
-  "risks.md": "# 알려진 리스크\n\n- \n",
+  "project.md": "# Project Memory\n\nThe project-local ontology graph (.omk/memory/graph-state.json) is the source of truth; this file is a human-readable mirror.\n",
+  "decisions.md": "# Decisions\n\nRecord important architecture/design decisions. Also decomposed into Decision nodes in the local graph memory.\n",
+  "commands.md": "# Frequently Used Commands\n\nCommand mirror maintained alongside the local graph memory.\n\n\`\`\`bash\n# example\n\`\`\`\n",
+  "risks.md": "# Known Risks\n\n- \n",
 };
 
 async function ensureExecutable(path: string): Promise<void> {
@@ -574,15 +583,17 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   const root = getProjectRoot();
   console.log(header(`oh-my-kimichan init (profile: ${options.profile})`));
 
-  // 1. Create directories (병렬)
+  // 1. Create directories (parallel)
   const dirs = [
     ".omk/memory",
     ".omk/runs",
+    ".omk/checkpoints",
     ".omk/agents/roles",
     ".omk/prompts/role-addons",
     ".omk/hooks",
     ".omk/worktrees",
     ".omk/logs",
+    ".omk/snippets",
     ".kimi/skills",
     ".kimi/hooks",
     ".agents/skills",
@@ -592,7 +603,7 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   // 2. Write AGENTS.md (skip if exists)
   const agentsMdPath = join(root, "AGENTS.md");
   if (await pathExists(agentsMdPath)) {
-    console.log("   ℹ️ AGENTS.md 이미 존재 — 건너뜀");
+    console.log(t("init.agentsMdExists"));
   } else {
     const agentsMdContent = await readFile(join(packageRoot, "templates", "AGENTS.md"), "utf8");
     await writeFile(agentsMdPath, agentsMdContent);
@@ -601,19 +612,19 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   // 2.5 Write .kimi/AGENTS.md (Kimi-specific rules)
   const kimiAgentsMdPath = join(root, ".kimi", "AGENTS.md");
   if (await pathExists(kimiAgentsMdPath)) {
-    console.log("   ℹ️ .kimi/AGENTS.md 이미 존재 — 건너뜀");
+    console.log(t("init.kimiAgentsMdExists"));
   } else {
     const kimiAgentsMdContent = await readFile(join(packageRoot, "templates", ".kimi", "AGENTS.md"), "utf8");
     await writeFile(kimiAgentsMdPath, kimiAgentsMdContent);
   }
 
-  // 3. Write / migrate agents (병렬)
+  // 3. Write / migrate agents (parallel)
   const okabeYamlPath = join(root, ".omk/agents/okabe.yaml");
   await writeFile(okabeYamlPath, OKABE_AGENT_YAML);
 
   const rootYamlPath = join(root, ".omk/agents/root.yaml");
   if (await pathExists(rootYamlPath)) {
-    // 기존 root.yaml 마이그레이션: 상대 경로 버그 수정
+    // Existing root.yaml migration: fix relative path bug
     const existing = await readFile(rootYamlPath, "utf8");
     if (existing.includes("system_prompt_path: ./prompts/root.md")) {
       const migrated = existing.replace(
@@ -621,7 +632,7 @@ export async function initCommand(options: { profile: string }): Promise<void> {
         "system_prompt_path: ../prompts/root.md"
       );
       await writeFile(rootYamlPath, migrated);
-      console.log(status.ok("기존 root.yaml 마이그레이션 완료 (prompts 경로 수정)"));
+      console.log(status.ok(t("init.rootYamlMigrated")));
     }
   } else {
     await writeFile(rootYamlPath, ROOT_AGENT_YAML);
@@ -635,25 +646,25 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   // 4. Write prompts
   await writeFile(join(root, ".omk/prompts/root.md"), ROOT_PROMPT_MD);
 
-  // 5+6. Copy skills from package templates (병렬)
+  // 5+6. Copy skills from package templates (parallel)
   const kimiSkillsSrc = join(packageRoot, "templates", "skills", "kimi");
   const agentsSkillsSrc = join(packageRoot, "templates", "skills", "agents");
   const skillCopies = [];
   if (await pathExists(kimiSkillsSrc)) {
-    console.log(style.purple("   📦 Kimi skills 복사 중..."));
+    console.log(style.purple(t("init.copyKimiSkills")));
     skillCopies.push(copyTemplateDir(kimiSkillsSrc, join(root, ".kimi", "skills")));
   } else {
-    console.log(status.warn("Kimi skills 템플릿 없음 — templates/skills/kimi 확인"));
+    console.log(status.warn(t("init.kimiSkillsMissing")));
   }
   if (await pathExists(agentsSkillsSrc)) {
-    console.log(style.purple("   📦 Portable skills 복사 중..."));
+    console.log(style.purple(t("init.copyPortableSkills")));
     skillCopies.push(copyTemplateDir(agentsSkillsSrc, join(root, ".agents", "skills")));
   } else {
-    console.log(status.warn("Portable skills 템플릿 없음 — templates/skills/agents 확인"));
+    console.log(status.warn(t("init.portableSkillsMissing")));
   }
   if (skillCopies.length > 0) await Promise.all(skillCopies);
 
-  // 7. Write hooks (병렬)
+  // 7. Write hooks (parallel)
   await Promise.all(
     Object.entries(HOOK_SCRIPTS).map(async ([name, content]) => {
       const hookPath = join(root, ".omk/hooks", name);
@@ -666,14 +677,38 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   await writeFile(join(root, ".omk/config.toml"), CONFIG_TOML);
   await writeFile(join(root, ".omk/kimi.config.toml"), KIMI_CONFIG_TOML);
   await writeFile(join(root, ".omk/mcp.json"), JSON.stringify(MCP_JSON, null, 2));
+  const kimiMcpJsonPath = join(root, ".kimi/mcp.json");
+  if (!(await pathExists(kimiMcpJsonPath))) {
+    await writeFile(kimiMcpJsonPath, JSON.stringify({ mcpServers: {} }, null, 2));
+  }
   await writeFile(join(root, ".omk/lsp.json"), defaultLspConfigJson());
 
-  // 9. Write memory files (병렬)
+  const bundledLogoPath = join(packageRoot, "kimichan.png");
+  const projectLogoPath = join(root, "kimichan.png");
+  if (await pathExists(bundledLogoPath)) {
+    if (await pathExists(projectLogoPath)) {
+      console.log(t("init.kimichanPngExists"));
+    } else {
+      await copyFile(bundledLogoPath, projectLogoPath);
+    }
+  } else {
+    console.log(status.warn(t("init.kimichanPngMissing")));
+  }
+
+  // 9. Write memory files (parallel)
   await Promise.all(
     Object.entries(MEMORY_FILES).map(([name, content]) =>
       writeFile(join(root, ".omk/memory", name), content)
     )
   );
+
+  // 9.5. Copy default snippet templates if they exist
+  const snippetsSrc = join(packageRoot, "templates", "snippets");
+  const snippetsDest = join(root, ".omk", "snippets");
+  if (await pathExists(snippetsSrc)) {
+    console.log(style.purple("   📦 Copying snippet templates..."));
+    await copyTemplateDir(snippetsSrc, snippetsDest);
+  }
 
   // 10. Write project docs (skip if already exist)
   const docs: Record<string, string> = {
@@ -686,7 +721,7 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   for (const [name, content] of Object.entries(docs)) {
     const docPath = join(root, name);
     if (await pathExists(docPath)) {
-      console.log(`   ℹ️ ${name} 이미 존재 — 건너뜀`);
+      console.log(`   ℹ️ ${name} already exists — skipping`);
     } else {
       await writeFile(docPath, content);
     }
@@ -700,6 +735,8 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   console.log("- DESIGN.md");
   console.log("- .omk/agents/root.yaml");
   console.log("- .omk/lsp.json");
+  console.log("- kimichan.png");
+  console.log("- .kimi/mcp.json");
   console.log("- .kimi/skills/");
   console.log("- .agents/skills/");
   console.log("- .omk/memory/");
@@ -711,13 +748,58 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   console.log("- Skills are auto-discovered.");
   console.log("- MCP tools are used when configured.");
 
-  // ~/.kimi/ 에 hooks + MCP + skills + local graph memory 정책 무조건 글로벌 동기화
+  // Always sync hooks + MCP + skills + local graph memory policy globally to ~/.kimi/
   try {
     await syncAllKimiGlobals();
-    console.log(status.ok("~/.kimi/ 글로벌 동기화 완료 (hooks + MCP + skills + local graph memory)"));
+    console.log(status.ok("~/.kimi/ global sync complete (hooks + MCP + skills + local graph memory)"));
   } catch (err) {
-    console.warn("⚠️  글로벌 동기화 실패:", (err as Error).message);
+    console.warn("⚠️  global sync failed:", (err as Error).message);
   }
 
-  console.log(style.purpleBold("   다음 단계: ") + style.cream("omk doctor → omk chat"));
+  // ── Shell integration & PATH check ──
+  const pathCheck = await checkOmkInPath();
+  if (!pathCheck.inPath) {
+    console.log("");
+    console.log(style.orange("⚠️  omk is not in PATH."));
+    console.log(style.gray("   Run one of the following:"));
+    console.log(style.gray("   1) npm install -g oh-my-kimichan"));
+    console.log(style.gray("   2) npm link (for development)"));
+    console.log(style.gray("   3) alias omk='npx oh-my-kimichan'"));
+  } else {
+    await maybeInstallShellCompletion(root);
+  }
+
+  console.log("");
+  console.log(style.purpleBold("   Next steps: ") + style.cream("omk doctor → omk chat"));
+}
+
+async function checkOmkInPath(): Promise<{ inPath: boolean }> {
+  try {
+    const result = await import("../util/shell.js").then((m) => m.runShell("which", ["omk"], { timeout: 3000 }));
+    return { inPath: !result.failed && result.stdout.trim().length > 0 };
+  } catch {
+    return { inPath: false };
+  }
+}
+
+async function maybeInstallShellCompletion(root: string): Promise<void> {
+  const bashrc = join(process.env.HOME || process.env.USERPROFILE || "", ".bashrc");
+  const zshrc = join(process.env.HOME || process.env.USERPROFILE || "", ".zshrc");
+
+  const omkAliasBlock = `# >>> omk shell integration
+export OMK_STAR_PROMPT=1
+export OMK_RENDER_LOGO=1
+# <<< end omk shell integration`;
+
+  for (const rcFile of [bashrc, zshrc]) {
+    if (!(await pathExists(rcFile))) continue;
+    try {
+      const content = await readFile(rcFile, "utf-8");
+      if (content.includes("omk shell integration")) continue;
+      await writeFile(rcFile, content.trimEnd() + "\n\n" + omkAliasBlock + "\n");
+      console.log(status.ok(`Shell integration added: ${rcFile}`));
+    } catch {
+      // ignore
+    }
+  }
 }

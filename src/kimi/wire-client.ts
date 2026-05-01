@@ -4,6 +4,7 @@ import type { TaskResult, TaskRunner } from "../contracts/orchestration.js";
 import type { DagNode } from "../orchestration/dag.js";
 import { CappedOutputBuffer } from "../util/output-buffer.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
+import { getOmkVersionSync } from "../util/version.js";
 
 export interface JsonRpcRequest<TParams = unknown> {
   jsonrpc: "2.0";
@@ -141,7 +142,7 @@ export class KimiWireClient {
       this.emit({ type: "error", message: `Kimi process exited with code ${code}` });
       this.rl?.close();
       this.rl = undefined;
-      // 프로세스 종료 시 pending Promise 전부 reject — 메모리 누수/데드락 방지
+      // Reject all pending Promises on process exit to prevent memory leaks / deadlocks
       for (const [id, p] of this.pending) {
         clearTimeout(p.timer);
         p.reject(new Error(`Kimi process exited (code ${code}) before response to request ${id}`));
@@ -153,17 +154,17 @@ export class KimiWireClient {
 
     await this.call("initialize", {
       protocol_version: "2025-03-11",
-      client: { name: "oh-my-kimichan", version: "0.1.0" },
+      client: { name: "oh-my-kimichan", version: getOmkVersionSync() },
       capabilities: { supports_question: true, supports_plan_mode: true },
       external_tools: [
         {
           name: "omk_claim_task",
-          description: "DAG 노드 작업을 할당받습니다",
+          description: "Receive a DAG node task assignment",
           parameters: { type: "object", properties: {} },
         },
         {
           name: "omk_update_task",
-          description: "작업 상태를 업데이트합니다",
+          description: "Update task status",
           parameters: {
             type: "object",
             properties: {
@@ -175,7 +176,7 @@ export class KimiWireClient {
         },
         {
           name: "omk_read_memory",
-          description: "프로젝트 메모리를 읽습니다",
+          description: "Read project memory",
           parameters: {
             type: "object",
             properties: { path: { type: "string" } },
@@ -184,7 +185,7 @@ export class KimiWireClient {
         },
         {
           name: "omk_write_memory",
-          description: "프로젝트 메모리를 기록합니다",
+          description: "Write project memory",
           parameters: {
             type: "object",
             properties: { path: { type: "string" }, content: { type: "string" } },
@@ -193,7 +194,7 @@ export class KimiWireClient {
         },
         {
           name: "omk_emit_metric",
-          description: "메트릭을 기록합니다",
+          description: "Record metrics",
           parameters: {
             type: "object",
             properties: { key: { type: "string" }, value: { type: "number" } },
@@ -202,7 +203,7 @@ export class KimiWireClient {
         },
         {
           name: "omk_report_blocker",
-          description: "블로커를 보고합니다",
+          description: "Report blockers",
           parameters: {
             type: "object",
             properties: { reason: { type: "string" } },
@@ -270,7 +271,7 @@ export class KimiWireClient {
   }
 
   async stop(): Promise<void> {
-    // pending 전부 정리 — 메모리 누수/데드락 방지
+    // Clean up all pending to prevent memory leaks / deadlocks
     for (const [id, p] of this.pending) {
       clearTimeout(p.timer);
       p.reject(new Error(`Wire client stopped before response to request ${id}`));

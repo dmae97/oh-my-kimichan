@@ -74,7 +74,7 @@ export function getOmkPath(subPath?: string): string {
 }
 
 export function getRunPath(runId: string, subPath?: string): string {
-  const sanitized = runId.replace(/[^a-zA-Z0-9_.\-]/g, "");
+  const sanitized = runId.replace(/[^a-zA-Z0-9_.-]/g, "");
   if (sanitized !== runId || sanitized.length === 0 || sanitized.length > 128) {
     throw new Error(`Invalid runId: ${runId}`);
   }

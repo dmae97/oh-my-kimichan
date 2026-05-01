@@ -1,5 +1,6 @@
 import { runShell } from "../util/shell.js";
 import { style, header, status } from "../util/theme.js";
+import { t } from "../util/i18n.js";
 
 export async function stitchInstallCommand(): Promise<void> {
   console.log(header("Installing Google Stitch skills"));
@@ -24,7 +25,7 @@ export async function stitchInstallCommand(): Promise<void> {
     }
   }
   if (failCount === skills.length) {
-    console.error("\n" + status.error("모든 스킬 설치에 실패했습니다."));
+    console.error("\n" + status.error(t("google.allSkillsFailed")));
     process.exit(1);
   }
 }

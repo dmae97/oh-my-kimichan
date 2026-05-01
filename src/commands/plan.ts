@@ -2,35 +2,41 @@ import { runShell } from "../util/shell.js";
 import { getOmkPath, getProjectRoot, pathExists, injectKimiGlobals } from "../util/fs.js";
 import { style, header, status, label } from "../util/theme.js";
 import { createOmkSessionEnv, createOmkSessionId } from "../util/session.js";
+import { t } from "../util/i18n.js";
 
-export async function planCommand(goal: string, options: { thinking?: string }): Promise<void> {
+export async function planCommand(goal: string, options: { thinking?: string; runId?: string }): Promise<void> {
   const root = getProjectRoot();
   const agentFile = getOmkPath("agents/roles/architect.yaml");
   const sessionId = createOmkSessionId("plan");
 
   if (!(await pathExists(agentFile))) {
-    console.error(status.error("architect agent가 없습니다. omk init을 먼저 실행하세요."));
+    console.error(status.error(t("plan.architectMissing")));
     process.exit(1);
   }
 
-  const promptText = `다음 목표에 대한 구현 계획을 수립해주세요. 구체적이고 검증 가능한 단계로 나누어 주세요.\n\n목표: ${goal}`;
+  const promptText = t("plan.prompt", goal);
 
-  console.log(header("계획 수립"));
-  console.log(label("목표", goal) + "\n");
+  console.log(header(t("plan.header")));
+  console.log(label(t("plan.goalLabel"), goal) + "\n");
   const args = ["--print", "--output-format=stream-json"];
   args.push("--agent-file", agentFile);
-  // ⚠️ --config-file 을 사용하면 kimi 가 "Login requires the default config file" 에러를 낸다.
-  //    hooks 는 mergeKimiHooks() 로 ~/.kimi/config.toml 에 주입한다.
+  // ⚠️ Using --config-file causes kimi to throw "Login requires the default config file".
+  //    Hooks are injected via mergeKimiHooks() into ~/.kimi/config.toml.
 
-  // ~/.kimi/ 에 hooks + MCP + skills 무조건 글로벌 동기화
+  // Always sync hooks + MCP + skills globally to ~/.kimi/
   await injectKimiGlobals(args);
 
   args.push("-p", promptText);
 
+  const env = createOmkSessionEnv(root, sessionId);
+  if (options.runId) {
+    env.OMK_RUN_ID = options.runId;
+  }
+
   const result = await runShell("kimi", args, {
     timeout: 120000,
     cwd: root,
-    env: createOmkSessionEnv(root, sessionId),
+    env,
   });
   console.log(result.stdout);
   if (result.failed) {

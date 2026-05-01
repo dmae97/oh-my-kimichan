@@ -1,13 +1,14 @@
-import { readdir, readFile } from "fs/promises";
+import { readdir, readFile, stat as fsStat } from "fs/promises";
 import { join } from "path";
 import { uptime } from "os";
-import { execSync } from "child_process";
+import { execFile, execSync } from "child_process";
+import { promisify } from "util";
 import { getOmkPath, pathExists, getProjectRoot } from "../util/fs.js";
-import { getGitStatus } from "../util/git.js";
-import { runShell } from "../util/shell.js";
-import { getKimiUsage, formatDuration } from "../util/kimi-usage.js";
+import { getKimiUsage, formatDuration, type UsageStats } from "../util/kimi-usage.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { formatBytes } from "../util/output-buffer.js";
+import { formatOmkVersionFooter } from "../util/version.js";
+import { t } from "../util/i18n.js";
 import type { RunState } from "../contracts/orchestration.js";
 import {
   style,
@@ -24,9 +25,32 @@ import {
   sanitizeTerminalText,
 } from "../util/theme.js";
 
+const execFileAsync = promisify(execFile);
+
 export interface HudGitChange {
   status: string;
   path: string;
+}
+
+export interface HudRunCandidate {
+  name: string;
+  mtimeMs: number;
+  hasState: boolean;
+  hasGoal: boolean;
+  hasPlan: boolean;
+}
+
+export interface HudRenderOptions {
+  runId?: string;
+  terminalWidth?: number;
+  kimiUsage?: UsageStats;
+  footerRefreshMs?: number;
+}
+
+export interface HudCommandOptions extends HudRenderOptions {
+  watch?: boolean;
+  refreshMs?: number;
+  clear?: boolean;
 }
 
 function formatUptime(seconds: number): string {
@@ -91,13 +115,18 @@ export function parseGitStatusPorcelain(output: string): HudGitChange[] {
     });
 }
 
-async function getGitChanges(root: string): Promise<HudGitChange[]> {
-  const result = await runShell("git", ["status", "--porcelain=v1", "--untracked-files=normal"], {
-    cwd: root,
-    timeout: 5000,
-  });
-  if (result.failed) return [];
-  return parseGitStatusPorcelain(result.stdout);
+async function getGitChanges(root: string): Promise<HudGitChange[] | null> {
+  try {
+    const { stdout } = await execFileAsync("git", ["status", "--porcelain=v1", "--untracked-files=normal"], {
+      cwd: root,
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+      encoding: "utf-8",
+    });
+    return parseGitStatusPorcelain(String(stdout));
+  } catch {
+    return null;
+  }
 }
 
 function lineWidth(line: string): number {
@@ -152,16 +181,25 @@ export function buildHudSidebar(
 ): string {
   const maxTodos = options.maxTodos ?? 9;
   const maxFiles = options.maxFiles ?? 12;
-  const lines: string[] = ["", `  ${style.pinkBold("TODO")}`];
+  const lines: string[] = ["", `  ${style.pinkBold("Right Rail")}`];
 
   const nodes = [...(state?.nodes ?? [])].sort((a, b) => {
     const rank = statusRank(a.status) - statusRank(b.status);
     return rank !== 0 ? rank : a.id.localeCompare(b.id);
   });
 
+  if (state) {
+    const done = nodes.filter((node) => node.status === "done").length;
+    const active = nodes.filter((node) => node.status === "running").length;
+    lines.push(`  ${style.gray("run")} ${style.creamBold(truncateText(state.runId, 34))}`);
+    lines.push(`  ${style.gray("progress")} ${style.mintBold(`${done}/${nodes.length}`)} ${style.gray(`done, ${active} active`)}`);
+    lines.push("");
+  }
+
+  lines.push(`  ${style.pinkBold("TODO")}`);
   if (nodes.length === 0) {
-    lines.push(`  ${style.gray("□ active run state 없음")}`);
-    lines.push(`  ${style.gray("  omk run 실행 시 DAG TODO 표시")}`);
+    lines.push(`  ${style.gray(t("hud.noActiveRun"))}`);
+    lines.push(`  ${style.gray(t("hud.runToSeeTodos"))}`);
   } else {
     for (const node of nodes.slice(0, maxTodos)) {
       const role = style.gray(`[${truncateText(node.role, 9)}]`);
@@ -189,7 +227,7 @@ export function buildHudSidebar(
   return panel(lines, gradient("TODO / Changed Files"));
 }
 
-export function renderHudColumns(mainPanels: string[], sidebar: string, terminalWidth = process.stdout.columns || 120): string {
+export function renderHudColumns(mainPanels: string[], sidebar: string, terminalWidth = defaultHudTerminalWidth()): string {
   const left = mainPanels.join("\n\n");
   const leftLines = left.split("\n");
   const rightLines = sidebar.split("\n");
@@ -211,13 +249,97 @@ export function renderHudColumns(mainPanels: string[], sidebar: string, terminal
   return output.join("\n");
 }
 
-export async function hudCommand(): Promise<void> {
+function defaultHudTerminalWidth(): number {
+  const stdoutWidth = process.stdout.columns;
+  if (typeof stdoutWidth === "number" && stdoutWidth > 0) return stdoutWidth;
+  const envWidth = Number.parseInt(process.env.COLUMNS ?? "", 10);
+  return Number.isFinite(envWidth) && envWidth > 0 ? envWidth : 120;
+}
+
+export function renderHudColumnsWithDetectedWidth(mainPanels: string[], sidebar: string): string {
+  return renderHudColumns(mainPanels, sidebar, defaultHudTerminalWidth());
+}
+
+function normalizeRefreshMs(refreshMs: number | undefined): number {
+  if (refreshMs === undefined) return 2_000;
+  if (!Number.isFinite(refreshMs)) return 2_000;
+  return Math.min(60_000, Math.max(250, Math.round(refreshMs)));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function renderFooter(refreshMs?: number): string {
+  const footerLines = [
+    separator(50),
+    style.mint(t("hud.hint")) + "  " + style.gray("omk chat") + " " + t("hud.interactive") + "  |  " + style.gray("omk plan") + " " + t("hud.plan") + "  |  " + style.gray("omk run") + " " + t("hud.execute") + "  |  " + style.gray("omk merge") + " " + t("hud.merge"),
+  ];
+  if (refreshMs) {
+    footerLines.push(style.gray(t("hud.liveRefresh", refreshMs)));
+  }
+  footerLines.push(style.gray("  " + formatOmkVersionFooter()), separator(50));
+  return footerLines.join("\n");
+}
+
+function clearScreen(): void {
+  process.stdout.write("\x1b[2J\x1b[H");
+}
+
+function runCandidateScore(candidate: HudRunCandidate): number {
+  let score = 0;
+  if (candidate.hasState) score += 4;
+  if (candidate.hasGoal) score += 2;
+  if (candidate.hasPlan) score += 1;
+  if (candidate.name === "latest") score -= 8;
+  return score;
+}
+
+export function selectLatestRunName(candidates: HudRunCandidate[]): string | null {
+  const valid = candidates.filter((candidate) => candidate.hasState || candidate.hasGoal || candidate.hasPlan);
+  if (valid.length === 0) return null;
+
+  return [...valid]
+    .sort((a, b) => {
+      const score = runCandidateScore(b) - runCandidateScore(a);
+      if (score !== 0) return score;
+      const mtime = b.mtimeMs - a.mtimeMs;
+      if (mtime !== 0) return mtime;
+      return b.name.localeCompare(a.name);
+    })[0].name;
+}
+
+async function listRunCandidates(runsDir: string): Promise<HudRunCandidate[]> {
+  const entries = await readdir(runsDir, { withFileTypes: true });
+  const dirs = entries.filter((entry) => entry.isDirectory());
+  return Promise.all(dirs.map(async (entry) => {
+    const runDir = join(runsDir, entry.name);
+    const info = await fsStat(runDir).catch(() => null);
+    const [hasState, hasGoal, hasPlan] = await Promise.all([
+      pathExists(join(runDir, "state.json")),
+      pathExists(join(runDir, "goal.md")),
+      pathExists(join(runDir, "plan.md")),
+    ]);
+    return {
+      name: entry.name,
+      mtimeMs: info?.mtimeMs ?? 0,
+      hasState,
+      hasGoal,
+      hasPlan,
+    };
+  }));
+}
+
+export async function renderHudDashboard(options: HudRenderOptions = {}): Promise<string> {
   const root = getProjectRoot();
   const resources = await getOmkResourceSettings();
+  const kimiUsagePromise = options.kimiUsage ? Promise.resolve(options.kimiUsage) : getKimiUsage();
+  const gitChangesPromise = getGitChanges(root);
   const mainPanels: string[] = [];
+  const output: string[] = [];
 
   // ── Top banner ───────────────────────────────────────────────
-  console.log(sparkleHeader("oh-my-kimichan HUD"));
+  output.push(sparkleHeader("oh-my-kimichan HUD"));
 
   // ── System Usage Panel ───────────────────────────────────────
   const usage = getSystemUsage();
@@ -241,7 +363,7 @@ export async function hudCommand(): Promise<void> {
   mainPanels.push(panel(sysLines, gradient("System Usage")));
 
   // ── Coding Plan Usage ────────────────────────────────────────
-  const kimiUsage = await getKimiUsage();
+  const kimiUsage = await kimiUsagePromise;
   const LIMIT_HOURS = 5;
   const limitSeconds = LIMIT_HOURS * 3600;
   const rollingPercent = kimiUsage.quota.fiveHour
@@ -267,17 +389,17 @@ export async function hudCommand(): Promise<void> {
     "",
   ].filter(Boolean);
 
-  mainPanels.push(panel(planLines, gradient("Coding Plan")));
+  mainPanels.push(panel(planLines, gradient("Kimi Usage")));
 
   // ── Project Status ───────────────────────────────────────────
   const projLines: string[] = [""];
-  const gitStatus = await getGitStatus(root);
-  const gitChanges = await getGitChanges(root);
+  const gitChangesResult = await gitChangesPromise;
+  const gitChanges = gitChangesResult ?? [];
   projLines.push(
-    `  ${style.purple("🌿 Git")}      ${gitStatus.clean ? status.ok("clean") : status.warn(`${gitStatus.changes} changes`)}`
+    `  ${style.purple("🌿 Git")}      ${gitChangesResult === null ? status.warn("unavailable") : gitChanges.length === 0 ? status.ok("clean") : status.warn(`${gitChanges.length} changes`)}`
   );
 
-  const omkExists = await pathExists(".omk");
+  const omkExists = await pathExists(join(root, ".omk"));
   projLines.push(`  ${style.purple("📁 OMK")}      ${omkExists ? status.ok("initialized") : status.warn("omk init needed")}`);
 
   const agentsMdExists = await pathExists(join(root, "AGENTS.md"));
@@ -295,12 +417,15 @@ export async function hudCommand(): Promise<void> {
   let latestState: RunState | null = null;
 
   if (await pathExists(runsDir)) {
-    const entries = await readdir(runsDir, { withFileTypes: true });
-    const runs = entries.filter((e) => e.isDirectory()).sort().reverse();
+    let latestRunName: string | null = options?.runId ?? null;
 
-    if (runs.length > 0) {
-      const latestRun = runs[0];
-      const runDir = join(runsDir, latestRun.name);
+    if (!latestRunName) {
+      const runCandidates = await listRunCandidates(runsDir);
+      latestRunName = selectLatestRunName(runCandidates);
+    }
+
+    if (latestRunName) {
+      const runDir = join(runsDir, latestRunName);
 
       const goal = await readFile(join(runDir, "goal.md"), "utf-8").catch(() => "N/A");
       const plan = await readFile(join(runDir, "plan.md"), "utf-8").catch(() => "N/A");
@@ -312,7 +437,7 @@ export async function hudCommand(): Promise<void> {
 
       runLines = [
         "",
-        `  ${style.gray("Run ID:")}   ${style.creamBold(latestRun.name)}`,
+        `  ${style.gray("Run ID:")}   ${style.creamBold(latestRunName)}`,
         `  ${style.gray("Goal:")}     ${style.cream(goalLine)}`,
         `  ${style.gray("Plan:")}     ${plan !== "N/A" ? style.mint("✔ generated") : style.gray("none")}`,
         "",
@@ -330,7 +455,7 @@ export async function hudCommand(): Promise<void> {
       }
 
       // Workers
-      const worktreesDir = getOmkPath(`worktrees/${latestRun.name}`);
+      const worktreesDir = getOmkPath(`worktrees/${latestRunName}`);
       if (await pathExists(worktreesDir)) {
         const workers = await readdir(worktreesDir, { withFileTypes: true }).then((e) =>
           e.filter((d) => d.isDirectory()).map((d) => d.name)
@@ -347,16 +472,55 @@ export async function hudCommand(): Promise<void> {
   }
 
   if (runLines.length === 0) {
-    runLines = ["", `  ${style.gray("아직 실행 기록이 없습니다.")}`, ""];
+    runLines = ["", `  ${style.gray(t("hud.noRunHistory"))}`, ""];
   }
 
   mainPanels.push(panel(runLines, gradient("Latest Run")));
-  console.log(renderHudColumns(mainPanels, buildHudSidebar(latestState, gitChanges)));
-  console.log();
+  output.push(renderHudColumns(mainPanels, buildHudSidebar(latestState, gitChanges), options.terminalWidth ?? defaultHudTerminalWidth()));
+  output.push("");
 
   // ── Tips ─────────────────────────────────────────────────────
-  console.log(separator(50));
-  console.log(style.mint("  💡 힌트:") + "  " + style.gray("omk chat") + " 대화형  |  " + style.gray("omk plan") + " 계획  |  " + style.gray("omk run") + " 실행  |  " + style.gray("omk merge") + " 병합");
-  console.log(separator(50));
-  console.log();
+  output.push(renderFooter(options.footerRefreshMs));
+  output.push("");
+  return output.join("\n");
+}
+
+export async function hudCommand(options: HudCommandOptions = {}): Promise<void> {
+  const refreshMs = normalizeRefreshMs(options.refreshMs);
+
+  if (!options.watch) {
+    console.log(await renderHudDashboard(options));
+    return;
+  }
+
+  let stopped = false;
+  const stop = (): void => {
+    stopped = true;
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+
+  let cachedUsage: UsageStats | undefined;
+  let lastUsageRefreshMs = 0;
+  const usageRefreshMs = Math.max(60_000, refreshMs);
+
+  try {
+    while (!stopped) {
+      const now = Date.now();
+      if (!cachedUsage || now - lastUsageRefreshMs >= usageRefreshMs) {
+        cachedUsage = await getKimiUsage();
+        lastUsageRefreshMs = now;
+      }
+      const frame = await renderHudDashboard({ ...options, kimiUsage: cachedUsage, footerRefreshMs: refreshMs });
+      if (options.clear ?? true) clearScreen();
+      process.stdout.write(frame + "\n");
+      if (stopped) break;
+      await sleep(refreshMs);
+    }
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+  }
+
+  process.stdout.write("\n");
 }

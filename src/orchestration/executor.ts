@@ -1,10 +1,11 @@
 import type { Dag, DagNode } from "./dag.js";
-import type { DagExecutor, RunOptions, RunProgressEstimate, RunResult, RunState, TaskRunner } from "../contracts/orchestration.js";
+import type { DagExecutor, RunOptions, RunProgressEstimate, RunResult, RunState, TaskRunner, TaskResult } from "../contracts/orchestration.js";
 import { createScheduler } from "./scheduler.js";
 import type { StatePersister } from "./state-persister.js";
 import { createStatePersister } from "./state-persister.js";
 import { createEnsembleTaskRunner, type EnsemblePolicy } from "./ensemble.js";
 import { estimateRunProgress } from "./eta.js";
+import { dagNodeRoutingEnv } from "./routing.js";
 
 export interface ExecutorOptions {
   persister?: StatePersister;
@@ -15,7 +16,11 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
   const scheduler = createScheduler();
   const persister = executorOptions.persister ?? createStatePersister();
   const stateChangeHandlers: Array<(state: RunState) => void> = [];
+  const nodeStartHandlers: Array<(node: DagNode) => void> = [];
+  const nodeCompleteHandlers: Array<(node: DagNode, result: TaskResult) => void> = [];
   let commitQueue: Promise<void> = Promise.resolve();
+  let commitQueueDepth = 0;
+  const MAX_COMMIT_QUEUE_DEPTH = 10;
 
   function buildState(dag: Dag, options: RunOptions): RunState {
     const startedAt = new Date().toISOString();
@@ -50,10 +55,22 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
 
   async function commitState(state: RunState): Promise<void> {
     const snapshot = cloneState(state);
-    commitQueue = commitQueue.then(async () => {
-      await persister.save(snapshot);
+    if (commitQueueDepth >= MAX_COMMIT_QUEUE_DEPTH) {
       emit(snapshot);
-    });
+      return;
+    }
+    commitQueueDepth++;
+    commitQueue = commitQueue
+      .then(async () => {
+        await persister.save(snapshot);
+        emit(snapshot);
+      })
+      .catch(() => {
+        // swallow persist/emit errors so chain continues
+      })
+      .finally(() => {
+        commitQueueDepth--;
+      });
     await commitQueue;
   }
 
@@ -108,6 +125,18 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
     };
   }
 
+  function emitNodeStart(node: DagNode): void {
+    for (const h of nodeStartHandlers) {
+      try { h(node); } catch { /* ignore */ }
+    }
+  }
+
+  function emitNodeComplete(node: DagNode, result: TaskResult): void {
+    for (const h of nodeCompleteHandlers) {
+      try { h(node, result); } catch { /* ignore */ }
+    }
+  }
+
   async function runNode(
     node: DagNode,
     dag: Dag,
@@ -119,16 +148,44 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
     markNodeStarted(node);
     refreshState(state, dag, options);
     await commitState(state);
+    emitNodeStart(node);
 
     const env: Record<string, string> = {
       OMK_NODE_ID: node.id,
       OMK_RUN_ID: options.runId,
       OMK_ROLE: node.role,
+      ...dagNodeRoutingEnv(node),
       ...etaEnv(state.estimate),
     };
 
+    let result: TaskResult;
+    node.thinking = undefined;
+
+    // Wire live thinking from runner into the node so parallel UI can surface it.
+    const originalOnThinking = runner.onThinking;
+    runner.onThinking = (thinking: string) => {
+      node.thinking = thinking;
+    };
+
+    // Sync thinking back to state.nodes periodically so the live UI
+    // can show ensemble / runner progress while the node is running.
+    const progressTimer = setInterval(() => {
+      const stateNode = state.nodes.find((sn) => sn.id === node.id);
+      if (stateNode) stateNode.thinking = node.thinking;
+      emit(cloneState(state));
+    }, 500);
+
+    const nodeTimeoutMs = options.nodeTimeoutMs ?? 0;
     try {
-      const result = await runner.run(node, env);
+      const runPromise = runner.run(node, env);
+      if (nodeTimeoutMs > 0) {
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`Node ${node.id} timed out after ${nodeTimeoutMs}ms`)), nodeTimeoutMs);
+        });
+        result = await Promise.race([runPromise, timeoutPromise]);
+      } else {
+        result = await runPromise;
+      }
       if (result.success) {
         markNodeFinished(node, "done");
         scheduler.updateNodeStatus(dag, node.id, "done");
@@ -136,11 +193,23 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
         markNodeFinished(node, "failed");
         scheduler.updateNodeStatus(dag, node.id, "failed");
       }
-    } catch {
+    } catch (error: unknown) {
+      result = {
+        success: false,
+        exitCode: 1,
+        stdout: "",
+        stderr: error instanceof Error ? error.message : String(error),
+      };
       markNodeFinished(node, "failed");
       scheduler.updateNodeStatus(dag, node.id, "failed");
+    } finally {
+      clearInterval(progressTimer);
+      runner.onThinking = originalOnThinking;
+      const stateNode = state.nodes.find((sn) => sn.id === node.id);
+      if (stateNode) stateNode.thinking = node.thinking;
     }
 
+    emitNodeComplete(node, result);
     refreshState(state, dag, options);
     await commitState(state);
   }
@@ -154,6 +223,22 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
       };
     },
 
+    onNodeStart(handler: (node: DagNode) => void): () => void {
+      nodeStartHandlers.push(handler);
+      return () => {
+        const idx = nodeStartHandlers.indexOf(handler);
+        if (idx !== -1) nodeStartHandlers.splice(idx, 1);
+      };
+    },
+
+    onNodeComplete(handler: (node: DagNode, result: TaskResult) => void): () => void {
+      nodeCompleteHandlers.push(handler);
+      return () => {
+        const idx = nodeCompleteHandlers.indexOf(handler);
+        if (idx !== -1) nodeCompleteHandlers.splice(idx, 1);
+      };
+    },
+
     async execute(dag: Dag, runner: TaskRunner, options: RunOptions): Promise<RunResult> {
       if (!Number.isFinite(options.workers) || options.workers < 1) {
         throw new TypeError(`options.workers must be a positive integer, got ${options.workers}`);
@@ -164,7 +249,7 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
       const state = buildState(dag, options);
       await commitState(state);
 
-      const running = new Set<Promise<void>>();
+      const runningMap = new Map<string, Promise<void>>();
       let resolveDone: (value: RunResult) => void;
       const donePromise = new Promise<RunResult>((resolve) => {
         resolveDone = resolve;
@@ -188,8 +273,10 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
         }
 
         const runnable = scheduler.getRunnableNodes(dag);
-        const availableSlots = Math.max(0, options.workers - running.size);
-        const toRun = runnable.slice(0, availableSlots);
+        const availableSlots = Math.max(0, options.workers - runningMap.size);
+        const toRun = runnable
+          .filter((node) => !runningMap.has(node.id))
+          .slice(0, availableSlots);
 
         for (const node of toRun) {
           const promise = runNode(node, dag, effectiveRunner, options, state)
@@ -198,13 +285,13 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
               // swallow persist/emit errors to allow tick() to continue
             })
             .finally(() => {
-              running.delete(promise);
+              runningMap.delete(node.id);
               void tick();
             });
-          running.add(promise);
+          runningMap.set(node.id, promise);
         }
 
-        if (running.size === 0 && toRun.length === 0 && runnable.length === 0) {
+        if (runningMap.size === 0 && toRun.length === 0 && runnable.length === 0) {
           // Deadlock or nothing to do — treat as failure
           state.completedAt = new Date().toISOString();
           refreshState(state, dag, options);

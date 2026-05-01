@@ -16,10 +16,14 @@ timeout = 5
 [[hooks]]
 event = "PostToolUse"
 matcher = "WriteFile|StrReplaceFile"
+# post-format.sh runs formatting (prettier, rustfmt) on the modified file only.
 command = ".omk/hooks/post-format.sh"
 timeout = 20
 
 [[hooks]]
 event = "Stop"
+# stop-verify.sh runs the full quality gate suite (lint, typecheck, test, build)
+# before allowing the session to end. It detects package manager by lockfile
+# and skips missing scripts gracefully.
 command = ".omk/hooks/stop-verify.sh"
-timeout = 30
+timeout = 300

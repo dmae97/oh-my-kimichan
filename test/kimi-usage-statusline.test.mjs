@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { getKimiUsage, formatKimiUsageInline } from "../dist/util/kimi-usage.js";
-import { enhanceKimiContextStatusLine } from "../dist/util/kimi-statusline.js";
+import { enhanceKimiContextStatusLine, KimiStatusLineEnhancer } from "../dist/util/kimi-statusline.js";
 
 function fakeJwt(payload) {
   const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
@@ -56,6 +56,25 @@ test("Kimi context status line is augmented once", () => {
   const once = enhanceKimiContextStatusLine(input, "acct:oauth:abc | 5h:70% left | wk:80% left", false);
   const twice = enhanceKimiContextStatusLine(once, "acct:oauth:abc | 5h:70% left | wk:80% left", false);
 
-  assert.equal(once, "context: 35.6% (93.2k/262.1k) | in:93.2k out:1.8k | omk:acct:oauth:abc | 5h:70% left | wk:80% left");
+  assert.equal(once, "omk:acct:oauth:abc | 5h:70% left | wk:80% left | context: 35.6% (93.2k/262.1k) | in:93.2k out:1.8k");
   assert.equal(twice, once);
+});
+
+test("Kimi status line enhancer creation does not block on slow usage lookup", async () => {
+  let usageRequested = false;
+  const never = new Promise(() => {});
+
+  const createPromise = KimiStatusLineEnhancer.create({
+    usageProvider: async () => {
+      usageRequested = true;
+      return await never;
+    },
+  });
+  const enhancer = await Promise.race([
+    createPromise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("create timed out")), 100)),
+  ]);
+
+  assert.equal(usageRequested, true);
+  enhancer.dispose();
 });

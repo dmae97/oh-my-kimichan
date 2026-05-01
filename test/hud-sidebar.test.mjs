@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildHudSidebar, parseGitStatusPorcelain, renderHudColumns } from "../dist/commands/hud.js";
+import { buildHudSidebar, parseGitStatusPorcelain, renderHudColumns, selectLatestRunName } from "../dist/commands/hud.js";
 
 test("HUD parses porcelain git changes for changed file sidebar", () => {
   const changes = parseGitStatusPorcelain(" M README.md\nA  src/new.ts\nR  old.ts -> src/renamed.ts\n?? test/hud-sidebar.test.mjs\n");
@@ -28,6 +28,9 @@ test("HUD sidebar renders run TODOs and changed files", () => {
   );
 
   assert.match(sidebar, /TODO/);
+  assert.match(sidebar, /Right Rail/);
+  assert.match(sidebar, /progress/);
+  assert.match(sidebar, /1\/2/);
   assert.match(sidebar, /Implement HUD sidebar/);
   assert.match(sidebar, /Changed Files/);
   assert.match(sidebar, /src\/commands\/hud\.ts/);
@@ -36,4 +39,28 @@ test("HUD sidebar renders run TODOs and changed files", () => {
 test("HUD layout can place sidebar beside main panels on wide terminals", () => {
   const layout = renderHudColumns(["LEFT"], "RIGHT", 120);
   assert.match(layout, /LEFT\s+RIGHT/);
+});
+
+test("HUD layout honors COLUMNS fallback outside TTY", () => {
+  const previousColumns = process.env.COLUMNS;
+  process.env.COLUMNS = "80";
+  try {
+    const layout = renderHudColumns(["LEFT"], "RIGHT");
+    assert.equal(layout, "LEFT\n\nRIGHT");
+  } finally {
+    if (previousColumns === undefined) {
+      delete process.env.COLUMNS;
+    } else {
+      process.env.COLUMNS = previousColumns;
+    }
+  }
+});
+
+test("HUD latest run selection ignores stale latest directory", () => {
+  const selected = selectLatestRunName([
+    { name: "latest", mtimeMs: 999, hasState: false, hasGoal: false, hasPlan: false },
+    { name: "2026-05-01T00-00-00-000Z", mtimeMs: 100, hasState: true, hasGoal: true, hasPlan: true },
+  ]);
+
+  assert.equal(selected, "2026-05-01T00-00-00-000Z");
 });

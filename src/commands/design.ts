@@ -2,6 +2,7 @@ import { runShell } from "../util/shell.js";
 import { getProjectRoot, pathExists, writeFileSafe, readTextFile } from "../util/fs.js";
 import { join } from "path";
 import { style, header, status } from "../util/theme.js";
+import { t } from "../util/i18n.js";
 
 const GITHUB_API_URL = "https://api.github.com/repos/voltagent/awesome-design-md/contents/design-md";
 const DESIGN_MD_RAW_URL = (name: string) => `https://getdesign.md/design-md/${name}/DESIGN.md`;
@@ -84,14 +85,14 @@ Describe your project's visual identity here.
 }
 
 export async function designListCommand(): Promise<void> {
-  console.log(header("awesome-design-md 컬렉션 목록"));
+  console.log(header(t("design.listHeader")));
   const list = await fetchDesignList();
   if (list.length === 0) {
-    console.error(status.error("목록을 가져올 수 없습니다. 네트워크를 확인하세요."));
+    console.error(status.error(t("design.listFetchFailed")));
     process.exit(1);
   }
 
-  // 카테고리 분류 (하드코딩된 메타데이터)
+  // Category classification (hardcoded metadata)
   const categories: Record<string, string[]> = {
     "AI & LLM": ["claude", "cohere", "elevenlabs", "minimax", "mistral.ai", "ollama", "opencode.ai", "replicate", "runwayml", "together.ai", "voltagent", "x.ai"],
     "Developer Tools": ["cursor", "expo", "lovable", "raycast", "superhuman", "vercel", "warp"],
@@ -116,28 +117,28 @@ export async function designListCommand(): Promise<void> {
 
   const others = list.filter((n) => !categorized.has(n));
   if (others.length > 0) {
-    console.log(style.pinkBold("\n## 기타"));
+    console.log(style.pinkBold("\n## " + t("design.categoryOthers")));
     for (const name of others) {
       console.log(style.gray(`  ${name}`));
     }
   }
 
-  console.log("\n" + status.success(`총 ${list.length}개 DESIGN.md 발견`));
-  console.log(style.gray("\n사용법: omk design apply <name>"));
-  console.log(style.gray("예시:  omk design apply claude"));
+  console.log("\n" + status.success(t("design.totalFound", list.length)));
+  console.log(style.gray("\n" + t("design.usageApply")));
+  console.log(style.gray(t("design.exampleApply")));
 }
 
 export async function designApplyCommand(name: string): Promise<void> {
   if (!name) {
-    console.error(status.error("디자인 이름을 입력하세요. 예: omk design apply claude"));
+    console.error(status.error(t("design.nameRequired")));
     process.exit(1);
   }
 
-  console.log(style.purple(`📥 ${name} DESIGN.md 다운로드 중...`));
+  console.log(style.purple(t("design.downloading", name)));
   const content = await fetchDesignMd(name);
   if (!content) {
-    console.error(status.error(`'${name}' DESIGN.md를 찾을 수 없습니다.`));
-    console.error(style.gray("   omk design list 로 사용 가능한 이름을 확인하세요."));
+    console.error(status.error(t("design.notFound", name)));
+    console.error(style.gray(t("design.checkList")));
     process.exit(1);
   }
 
@@ -145,41 +146,41 @@ export async function designApplyCommand(name: string): Promise<void> {
   const designPath = join(root, "DESIGN.md");
   const backupPath = join(root, "DESIGN.md.bak");
 
-  // 기존 파일 백업
+  // Backup existing file
   if (await pathExists(designPath)) {
     const existing = await readTextFile(designPath, "");
     if (existing.trim()) {
       await writeFileSafe(backupPath, existing);
-      console.log(style.orange("   💾 기존 DESIGN.md → DESIGN.md.bak 백업"));
+      console.log(style.orange(t("design.backupExisting")));
     }
   }
 
   await writeFileSafe(designPath, content);
-  console.log(status.success(`DESIGN.md 적용 완료 (${name})`));
-  console.log(style.gray(`   출처: https://getdesign.md/${name}/design-md`));
+  console.log(status.success(t("design.applyComplete", name)));
+  console.log(style.gray(t("design.source", name)));
 }
 
 export async function designSearchCommand(keyword: string): Promise<void> {
   if (!keyword) {
-    console.error(status.error("검색어를 입력하세요. 예: omk design search dark"));
+    console.error(status.error(t("design.keywordRequired")));
     process.exit(1);
   }
 
-  console.log(style.purple(`🔍 '${keyword}' 검색 중...\n`));
+  console.log(style.purple(t("design.searching", keyword)));
   const list = await fetchDesignList();
   const matched = list.filter((n) => n.toLowerCase().includes(keyword.toLowerCase()));
 
   if (matched.length === 0) {
-    console.log(status.warn("검색 결과 없음."));
-    console.log(style.gray("\n전체 목록: omk design list"));
+    console.log(status.warn(t("design.noResults")));
+    console.log(style.gray(t("design.seeFullList")));
     process.exit(1);
   }
 
-  console.log(status.success(`${matched.length}개 결과:\n`));
+  console.log(status.success(t("design.resultsCount", matched.length)));
   for (const name of matched) {
     console.log(`  ${name}`);
   }
-  console.log(style.gray("\n사용법: omk design apply <name>"));
+  console.log(style.gray("\n" + t("design.usageApply")));
 }
 
 export async function designLintCommand(file?: string): Promise<void> {

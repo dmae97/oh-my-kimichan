@@ -16,7 +16,7 @@ const DESTRUCTIVE_PATTERNS = [
   /^\s*curl\s+.*\|\s*(sh|bash|zsh)/,
   /^\s*wget\s+.*\|\s*(sh|bash|zsh)/,
   /^\s*eval\s+\$\(/,
-  /^\s*eval\s+\`/,
+  /^\s*eval\s+`/,
   /^\s*docker\s+system\s+prune/,
   /^\s*kubectl\s+delete\s+/,
   /^\s*aws\s+s3\s+rm\s+--recursive/,
@@ -40,7 +40,7 @@ const SENSITIVE_FILE_PATTERNS = [
 const SECRET_PATTERNS = [
   /AKIA[0-9A-Z]{16}/, // AWS access key
   /ghp_[a-zA-Z0-9]{36}/, // GitHub personal access token
-  /glpat-[a-zA-Z0-9\-]{20,}/, // GitLab PAT
+  /glpat-[a-zA-Z0-9-]{20,}/, // GitLab PAT
   /sk-[a-zA-Z0-9]{20,}/, // OpenAI API key
   /sk_live_[a-zA-Z0-9]{24,}/, // Stripe live key
   /sk_test_[a-zA-Z0-9]{24,}/, // Stripe test key

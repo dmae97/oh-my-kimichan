@@ -10,7 +10,7 @@ function sanitizeLabel(label: string): string {
 }
 
 function sanitizeRunId(runId: string): string {
-  const sanitized = runId.replace(/[^a-zA-Z0-9_.\-]/g, "");
+  const sanitized = runId.replace(/[^a-zA-Z0-9_.-]/g, "");
   if (sanitized !== runId || sanitized.length === 0 || sanitized.length > 128) {
     throw new Error(`Invalid runId: ${runId}`);
   }

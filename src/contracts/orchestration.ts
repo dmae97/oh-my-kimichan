@@ -19,6 +19,7 @@ export interface RunOptions {
   workers: number;
   approvalPolicy: ApprovalPolicy;
   worktreeRoot?: string;
+  nodeTimeoutMs?: number;
 }
 
 export type EstimateConfidence = "low" | "medium" | "high";
@@ -56,9 +57,13 @@ export interface RunResult {
 
 export interface TaskRunner {
   run(node: DagNode, env: Record<string, string>): Promise<TaskResult>;
+  /** Optional live-thinking callback so the executor can surface runner progress. */
+  onThinking?: (thinking: string) => void;
 }
 
 export interface DagExecutor {
   execute(dag: Dag, runner: TaskRunner, options: RunOptions): Promise<RunResult>;
   onStateChange(handler: (state: RunState) => void): () => void;
+  onNodeStart?(handler: (node: DagNode) => void): () => void;
+  onNodeComplete?(handler: (node: DagNode, result: TaskResult) => void): () => void;
 }

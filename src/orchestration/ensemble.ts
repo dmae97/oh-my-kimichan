@@ -1,7 +1,9 @@
 import type { TaskResult, TaskRunner } from "../contracts/orchestration.js";
 import type { DagNode } from "./dag.js";
-import { getOmkResourceSettings } from "../util/resource-profile.js";
-import { getOmkPath, readTextFile } from "../util/fs.js";
+import { getOmkResourceSettings, type OmkResourceSettings } from "../util/resource-profile.js";
+import { getOmkPath, readTextFile, ensureDir } from "../util/fs.js";
+import { join, dirname, relative } from "path";
+import { readdir, copyFile, readFile, rm } from "fs/promises";
 
 export interface EnsembleCandidate {
   id: string;
@@ -22,6 +24,7 @@ export interface EnsembleCandidateResult {
   candidate: EnsembleCandidate;
   result: TaskResult;
   score: number;
+  worktree?: string;
 }
 
 interface EnsembleConfig {
@@ -52,6 +55,16 @@ const DEFAULT_CANDIDATES: Record<string, EnsembleCandidate[]> = {
     { id: "security", perspective: "trust boundaries, command execution, and data exposure", weight: 1 },
     { id: "maintainability", perspective: "unnecessary complexity and future maintenance", weight: 0.8 },
   ],
+  router: [
+    { id: "skill-fit", perspective: "match task intent to the smallest sufficient skill and MCP set", role: "planner", weight: 1 },
+    { id: "safety-budget", perspective: "preserve read-only safety, context budget, and low-memory fallbacks", role: "reviewer", weight: 1 },
+    { id: "evidence", perspective: "require evidence gates and verification routes before completion", role: "qa", weight: 0.8 },
+  ],
+  orchestrator: [
+    { id: "critical-path", perspective: "DAG critical path, dependency fanout, and unblock order", role: "planner", weight: 1 },
+    { id: "kimi-context", perspective: "Kimi small-context routing, concise evidence, and tool-call fit", role: "router", weight: 1 },
+    { id: "fallback", perspective: "agent failure recovery, retries, and blocked dependents", role: "reviewer", weight: 0.8 },
+  ],
   qa: [
     { id: "regression", perspective: "regression and smoke coverage", weight: 1 },
     { id: "edge", perspective: "edge cases and failure paths", weight: 1 },
@@ -73,7 +86,7 @@ export function createEnsembleTaskRunner(baseRunner: TaskRunner, policy: Ensembl
     async run(node: DagNode, env: Record<string, string>): Promise<TaskResult> {
       const resources = await getOmkResourceSettings();
       const config = await getEnsembleConfig();
-      const effectivePolicy = normalizePolicy(policy, resources.maxWorkers, config);
+      const effectivePolicy = normalizePolicy(policy, resources, config);
       const candidates = selectCandidates(node.role, effectivePolicy);
 
       if (!effectivePolicy.enabled || candidates.length <= 1) {
@@ -84,12 +97,33 @@ export function createEnsembleTaskRunner(baseRunner: TaskRunner, policy: Ensembl
         });
       }
 
+      const progressMap = new Map<string, string>();
+      const total = candidates.length;
+
+      function updateThinking(): void {
+        const parts = Array.from(progressMap.entries())
+          .map(([id, status]) => `${id}:${status}`);
+        node.thinking = `🧠 ensemble [${parts.length}/${total}] ${parts.slice(-3).join(" · ")}`;
+      }
+
+      node.thinking = `🧠 ensemble preparing ${total} candidate${total > 1 ? "s" : ""}…`;
+
       const candidateResults = await mapWithConcurrency(
         candidates,
         effectivePolicy.maxParallel,
-        async (candidate) => runCandidate(baseRunner, node, env, candidate)
+        async (candidate) => {
+          progressMap.set(candidate.id, "starting");
+          updateThinking();
+
+          const r = await runCandidate(baseRunner, node, env, candidate);
+
+          progressMap.set(candidate.id, r.result.success ? "ok" : "fail");
+          updateThinking();
+          return r;
+        }
       );
 
+      node.thinking = `🧠 ensemble aggregating ${total} result${total > 1 ? "s" : ""}…`;
       return aggregateCandidateResults(node, candidateResults, effectivePolicy);
     },
   };
@@ -105,13 +139,13 @@ export function selectCandidates(role: string, policy: Required<EnsemblePolicy>)
   }));
 }
 
-function normalizePolicy(policy: EnsemblePolicy, resourceWorkers: number, config: EnsembleConfig): Required<EnsemblePolicy> {
-  const enabled = policy.enabled ?? parseOptionalBoolean(process.env.OMK_ENSEMBLE) ?? config.enabled ?? true;
+function normalizePolicy(policy: EnsemblePolicy, resources: OmkResourceSettings, config: EnsembleConfig): Required<EnsemblePolicy> {
+  const enabled = policy.enabled ?? parseOptionalBoolean(process.env.OMK_ENSEMBLE) ?? config.enabled ?? resources.ensembleDefaultEnabled;
   const envMaxCandidates = parsePositiveInt(process.env.OMK_ENSEMBLE_MAX_CANDIDATES);
   const envMaxParallel = parsePositiveInt(process.env.OMK_ENSEMBLE_MAX_PARALLEL);
   const envQuorumRatio = parsePositiveNumber(process.env.OMK_ENSEMBLE_QUORUM_RATIO);
   const maxCandidatesPerNode = Math.max(1, Math.min(6, policy.maxCandidatesPerNode ?? envMaxCandidates ?? config.maxCandidatesPerNode ?? 2));
-  const maxParallel = Math.max(1, Math.min(maxCandidatesPerNode, policy.maxParallel ?? envMaxParallel ?? config.maxParallel ?? resourceWorkers));
+  const maxParallel = Math.max(1, Math.min(maxCandidatesPerNode, policy.maxParallel ?? envMaxParallel ?? config.maxParallel ?? resources.maxWorkers));
   const quorumRatio = Math.max(0.01, Math.min(1, policy.quorumRatio ?? envQuorumRatio ?? config.quorumRatio ?? 0.5));
 
   return {
@@ -184,16 +218,49 @@ function normalizeTomlValue(value: string): string {
   return trimmed;
 }
 
+const SKIP_DIRS = new Set(["node_modules", ".git", ".omk"]);
+
+async function copyWorktreeBase(baseCwd: string, targetWorktree: string): Promise<void> {
+  async function walk(srcDir: string, destDir: string): Promise<void> {
+    await ensureDir(destDir);
+    const entries = await readdir(srcDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const srcPath = join(srcDir, entry.name);
+      const destPath = join(destDir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(srcPath, destPath);
+      } else {
+        await copyFile(srcPath, destPath);
+      }
+    }
+  }
+  await walk(baseCwd, targetWorktree);
+}
+
 async function runCandidate(
   baseRunner: TaskRunner,
   node: DagNode,
   env: Record<string, string>,
   candidate: EnsembleCandidate
 ): Promise<EnsembleCandidateResult> {
+  const baseCwd = node.worktree ?? process.cwd();
+  let candidateWorktree: string | undefined;
+
+  if (!node.worktree) {
+    candidateWorktree = getOmkPath(join("worktrees", "ensemble", node.id, candidate.id));
+    try {
+      await copyWorktreeBase(baseCwd, candidateWorktree);
+    } catch {
+      await ensureDir(candidateWorktree);
+    }
+  }
+
   const candidateNode: DagNode = {
     ...node,
     id: `${node.id}#${candidate.id}`,
     role: candidate.role ?? node.role,
+    worktree: candidateWorktree,
     name: [
       node.name,
       "",
@@ -220,20 +287,93 @@ async function runCandidate(
     candidate,
     result,
     score: scoreResult(result, normalizeWeight(candidate.weight)),
+    worktree: candidateWorktree,
   };
 }
 
-function aggregateCandidateResults(
+async function mergeWinnerWorktree(winnerWorktree: string, baseCwd: string): Promise<{ mergedFiles: string[]; errors: string[] }> {
+  const mergedFiles: string[] = [];
+  const errors: string[] = [];
+
+  async function walk(dir: string): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const winnerPath = join(dir, entry.name);
+      const relPath = relative(winnerWorktree, winnerPath);
+      const basePath = join(baseCwd, relPath);
+
+      if (entry.isDirectory()) {
+        await walk(winnerPath);
+        continue;
+      }
+
+      try {
+        const winnerContent = await readFile(winnerPath);
+        let shouldCopy = false;
+        try {
+          const baseContent = await readFile(basePath);
+          if (Buffer.compare(winnerContent, baseContent) !== 0) {
+            shouldCopy = true;
+          }
+        } catch {
+          shouldCopy = true;
+        }
+
+        if (shouldCopy) {
+          await ensureDir(dirname(basePath));
+          await copyFile(winnerPath, basePath);
+          mergedFiles.push(relPath);
+        }
+      } catch (err) {
+        errors.push(`${relPath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  await walk(winnerWorktree);
+  return { mergedFiles, errors };
+}
+
+async function cleanupWorktree(worktree: string): Promise<void> {
+  try {
+    await rm(worktree, { recursive: true, force: true });
+  } catch {
+    // ignore cleanup errors for debugging
+  }
+}
+
+async function aggregateCandidateResults(
   node: DagNode,
   results: EnsembleCandidateResult[],
   policy: Required<EnsemblePolicy>
-): TaskResult {
+): Promise<TaskResult> {
   const totalWeight = results.reduce((sum, item) => sum + normalizeWeight(item.candidate.weight), 0);
   const successWeight = results.reduce((sum, item) => sum + (item.result.success ? normalizeWeight(item.candidate.weight) : 0), 0);
   const quorumWeight = Math.max(1, totalWeight * policy.quorumRatio);
   const success = successWeight >= quorumWeight;
   const winner = [...results].sort((a, b) => b.score - a.score)[0];
   const summary = renderSummary(node, results, successWeight, totalWeight, quorumWeight);
+
+  const baseCwd = node.worktree ?? process.cwd();
+  let mergedFiles: string[] = [];
+  let mergeErrors: string[] = [];
+
+  if (winner?.worktree && winner.worktree !== baseCwd) {
+    try {
+      const mergeResult = await mergeWinnerWorktree(winner.worktree, baseCwd);
+      mergedFiles = mergeResult.mergedFiles;
+      mergeErrors = mergeResult.errors;
+    } catch (err) {
+      mergeErrors.push(String(err));
+    }
+
+    for (const item of results) {
+      if (item.worktree && item.worktree !== baseCwd) {
+        await cleanupWorktree(item.worktree);
+      }
+    }
+  }
 
   return {
     success,
@@ -250,6 +390,8 @@ function aggregateCandidateResults(
         totalWeight,
         quorumWeight,
         winner: winner?.candidate.id,
+        mergedFiles,
+        mergeErrors: mergeErrors.length > 0 ? mergeErrors : undefined,
         candidates: results.map((item) => ({
           id: item.candidate.id,
           success: item.result.success,
@@ -287,8 +429,20 @@ function renderSummary(
 function scoreResult(result: TaskResult, weight: number): number {
   if (!result.success) return 0;
   const stdout = result.stdout.toLowerCase();
+  const stderr = result.stderr.toLowerCase();
   const confidence = stdout.match(/confidence\s*[:=]\s*(0(?:\.\d+)?|1(?:\.0+)?)/)?.[1];
-  const confidenceScore = confidence ? Number(confidence) : 1;
+  let confidenceScore: number;
+  if (confidence) {
+    confidenceScore = Number(confidence);
+  } else {
+    const exitCode = result.exitCode ?? 0;
+    const exitCodeScore = exitCode === 0 ? 1.0 : Math.max(0, 0.7 - exitCode * 0.1);
+    const stderrPenalty = Math.min(0.5, result.stderr.length / 2000);
+    const stdoutBonus = result.stdout.trim().length > 0 ? 0.1 : 0;
+    const combinedText = stdout + " " + stderr;
+    const keywordPenalty = /\b(error|fail|exception)\b/.test(combinedText) ? 0.3 : 0;
+    confidenceScore = Math.max(0, Math.min(1, exitCodeScore - stderrPenalty + stdoutBonus - keywordPenalty));
+  }
   return weight * Math.max(0, Math.min(1, confidenceScore));
 }
 

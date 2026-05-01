@@ -1,11 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createDag } from "../dist/orchestration/dag.js";
 import { createScheduler } from "../dist/orchestration/scheduler.js";
 import { createEnsembleTaskRunner } from "../dist/orchestration/ensemble.js";
 import { createExecutor } from "../dist/orchestration/executor.js";
 import { estimateRunProgress } from "../dist/orchestration/eta.js";
+import { createRoutedRunState, refreshRunStateEstimate, routeRunState } from "../dist/orchestration/run-state.js";
+import { discoverRoutingInventory, resetRoutingInventoryCache } from "../dist/orchestration/routing.js";
+import { collectMcpConfigs } from "../dist/util/fs.js";
+
+async function tempWorktree() {
+  return mkdtemp(join(tmpdir(), "omk-ensemble-"));
+}
 
 test("task graph returns runnable nodes in deterministic topological order", () => {
   const dag = createDag({
@@ -20,6 +30,196 @@ test("task graph returns runnable nodes in deterministic topological order", () 
   assert.deepEqual(scheduler.getRunnableNodes(dag).map((node) => node.id), ["plan"]);
   scheduler.updateNodeStatus(dag, "plan", "done");
   assert.deepEqual(scheduler.getRunnableNodes(dag).map((node) => node.id), ["code"]);
+});
+
+test("task graph ranks critical-path runnable nodes before low-impact siblings", () => {
+  const dag = createDag({
+    nodes: [
+      { id: "side", name: "Side task", role: "coder", dependsOn: [], maxRetries: 1 },
+      { id: "root", name: "Root critical task", role: "planner", dependsOn: [], maxRetries: 1 },
+      { id: "mid", name: "Middle", role: "coder", dependsOn: ["root"], maxRetries: 1 },
+      { id: "leaf", name: "Leaf", role: "reviewer", dependsOn: ["mid"], maxRetries: 1 },
+    ],
+  });
+
+  assert.deepEqual(createScheduler().getRunnableNodes(dag).map((node) => node.id), ["root", "side"]);
+});
+
+test("createDag adds bounded Kimi routing hints without changing node contract", () => {
+  const dag = createDag({
+    nodes: [
+      {
+        id: "route-research",
+        name: "Verify Kimi paper and official API docs before planner handoff",
+        role: "researcher",
+        dependsOn: [],
+        maxRetries: 1,
+        outputs: [{ name: "citation notes", gate: "summary" }],
+      },
+    ],
+  });
+  const routing = dag.nodes[0].routing;
+
+  assert.ok(routing?.skills?.includes("omk-research-verify"));
+  assert.ok(routing?.tools?.includes("SearchWeb"));
+  assert.ok((routing?.skills?.length ?? 0) <= 3);
+  assert.ok((routing?.tools?.length ?? 0) <= 4);
+  assert.equal(routing?.contextBudget, "small");
+  assert.equal(routing?.evidenceRequired, true);
+});
+
+test("routing inventory discovers project skills and MCP without global scope", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "omk-routing-inventory-"));
+  const previousRoot = process.env.OMK_PROJECT_ROOT;
+  const previousSkillsScope = process.env.OMK_SKILLS_SCOPE;
+  const previousMcpScope = process.env.OMK_MCP_SCOPE;
+  process.env.OMK_PROJECT_ROOT = projectRoot;
+  process.env.OMK_SKILLS_SCOPE = "project";
+  process.env.OMK_MCP_SCOPE = "project";
+  resetRoutingInventoryCache();
+
+  try {
+    await mkdir(join(projectRoot, ".agents", "skills", "omk-repo-explorer"), { recursive: true });
+    await mkdir(join(projectRoot, ".kimi", "skills", "omk-task-router"), { recursive: true });
+    await mkdir(join(projectRoot, ".omk"), { recursive: true });
+    await writeFile(join(projectRoot, ".agents", "skills", "omk-repo-explorer", "SKILL.md"), "# repo explorer\n");
+    await writeFile(join(projectRoot, ".kimi", "skills", "omk-task-router", "SKILL.md"), "# task router\n");
+    await writeFile(join(projectRoot, ".omk", "mcp.json"), JSON.stringify({ mcpServers: { "omk-project": { command: "node" } } }));
+
+    const inventory = discoverRoutingInventory(projectRoot);
+
+    assert.equal(inventory.skills.get("omk-repo-explorer"), "project");
+    assert.equal(inventory.skills.get("omk-task-router"), "project");
+    assert.equal(inventory.mcpServers.get("omk-project"), "project");
+    assert.equal(inventory.tools.has("omk_run_quality_gate"), true);
+    assert.equal(inventory.skillsScope, "project");
+    assert.equal(inventory.mcpScope, "project");
+  } finally {
+    resetRoutingInventoryCache();
+    restoreEnv("OMK_PROJECT_ROOT", previousRoot);
+    restoreEnv("OMK_SKILLS_SCOPE", previousSkillsScope);
+    restoreEnv("OMK_MCP_SCOPE", previousMcpScope);
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("project MCP scope excludes global Kimi MCP config", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "omk-mcp-scope-"));
+  const previousRoot = process.env.OMK_PROJECT_ROOT;
+  process.env.OMK_PROJECT_ROOT = projectRoot;
+
+  try {
+    await mkdir(join(projectRoot, ".omk"), { recursive: true });
+    await mkdir(join(projectRoot, ".kimi"), { recursive: true });
+    await writeFile(join(projectRoot, ".omk", "mcp.json"), JSON.stringify({ mcpServers: { "omk-project": {} } }));
+    await writeFile(join(projectRoot, ".kimi", "mcp.json"), JSON.stringify({ mcpServers: {} }));
+
+    const configs = await collectMcpConfigs("project");
+
+    assert.deepEqual(configs.sort(), [
+      join(projectRoot, ".kimi", "mcp.json"),
+      join(projectRoot, ".omk", "mcp.json"),
+    ].sort());
+    assert.equal(configs.some((path) => path.startsWith(join(homedir(), ".kimi"))), false);
+  } finally {
+    restoreEnv("OMK_PROJECT_ROOT", previousRoot);
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("run state routing helper enriches synthetic CLI nodes", () => {
+  const state = createRoutedRunState({
+    runId: "run-state-test",
+    startedAt: "2026-05-01T00:00:00.000Z",
+    workerCount: 2,
+    nodes: [
+      { id: "coordinator", name: "Coordinate DAG team", role: "orchestrator", dependsOn: [], maxRetries: 1 },
+      { id: "review", name: "Review quality gate", role: "reviewer", dependsOn: ["coordinator"], maxRetries: 1 },
+    ],
+  });
+
+  assert.equal(state.nodes[0].status, "pending");
+  assert.ok(state.nodes[0].routing?.skills?.includes("omk-adaptorch-dag"));
+  assert.ok(state.nodes[1].routing?.skills?.includes("omk-quality-gate"));
+  assert.equal(state.estimate?.totalNodes, 2);
+});
+
+test("run state estimate can be refreshed after synthetic status changes", () => {
+  const state = createRoutedRunState({
+    runId: "estimate-refresh-test",
+    startedAt: "2026-05-01T00:00:00.000Z",
+    workerCount: 2,
+    nodes: [
+      { id: "bootstrap", name: "Bootstrap", role: "omk", dependsOn: [], maxRetries: 1 },
+      { id: "coordinator", name: "Coordinate DAG team", role: "orchestrator", dependsOn: ["bootstrap"], maxRetries: 1 },
+    ],
+  });
+
+  state.nodes[0].status = "done";
+  state.nodes[1].status = "running";
+  refreshRunStateEstimate(state, 2);
+
+  assert.equal(state.estimate?.completedNodes, 1);
+  assert.equal(state.estimate?.runningNodes, 1);
+});
+
+test("routeRunState preserves runtime status while refreshing routing metadata", () => {
+  const routed = routeRunState({
+    runId: "resume-test",
+    startedAt: "2026-05-01T00:00:00.000Z",
+    nodes: [
+      {
+        id: "root",
+        name: "Coordinate resumed DAG",
+        role: "orchestrator",
+        dependsOn: [],
+        status: "running",
+        retries: 0,
+        maxRetries: 1,
+        startedAt: "2026-05-01T00:00:01.000Z",
+      },
+    ],
+  });
+
+  assert.equal(routed.nodes[0].status, "running");
+  assert.equal(routed.nodes[0].startedAt, "2026-05-01T00:00:01.000Z");
+  assert.ok(routed.nodes[0].routing?.skills?.includes("omk-adaptorch-dag"));
+});
+
+test("scheduler blocks descendants after a terminal failed dependency", () => {
+  const dag = createDag({
+    nodes: [
+      { id: "plan", name: "Plan", role: "planner", dependsOn: [], maxRetries: 1 },
+      { id: "code", name: "Code", role: "coder", dependsOn: ["plan"], maxRetries: 1 },
+      { id: "review", name: "Review", role: "reviewer", dependsOn: ["code"], maxRetries: 1 },
+    ],
+  });
+  const scheduler = createScheduler();
+
+  scheduler.updateNodeStatus(dag, "plan", "failed");
+
+  assert.equal(dag.nodes.find((node) => node.id === "code")?.status, "blocked");
+  assert.equal(dag.nodes.find((node) => node.id === "review")?.status, "blocked");
+  assert.equal(scheduler.isFailed(dag), true);
+});
+
+test("createDag rejects hidden input dependencies", () => {
+  assert.throws(
+    () => createDag({
+      nodes: [
+        { id: "plan", name: "Plan", role: "planner", dependsOn: [], maxRetries: 1 },
+        {
+          id: "code",
+          name: "Code",
+          role: "coder",
+          dependsOn: [],
+          maxRetries: 1,
+          inputs: [{ name: "plan output", ref: "plan.md", from: "plan" }],
+        },
+      ],
+    }),
+    /hidden dependency/
+  );
 });
 
 test("task graph rejects cycles with a useful error", () => {
@@ -54,7 +254,7 @@ test("ensemble runner calls role-specific candidates and aggregates quorum", asy
   });
 
   const result = await runner.run(
-    { id: "node-1", name: "Implement", role: "coder", dependsOn: [], status: "pending", retries: 0, maxRetries: 1 },
+    { id: "node-1", name: "Implement", role: "coder", dependsOn: [], status: "pending", retries: 0, maxRetries: 1, worktree: await tempWorktree() },
     { OMK_RUN_ID: "test" }
   );
 
@@ -86,13 +286,53 @@ test("ensemble runner tolerates one candidate throwing when quorum still passes"
   });
 
   const result = await runner.run(
-    { id: "node-2", name: "Implement", role: "coder", dependsOn: [], status: "pending", retries: 0, maxRetries: 1 },
+    { id: "node-2", name: "Implement", role: "coder", dependsOn: [], status: "pending", retries: 0, maxRetries: 1, worktree: await tempWorktree() },
     { OMK_RUN_ID: "test" }
   );
 
   assert.equal(result.success, true);
   assert.match(result.stderr, /\[edge-cases] candidate crashed/);
   assert.equal(result.metadata.ensemble.winner, "implement");
+});
+
+test("router ensemble candidates preserve routing metadata and use route-specific roles", async () => {
+  const calls = [];
+  const baseRunner = {
+    async run(node, env) {
+      calls.push({ node, env });
+      return {
+        success: true,
+        stdout: `candidate=${env.OMK_ENSEMBLE_CANDIDATE_ID}\nconfidence: 0.9`,
+        stderr: "",
+      };
+    },
+  };
+  const runner = createEnsembleTaskRunner(baseRunner, {
+    enabled: true,
+    maxCandidatesPerNode: 2,
+    maxParallel: 1,
+    quorumRatio: 0.5,
+  });
+
+  const result = await runner.run(
+    {
+      id: "route-1",
+      name: "Select skills and MCP for DAG node",
+      role: "router",
+      dependsOn: [],
+      status: "pending",
+      retries: 0,
+      maxRetries: 1,
+      worktree: await tempWorktree(),
+      routing: { skills: ["omk-repo-explorer"], mcpServers: ["omk-project"], contextBudget: "tiny" },
+    },
+    { OMK_RUN_ID: "test" }
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(calls.map((call) => call.env.OMK_ENSEMBLE_CANDIDATE_ID), ["skill-fit", "safety-budget"]);
+  assert.deepEqual(calls.map((call) => call.node.role), ["planner", "reviewer"]);
+  assert.equal(calls[0].node.routing.skills[0], "omk-repo-explorer");
 });
 
 test("ETA estimator uses completed durations and worker count", () => {
@@ -154,8 +394,8 @@ test("executor records agent timings and passes ETA environment", async () => {
   });
   const dag = createDag({
     nodes: [
-      { id: "plan", name: "Plan", role: "planner", dependsOn: [], maxRetries: 1 },
-      { id: "code", name: "Code", role: "coder", dependsOn: ["plan"], maxRetries: 1 },
+      { id: "plan", name: "Plan DAG implementation", role: "planner", dependsOn: [], maxRetries: 1 },
+      { id: "code", name: "Implement TypeScript routing", role: "coder", dependsOn: ["plan"], maxRetries: 1 },
     ],
   });
   const runner = {
@@ -180,5 +420,134 @@ test("executor records agent timings and passes ETA environment", async () => {
   assert.ok(result.state.nodes.every((node) => typeof node.durationMs === "number"));
   assert.ok(result.state.nodes.every((node) => node.attempts?.length === 1));
   assert.ok(seenEnv.every((env) => typeof env.OMK_ETA_REMAINING_MS === "string"));
+  assert.ok(seenEnv.every((env) => typeof env.OMK_SKILL_HINTS === "string"));
+  assert.ok(seenEnv.some((env) => env.OMK_SKILL_HINTS.includes("omk-adaptorch-dag")));
+  assert.ok(seenEnv.some((env) => env.OMK_SKILL_HINTS.includes("omk-typescript-strict")));
   assert.ok(savedStates.some((state) => state.estimate?.runningNodes === 1));
+});
+
+function restoreEnv(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
+
+test("scheduler retries node when failure is under maxRetries", () => {
+  const dag = createDag({
+    nodes: [
+      { id: "plan", name: "Plan", role: "planner", dependsOn: [], maxRetries: 3 },
+      { id: "code", name: "Code", role: "coder", dependsOn: ["plan"], maxRetries: 1 },
+    ],
+  });
+  const scheduler = createScheduler();
+
+  // First failure — should retry (retries=0 < maxRetries=3)
+  scheduler.updateNodeStatus(dag, "plan", "failed");
+  assert.equal(dag.nodes.find((node) => node.id === "plan")?.status, "pending");
+  assert.equal(dag.nodes.find((node) => node.id === "plan")?.retries, 1);
+  assert.equal(dag.nodes.find((node) => node.id === "code")?.status, "pending");
+
+  // Second failure — should retry again (retries=1 < maxRetries=3)
+  scheduler.updateNodeStatus(dag, "plan", "failed");
+  assert.equal(dag.nodes.find((node) => node.id === "plan")?.status, "pending");
+  assert.equal(dag.nodes.find((node) => node.id === "plan")?.retries, 2);
+
+  // Third failure — terminal (retries=2 < maxRetries=3 is false), should block dependents
+  scheduler.updateNodeStatus(dag, "plan", "failed");
+  assert.equal(dag.nodes.find((node) => node.id === "plan")?.status, "failed");
+  assert.equal(dag.nodes.find((node) => node.id === "code")?.status, "blocked");
+  assert.equal(scheduler.isFailed(dag), true);
+});
+
+test("executor times out hanging node and marks it failed", async () => {
+  const executor = createExecutor({ ensemble: false });
+  const dag = createDag({
+    nodes: [
+      { id: "fast", name: "Fast", role: "coder", dependsOn: [], maxRetries: 1 },
+      { id: "slow", name: "Slow", role: "coder", dependsOn: [], maxRetries: 1 },
+    ],
+  });
+  const runner = {
+    async run(node, _env) {
+      if (node.id === "slow") {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return { success: true, stdout: "", stderr: "" };
+      }
+      return { success: true, stdout: "", stderr: "" };
+    },
+  };
+
+  let slowResult;
+  executor.onNodeComplete((node, result) => {
+    if (node.id === "slow") slowResult = result;
+  });
+
+  const result = await executor.execute(dag, runner, {
+    runId: "timeout-test",
+    workers: 2,
+    approvalPolicy: "yolo",
+    nodeTimeoutMs: 50,
+  });
+
+  assert.equal(result.success, false);
+  const slowNode = result.state.nodes.find((node) => node.id === "slow");
+  const fastNode = result.state.nodes.find((node) => node.id === "fast");
+  assert.equal(fastNode?.status, "done");
+  assert.equal(slowNode?.status, "failed");
+  assert.ok(slowNode?.attempts?.[0]?.status === "failed");
+  assert.ok(slowResult?.stderr?.includes("timed out"));
+});
+
+test("executor returns failure when all nodes are blocked", async () => {
+  const executor = createExecutor({ ensemble: false });
+  // Build a valid DAG then manually block every node to simulate total dependency failure
+  const dag = createDag({
+    nodes: [
+      { id: "a", name: "A", role: "coder", dependsOn: [], maxRetries: 1 },
+      { id: "b", name: "B", role: "coder", dependsOn: ["a"], maxRetries: 1 },
+    ],
+  });
+  dag.nodes[0].status = "blocked";
+  dag.nodes[0].blockedReason = "manual block";
+  dag.nodes[1].status = "blocked";
+  dag.nodes[1].blockedReason = "manual block";
+
+  const runner = {
+    async run() {
+      return { success: true, stdout: "", stderr: "" };
+    },
+  };
+
+  const result = await executor.execute(dag, runner, {
+    runId: "blocked-test",
+    workers: 1,
+    approvalPolicy: "yolo",
+  });
+
+  assert.equal(result.success, false);
+});
+
+test("state persister writes atomically via temp file", async () => {
+  const { createStatePersister } = await import("../dist/orchestration/state-persister.js");
+  const tmpDir = await mkdtemp(join(tmpdir(), "omk-state-"));
+  const persister = createStatePersister(tmpDir);
+
+  const state = {
+    runId: "atomic-test",
+    nodes: [],
+    startedAt: new Date().toISOString(),
+  };
+
+  await persister.save(state);
+  const loaded = await persister.load("atomic-test");
+  assert.equal(loaded.runId, "atomic-test");
+
+  // Verify no temp files left behind
+  const entries = await (await import("node:fs/promises")).readdir(join(tmpDir, "atomic-test"));
+  assert.ok(entries.includes("state.json"));
+  assert.ok(!entries.some((e) => e.endsWith(".tmp")), "temp file should be cleaned up after successful rename");
+
+  await rm(tmpDir, { recursive: true, force: true });
 });

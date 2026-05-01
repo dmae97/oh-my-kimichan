@@ -56,14 +56,25 @@
 
 > **Current GitHub-ready version:** `0.2.2` — documented for the active open-source README branch.
 
+### What's New in this release
+
 | Area | GitHub-visible update | Why it matters |
 |------|-----------------------|----------------|
-| 16GB-friendly runtime | `runtime.resource_profile = "auto"` selects a lite profile on memory-constrained machines | Keeps OMK usable on 16GB laptops and WSL environments |
-| DAG execution | Graphlib-inspired internal task graph validates missing deps, duplicate ids, cycles, and stable topological order | Faster, safer long-running agent orchestration without adding dependency weight |
-| Role-aware ensemble | Coder/planner/architect/reviewer/QA/explorer nodes can run weighted candidate perspectives with quorum aggregation | Improves agent-call quality while keeping `max_parallel = 1` by default |
-| Local graph memory | Project memory defaults to `.omk/memory/graph-state.json` with ontology mindmap and GraphQL-lite recall | Local-first memory works without external Neo4j setup |
-| Built-in LSP | `omk lsp typescript` exposes the bundled TypeScript language server | Helps coding agents and editors share the same language intelligence |
-| Quality gates | `npm run check`, `npm test`, `npm run lint`, `npm run build` are wired into CI and release checks | GitHub contributors can verify changes before PRs |
+| **`omk parallel <goal>`** | Parallel DAG execution with coordinator → worker fan-out → reviewer pattern | Spin up a multi-agent team from a single goal with live UI and ETA tracking |
+| **`omk hud`** | Full live dashboard: System Usage, Kimi Usage gauges, Project Status, Latest Run, TODO & Changed Files sidebar | Real-time visibility into your agent fleet without external monitoring tools |
+| **TTY Menu** | Running bare `omk` now prints HUD dashboard + interactive `@inquirer/prompts` menu | Zero-config entry point for new users; no more "what do I type first?" |
+| **Resume with `--run-id`** | `omk run --run-id <id>` resumes a previous run from persisted state | Long-running agent tasks survive restarts and context switches |
+| **First-run Star Prompt** | `OMK_STAR_PROMPT` guided GitHub star experience on first CLI use | Community growth without being intrusive; respects `CI` and `--help` |
+| **Checkpoint & Snippet utils** | `SendDMail` checkpoint helpers + reusable `.omk/snippets/` storage | Safer refactors and reusable code blocks across agent sessions |
+| **Enhanced DAG engine** | Priority, cost, routing, failurePolicy, and evidence gates per node | Production-grade orchestration: retries, fallbacks, and input/output validation |
+| **Live Parallel UI** | `ParallelLiveRenderer` refreshes every 1.5s with run state transitions | See workers start, finish, fail, and retry in real time |
+| **OAuth Usage Gauges** | `OMK_KIMI_STATUS_GAUGES=1` enables visual bar gauges for 5h/weekly quota | Know your Kimi API budget at a glance |
+| **Expanded safety hooks** | `stop-verify.sh` now runs comprehensive final verification | Even in `yolo` mode, destructive commands and secret leakage are blocked |
+| **16GB-friendly runtime** | `runtime.resource_profile = "auto"` selects a lite profile on memory-constrained machines | Keeps OMK usable on 16GB laptops and WSL environments |
+| **Role-aware ensemble** | Coder/planner/architect/reviewer/QA/explorer nodes can run weighted candidate perspectives with quorum aggregation | Improves agent-call quality while keeping `max_parallel = 1` by default |
+| **Local graph memory** | Project memory defaults to `.omk/memory/graph-state.json` with ontology mindmap and GraphQL-lite recall | Local-first memory works without external Neo4j setup |
+| **Built-in LSP** | `omk lsp typescript` exposes the bundled TypeScript language server | Helps coding agents and editors share the same language intelligence |
+| **Quality gates** | `npm run check`, `npm test`, `npm run lint`, `npm run build` are wired into CI and release checks | GitHub contributors can verify changes before PRs |
 
 ### GitHub Markdown checklist
 
@@ -71,6 +82,7 @@
 - [x] Mermaid architecture diagrams render in GitHub-flavored Markdown.
 - [x] Repository topic badges below match the recommended GitHub topics.
 - [x] README logo PNG display width increased to `720px` for a stronger GitHub landing page.
+- [x] Screenshots for HUD and status-line gauges are embedded with alt text.
 
 ## Repository Topics
 
@@ -122,10 +134,10 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 | Multi-Agent Compatible | AGENTS.md / GEMINI.md / CLAUDE.md 동시 지원 |
 | Quality Gates | 완료 전 자동 lint, typecheck, test, build 검증 |
 | Built-in LSP | `omk lsp typescript`로 번들 TypeScript language server 실행 |
-| Live HUD | 작업자 상태, 테스트 결과, 리스크, 병합 현황 실시간 모니터링 |
+| Live HUD | System Usage / Kimi Usage gauges / Project Status / Latest Run / TODO & Changed Files 사이드바를 포함한 실시간 대시보드 |
 | MCP Integration | 다양한 MCP 서버와의 원활한 연동 |
 | Local Graph Memory | 프로젝트/세션별 기억을 `.omk/memory/graph-state.json` 온톨로지 그래프로 저장하고 mindmap/GraphQL-lite 제공 |
-| OAuth Usage Badge | Kimi `context:` 상태줄 옆에 `/login` 계정, 5h quota, weekly quota 표시 |
+| OAuth Usage Badge | Kimi `context:` 상태줄 옆에 masked 계정, 5h/weekly quota 표시; `OMK_KIMI_STATUS_GAUGES=1`로 시각적 게이지 활성화 |
 | YOLO-by-default | 오픈소스 기본값은 `approval_policy = "yolo"`; secret/destructive hooks는 계속 차단 |
 | Safety Hooks | yolo mode에서도 파괴적 명령어 및 비밀 유출 방지 기본 제공 |
 
@@ -158,6 +170,17 @@ The interactive wrapper also augments Kimi’s native `context:` status line wit
 
 ### Preview
 
+#### Live HUD (`omk hud`)
+
+![omk hud](./omk-hud-1.png)
+
+#### Kimi Status Line with Usage Gauges
+
+OMK augments Kimi’s native `context:` status line with masked OAuth account + 5h/weekly quota. Set `OMK_KIMI_STATUS_GAUGES=1` for visual bar gauges.
+
+![status line gauge](./omk-statusline-gauge.png)
+![status line with reset hint](./omk-statusline-reset.png)
+
 ```bash
 $ omk doctor
 OK Node.js           v22.14.0
@@ -166,6 +189,13 @@ OK Python            3.13.2
 OK tmux              3.5a
 OK Kimi CLI          v1.39.0
 OK Scaffold          .omk/, .kimi/skills/ found
+
+$ omk parallel "refactor auth module"
+Parallel Execution
+Run ID:   2025-05-01T12-34-56
+Goal:     refactor auth module
+Workers:  3
+✔ Parallel DAG run complete
 
 $ omk team
 Team Runtime starting...
@@ -186,6 +216,8 @@ Team Runtime starting...
 | `omk chat` | Interactive Kimi with agent/config/MCP auto-detection |
 | `omk plan <goal>` | Plan-only mode |
 | `omk run <flow> <goal>` | Flow-based task execution |
+| `omk parallel <goal>` | Parallel DAG execution (coordinator → workers → reviewer) |
+| `omk hud` | Live dashboard with system usage, Kimi quota, project status, run tracking |
 | `omk lsp [server]` | Built-in LSP launcher; default server is TypeScript |
 | `omk design init` | Create DESIGN.md with frontmatter |
 | `omk design list` | List local/remote DESIGN.md files |
@@ -199,7 +231,6 @@ Team Runtime starting...
 |---------|--------|-------|
 | `omk team` | Layout only | tmux window layout scaffold |
 | `omk merge` | Manual | Diff check + manual cherry-pick guidance |
-| `omk hud` | Partial | Run status display |
 | `omk design lint` | Stub | Validation not yet implemented |
 | `omk design diff` | Stub | Diff not yet implemented |
 | `omk design export` | Stub | Export not yet implemented |
@@ -262,9 +293,10 @@ omk lsp typescript
 | DESIGN.md Integration | UI generation based on Google DESIGN.md standard |
 | Multi-Agent Compatible | Simultaneous support for AGENTS.md / GEMINI.md / CLAUDE.md |
 | Quality Gates | Automated lint, typecheck, test, build verification before completion |
-| Live HUD | Real-time monitoring of worker status, test results, risk, and merge state |
+| Live HUD | Real-time dashboard with System Usage, Kimi Usage gauges, Project Status, Latest Run, and TODO / Changed Files sidebar |
 | MCP Integration | Seamless connection with various MCP servers |
 | Local Graph Memory | Stores project/session memory in `.omk/memory/graph-state.json` as an ontology graph with mindmap/GraphQL-lite tools |
+| Parallel DAG | `omk parallel <goal>` runs coordinator → worker fan-out → reviewer with live UI and ETA tracking |
 | Safety Hooks | Default protection against destructive commands and secret leakage |
 
 ### Install
@@ -285,6 +317,17 @@ omk chat
 
 ### Preview
 
+#### Live HUD (`omk hud`)
+
+![omk hud](./omk-hud-1.png)
+
+#### Kimi Status Line with Usage Gauges
+
+OMK augments Kimi’s native `context:` status line with masked OAuth account + 5h/weekly quota. Set `OMK_KIMI_STATUS_GAUGES=1` for visual bar gauges.
+
+![status line gauge](./omk-statusline-gauge.png)
+![status line with reset hint](./omk-statusline-reset.png)
+
 ```bash
 $ omk doctor
 OK Node.js           v22.14.0
@@ -293,6 +336,13 @@ OK Python            3.13.2
 OK tmux              3.5a
 OK Kimi CLI          v1.39.0
 OK Scaffold          .omk/, .kimi/skills/ found
+
+$ omk parallel "refactor auth module"
+Parallel Execution
+Run ID:   2025-05-01T12-34-56
+Goal:     refactor auth module
+Workers:  3
+✔ Parallel DAG run complete
 
 $ omk team
 Team Runtime starting...
@@ -313,6 +363,8 @@ Team Runtime starting...
 | `omk chat` | Interactive Kimi with agent/config/MCP auto-detection |
 | `omk plan <goal>` | Plan-only mode |
 | `omk run <flow> <goal>` | Flow-based task execution |
+| `omk parallel <goal>` | Parallel DAG execution (coordinator → workers → reviewer) |
+| `omk hud` | Live dashboard with system usage, Kimi quota, project status, run tracking |
 | `omk design init` | Create DESIGN.md with frontmatter |
 | `omk design list` | List local/remote DESIGN.md files |
 | `omk design apply <name>` | Convert DESIGN.md into code |
@@ -325,7 +377,6 @@ Team Runtime starting...
 |---------|--------|-------|
 | `omk team` | Layout only | tmux window layout scaffold |
 | `omk merge` | Manual | Diff check + manual cherry-pick guidance |
-| `omk hud` | Partial | Run status display |
 | `omk design lint` | Stub | Validation not yet implemented |
 | `omk design diff` | Stub | Diff not yet implemented |
 | `omk design export` | Stub | Export not yet implemented |
@@ -377,9 +428,10 @@ Default hooks block destructive commands and secret leakage:
 | DESIGN.md 集成 | 基于 Google DESIGN.md 标准的 UI 生成 |
 | 多 Agent 兼容 | 同时支持 AGENTS.md / GEMINI.md / CLAUDE.md |
 | 质量门禁 | 完成前自动执行 lint、typecheck、test、build 验证 |
-| 实时 HUD | 实时监控工作者状态、测试结果、风险与合并状态 |
+| 实时 HUD | 实时仪表盘：系统用量、Kimi 配额条、项目状态、最新运行、TODO / 变更文件侧边栏 |
 | MCP 集成 | 与多种 MCP 服务器无缝连接 |
 | Local Graph Memory | 将项目/会话记忆存入 `.omk/memory/graph-state.json` 本地本体图，并提供 mindmap/GraphQL-lite |
+| 并行 DAG | `omk parallel <goal>` 执行 coordinator → worker 扇出 → reviewer，带实时 UI 与 ETA 追踪 |
 | 安全钩子 | 默认防止破坏性命令与密钥泄漏 |
 
 ### Install
@@ -400,6 +452,17 @@ omk chat
 
 ### Preview
 
+#### Live HUD (`omk hud`)
+
+![omk hud](./omk-hud-1.png)
+
+#### Kimi Status Line with Usage Gauges
+
+OMK augments Kimi’s native `context:` status line with masked OAuth account + 5h/weekly quota. Set `OMK_KIMI_STATUS_GAUGES=1` for visual bar gauges.
+
+![status line gauge](./omk-statusline-gauge.png)
+![status line with reset hint](./omk-statusline-reset.png)
+
 ```bash
 $ omk doctor
 OK Node.js           v22.14.0
@@ -408,6 +471,13 @@ OK Python            3.13.2
 OK tmux              3.5a
 OK Kimi CLI          v1.39.0
 OK Scaffold          .omk/, .kimi/skills/ found
+
+$ omk parallel "refactor auth module"
+Parallel Execution
+Run ID:   2025-05-01T12-34-56
+Goal:     refactor auth module
+Workers:  3
+✔ Parallel DAG run complete
 
 $ omk team
 Team Runtime 启动中...
@@ -428,6 +498,8 @@ Team Runtime 启动中...
 | `omk chat` | 支持代理/配置/MCP 自动检测的交互式 Kimi |
 | `omk plan <goal>` | 仅计划模式 |
 | `omk run <flow> <goal>` | 基于流程的任务执行 |
+| `omk parallel <goal>` | 并行 DAG 执行（coordinator → workers → reviewer） |
+| `omk hud` | 实时仪表盘：系统用量、Kimi 配额、项目状态、运行追踪 |
 | `omk design init` | 创建带 frontmatter 的 DESIGN.md |
 | `omk design list` | 列出本地/远程 DESIGN.md |
 | `omk design apply <name>` | 将 DESIGN.md 转换为代码 |
@@ -440,7 +512,6 @@ Team Runtime 启动中...
 |---------|--------|-------|
 | `omk team` | 仅布局 | tmux 窗口布局脚手架 |
 | `omk merge` | 手动 | Diff 检查 + 手动 cherry-pick 指导 |
-| `omk hud` | 部分 | 运行状态显示 |
 | `omk design lint` | 占位 | 验证尚未实现 |
 | `omk design diff` | 占位 | Diff 尚未实现 |
 | `omk design export` | 占位 | 导出尚未实现 |
@@ -492,9 +563,10 @@ graph TD
 | DESIGN.md 連携 | Google DESIGN.md 標準に基づく UI 生成 |
 | マルチエージェント互換 | AGENTS.md / GEMINI.md / CLAUDE.md を同時サポート |
 | 品質ゲート | 完了前に自動 lint、typecheck、test、build を検証 |
-| ライブ HUD | ワーカー状態、テスト結果、リスク、マージ状況をリアルタイム監視 |
+| ライブ HUD | リアルタイムダッシュボード：システム使用量、Kimi クォータゲージ、プロジェクト状態、最新実行、TODO / 変更ファイルサイドバー |
 | MCP 統合 | 様々な MCP サーバーとのシームレスな連携 |
 | Local Graph Memory | プロジェクト/セッション記憶を `.omk/memory/graph-state.json` のローカル ontology graph に保存し、mindmap/GraphQL-lite を提供 |
+| 並列 DAG | `omk parallel <goal>` は coordinator → worker ファンアウト → reviewer を実行。ライブ UI と ETA 追跡付き |
 | 安全フック | 破壊的コマンドとシークレット漏洩をデフォルトで防止 |
 
 ### Install
@@ -515,6 +587,17 @@ omk chat
 
 ### Preview
 
+#### Live HUD (`omk hud`)
+
+![omk hud](./omk-hud-1.png)
+
+#### Kimi Status Line with Usage Gauges
+
+OMK augments Kimi’s native `context:` status line with masked OAuth account + 5h/weekly quota. Set `OMK_KIMI_STATUS_GAUGES=1` for visual bar gauges.
+
+![status line gauge](./omk-statusline-gauge.png)
+![status line with reset hint](./omk-statusline-reset.png)
+
 ```bash
 $ omk doctor
 OK Node.js           v22.14.0
@@ -523,6 +606,13 @@ OK Python            3.13.2
 OK tmux              3.5a
 OK Kimi CLI          v1.39.0
 OK Scaffold          .omk/, .kimi/skills/ found
+
+$ omk parallel "refactor auth module"
+Parallel Execution
+Run ID:   2025-05-01T12-34-56
+Goal:     refactor auth module
+Workers:  3
+✔ Parallel DAG run complete
 
 $ omk team
 Team Runtime 開始中...
@@ -543,6 +633,8 @@ Team Runtime 開始中...
 | `omk chat` | エージェント/設定/MCP 自動検出対応の対話型 Kimi |
 | `omk plan <goal>` | 計画専用モード |
 | `omk run <flow> <goal>` | フローベースのタスク実行 |
+| `omk parallel <goal>` | 並列 DAG 実行（coordinator → workers → reviewer） |
+| `omk hud` | リアルタイムダッシュボード：システム使用量、Kimi クォータ、プロジェクト状態、実行追跡 |
 | `omk design init` | frontmatter 付き DESIGN.md を作成 |
 | `omk design list` | ローカル/リモート DESIGN.md を一覧表示 |
 | `omk design apply <name>` | DESIGN.md をコードに変換適用 |
@@ -555,7 +647,6 @@ Team Runtime 開始中...
 |---------|--------|-------|
 | `omk team` | レイアウトのみ | tmux ウィンドウ レイアウト スキャフォールド |
 | `omk merge` | 手動 | Diff 確認 + 手動 cherry-pick ガイダンス |
-| `omk hud` | 部分的 | 実行状態の表示 |
 | `omk design lint` | スタブ | 検証は未実装 |
 | `omk design diff` | スタブ | Diff は未実装 |
 | `omk design export` | スタブ | エクスポートは未実装 |
@@ -617,14 +708,49 @@ logo_image = "kimichan.png"
 
 <h2 id="acknowledgements">Acknowledgements</h2>
 
-This project is built on top of amazing open-source work:
+This project stands on the shoulders of giants. Every line of code here is possible because of the relentless dedication of open-source contributors around the world. With deepest respect and gratitude:
 
-- Kimi Code CLI by Moonshot AI - The foundation that makes everything possible
-- Google DESIGN.md - Design specification standard for UI generation
-- Commander.js - Elegant command-line interfaces
-- Zod - TypeScript-first schema validation
-- tmux - Terminal multiplexer for team runtime
+### Core Platform & AI
+- **[Kimi Code CLI](https://github.com/moonshot-ai/kimi-cli)** by Moonshot AI — The foundation that makes everything possible. Without Kimi K2.6 and its brilliant native agent runtime, `oh-my-kimichan` would not exist. Thank you for pushing the boundary of AI-native coding.
+- **[Google DESIGN.md](https://design.md)** — For establishing a design-specification standard that bridges the gap between design intent and generated UI. A north star for structured frontend workflows.
+
+### Language & Runtime
+- **[TypeScript](https://www.typescriptlang.org/)** by Microsoft — For bringing sanity, safety, and stellar IDE experience to JavaScript at scale. The type system is the unsung hero of every refactor in this codebase.
+- **[Node.js](https://nodejs.org/)** by the OpenJS Foundation — For the runtime that powers CLI tools, async I/O, and the entire npm ecosystem. Still the most versatile server-side JavaScript runtime on the planet.
+
+### CLI & Developer Experience
+- **[Commander.js](https://github.com/tj/commander.js)** by TJ Holowaychuk and contributors — The gold standard for building elegant, self-documenting command-line interfaces in Node.js.
+- **[@inquirer/prompts](https://github.com/SBoudrias/Inquirer.js)** by Simon Boudrias — For beautiful, accessible, and keyboard-friendly interactive prompts. The TTY menu experience in `omk` is built on this.
+- **[execa](https://github.com/sindresorhus/execa)** by Sindre Sorhus — For making child-process execution predictable, promise-friendly, and cross-platform. Every shell-out in OMK goes through this.
+- **[tsx](https://github.com/privatenumber/tsx)** by Anthony Fu — For zero-config TypeScript execution during development. `npm run dev` simply works, and that magic matters.
+
+### Data Validation & Parsing
+- **[Zod](https://zod.dev/)** by Colin McDonnell — For TypeScript-first schema validation that feels like part of the language. Runtime safety without sacrificing developer ergonomics.
+- **[yaml](https://github.com/eemeli/yaml)** by Eemeli Aro — For robust YAML parsing and stringifying. Agent configs, memory files, and CI definitions all rely on this.
+
+### Filesystem & Terminal
+- **[fs-extra](https://github.com/jprichardson/node-fs-extra)** by JP Richardson — For the filesystem utilities Node.js should have had from day one. Copy, move, ensureDir — all battle-tested.
+- **[terminal-image](https://github.com/sindresorhus/terminal-image)** by Sindre Sorhus — For rendering images inside terminal emulators. The custom banner feature in OMK owes its magic to this.
+- **[node-pty](https://github.com/microsoft/node-pty)** by Microsoft — For pseudo-terminal bindings that make interactive shell sessions feel native inside Node.js.
+- **[tmux](https://github.com/tmux/tmux)** by Nicholas Marriott and contributors — The timeless terminal multiplexer. Team-runtime window layouts and long-lived agent sessions wouldn't be the same without it.
+
+### Language Server & Graph Database
+- **[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)** by TypeFox — For bundling a standards-compliant LSP that gives coding agents the same intelligence as VS Code.
+- **[neo4j-driver](https://github.com/neo4j/neo4j-javascript-driver)** by Neo4j, Inc. — For making graph-database connectivity a first-class citizen in JavaScript. Optional in OMK, but powerful when enabled.
+
+### Version Control & Collaboration
+- **[Git](https://git-scm.com/)** by Linus Torvalds and the Git community — For the distributed version control system that enables worktrees, branches, and every merge strategy in OMK.
+- **[GitHub](https://github.com/)** — For the platform that hosts this project, runs our CI, and connects maintainers with contributors across the globe.
+
+### Inspiration & Community
+- **[OpenCode](https://github.com/opencode)** and the broader agentic-coding community — For proving that AI-native development workflows are not just possible, but inevitable. Your early experiments with autonomous coding agents lit the path.
+- **Creators of `oh-my-opencode`, `oh-my-claude`, and `oh-my-codex`** — For showing that every major AI coding assistant deserves its own ergonomic harness. Your pioneering work inspired the architecture and philosophy behind `oh-my-kimichan`.
+- **The Kimi engineering team at Moonshot AI** — For building not just a model, but a complete native agent runtime with Okabe context management, D-Mail checkpoints, SendDMail recovery, and subagent orchestration. You redefined what a coding assistant can be.
+
+---
+
+> *"오픈소스는 코드가 아니라 사람들의 연대입니다. — Open source is not code; it is solidarity among people."*
 
 <div align="center">
-  <sub>Built with love for the Kimi ecosystem</sub>
+  <sub>Built with love for the Kimi ecosystem. 🙇 Respect to every maintainer, contributor, and issue reporter who makes open source possible.</sub>
 </div>

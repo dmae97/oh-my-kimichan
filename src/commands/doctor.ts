@@ -1,11 +1,12 @@
 import { join } from "path";
 import { homedir } from "os";
 import { runShell, checkCommand, getKimiVersion } from "../util/shell.js";
-import { pathExists, getKimiConfigPath, readTextFile, getKimiSkillsDir } from "../util/fs.js";
+import { pathExists, getKimiConfigPath, readTextFile, getProjectRoot } from "../util/fs.js";
 import { isGitRepo, getCurrentBranch, getGitStatus } from "../util/git.js";
 import { style, status, header, separator } from "../util/theme.js";
 import { getGlobalMemoryConfigPath, isGraphMemoryBackend, loadMemorySettings, usesExternalNeo4jBackend, usesLocalGraphBackend } from "../memory/memory-config.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
+import { t } from "../util/i18n.js";
 import { formatBytes } from "../util/output-buffer.js";
 import { resolveBundledLspBinary } from "./lsp.js";
 
@@ -26,7 +27,7 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: "Node.js",
     status: nodeMajor >= 20 ? "ok" : "warn",
-    message: nodeMajor >= 20 ? `${nodeVersion}` : `${nodeVersion} (>=20 권장)`,
+    message: nodeMajor >= 20 ? `${nodeVersion}` : `${nodeVersion} ${t("doctor.nodeRecommend")}`,
   });
   results.push({
     name: "OMK Runtime",
@@ -34,7 +35,7 @@ export async function doctorCommand(): Promise<void> {
     message: `profile=${resources.profile}, RAM=${resources.totalMemoryGb}GB, workers=${resources.maxWorkers}, buffer=${formatBytes(resources.shellMaxBufferBytes)}, MCP=${resources.mcpScope}, skills=${resources.skillsScope}`,
   });
 
-  // 2-5. 병렬로 외부 명령어 존재 여부 확인
+  // 2-5. Check external commands in parallel
   const [kimiExists, gitExists, jqExists, tmuxExists] = await Promise.all([
     checkCommand("kimi"),
     checkCommand("git"),
@@ -45,18 +46,18 @@ export async function doctorCommand(): Promise<void> {
   // 2. Kimi CLI
   if (kimiExists) {
     const version = await getKimiVersion();
-    results.push({ name: "Kimi CLI", status: "ok", message: version ?? "설치됨" });
+    results.push({ name: "Kimi CLI", status: "ok", message: version ?? t("doctor.kimiInstalled") });
   } else {
-    results.push({ name: "Kimi CLI", status: "fail", message: "kimi 명령을 찾을 수 없습니다. npm install -g kimi-cli 또는 공식 설치 필요" });
+    results.push({ name: "Kimi CLI", status: "fail", message: t("doctor.kimiNotFound") });
   }
 
-  // 3. Kimi 실행 확인 (getKimiVersion()으로 이미 --version 호출했으므로 재사용)
+  // 3. Verify Kimi execution (reuses getKimiVersion() which already called --version)
   if (kimiExists) {
     const version = await getKimiVersion();
     results.push({
       name: "Kimi CLI",
       status: version ? "ok" : "warn",
-      message: version ? "실행 가능" : "kimi 실행 확인 실패",
+      message: version ? t("doctor.kimiRunnable") : t("doctor.kimiRunFailed"),
     });
   }
 
@@ -69,35 +70,34 @@ export async function doctorCommand(): Promise<void> {
       results.push({
         name: "Git",
         status: status.clean ? "ok" : "warn",
-        message: `브랜치: ${branch ?? "?"}, 변경: ${status.changes}개`,
+        message: t("doctor.gitBranchChanges", branch ?? "?", status.changes),
       });
     } else {
-      results.push({ name: "Git", status: "warn", message: "Git 저장소가 아닙니다. omk team/merge 기능이 제한됩니다." });
+      results.push({ name: "Git", status: "warn", message: t("doctor.gitNotRepo") });
     }
   } else {
-    results.push({ name: "Git", status: "fail", message: "git 명령을 찾을 수 없습니다" });
+    results.push({ name: "Git", status: "fail", message: t("doctor.gitNotFound") });
   }
 
   // 5. jq (hooks depend on it; fail-open without jq = security bypass)
   results.push({
     name: "jq",
     status: jqExists ? "ok" : "fail",
-    message: jqExists ? "설치됨 (hooks 보장)" : "미설치 — pre-shell-guard / protect-secrets hooks가 작동하지 않아 보안 게이트가 열립니다. apt/brew install jq 필수",
+    message: jqExists ? t("doctor.jqInstalled") : t("doctor.jqMissing"),
   });
 
-  // 6. Kimi default config + OMK hooks (병렬 검사)
+  // 6. Kimi default config + OMK hooks (parallel check)
   const kimiConfigPath = getKimiConfigPath();
-  const [kimiConfigExists, omkExists, skillsDir, kimiMcpPath] = await Promise.all([
+  const root = getProjectRoot();
+  const [kimiConfigExists, omkExists] = await Promise.all([
     pathExists(kimiConfigPath),
-    pathExists(".omk"),
-    Promise.resolve(getKimiSkillsDir()),
-    Promise.resolve(join(process.cwd(), ".kimi", "mcp.json")),
+    pathExists(join(root, ".omk")),
   ]);
 
   results.push({
     name: "Kimi Config",
     status: kimiConfigExists ? "ok" : "warn",
-    message: kimiConfigExists ? "~/.kimi/config.toml 존재" : "~/.kimi/config.toml 없음 — kimi 로그인 필요",
+    message: kimiConfigExists ? t("doctor.kimiConfigExists") : t("doctor.kimiConfigMissing"),
   });
 
   if (kimiConfigExists) {
@@ -106,7 +106,7 @@ export async function doctorCommand(): Promise<void> {
     results.push({
       name: "OMK Hooks",
       status: hasOmkHooks ? "ok" : "warn",
-      message: hasOmkHooks ? "hooks 동기화됨" : "omk sync 실행 권장",
+      message: hasOmkHooks ? t("doctor.hooksSynced") : t("doctor.hooksRecommendSync"),
     });
   }
 
@@ -114,7 +114,7 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: "OMK Scaffold",
     status: omkExists ? "ok" : "warn",
-    message: omkExists ? "초기화됨" : "omk init 실행 필요",
+    message: omkExists ? t("doctor.omkInitialized") : t("doctor.omkInitNeeded"),
   });
 
   // AGENTS.md
@@ -122,7 +122,7 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: "AGENTS.md",
     status: agentsMdExists ? "ok" : "warn",
-    message: agentsMdExists ? "존재" : "AGENTS.md 없음 — omk init 실행 필요",
+    message: agentsMdExists ? t("doctor.agentsMdExists") : t("doctor.agentsMdMissing"),
   });
 
   // .kimi/AGENTS.md
@@ -130,7 +130,7 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: ".kimi/AGENTS.md",
     status: kimiAgentsMdExists ? "ok" : "warn",
-    message: kimiAgentsMdExists ? "존재" : ".kimi/AGENTS.md 없음 — omk init 실행 필요",
+    message: kimiAgentsMdExists ? t("doctor.kimiAgentsMdExists") : t("doctor.kimiAgentsMdMissing"),
   });
 
   // .omk/agents/root.yaml
@@ -138,7 +138,7 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: "root.yaml",
     status: rootYamlExists ? "ok" : "warn",
-    message: rootYamlExists ? "존재" : ".omk/agents/root.yaml 없음 — omk init 실행 필요",
+    message: rootYamlExists ? t("doctor.rootYamlExists") : t("doctor.rootYamlMissing"),
   });
 
   let okabeAgentCount = 0;
@@ -165,7 +165,7 @@ export async function doctorCommand(): Promise<void> {
     status: totalAgentCount > 0 && okabeAgentCount === totalAgentCount && okabeBaseHasDMail ? "ok" : "warn",
     message: totalAgentCount > 0 && okabeBaseHasDMail
       ? `${okabeAgentCount}/${totalAgentCount} agents inherit okabe.yaml (SendDMail)`
-      : ".omk/agents/okabe.yaml 또는 SendDMail 설정 누락 — omk init/sync 확인",
+      : t("doctor.okabeMissing"),
   });
 
   // root prompt includes required variables
@@ -183,12 +183,12 @@ export async function doctorCommand(): Promise<void> {
     name: "Root Prompt",
     status: rootPromptValid ? "ok" : "warn",
     message: rootPromptValid
-      ? "${KIMI_AGENTS_MD} + ${KIMI_SKILLS} 주입됨"
-      : `root.md 누락: ${!rootPromptHasAgentsMd ? "${KIMI_AGENTS_MD} " : ""}${!rootPromptHasSkills ? "${KIMI_SKILLS}" : ""}`,
+      ? t("doctor.rootPromptInjected")
+      : t("doctor.rootPromptPartial", !rootPromptHasAgentsMd ? "AGENTS_MD " : "", !rootPromptHasSkills ? "SKILLS" : ""),
   });
 
   // .kimi/skills
-  const kimiSkillsDir = join(process.cwd(), ".kimi", "skills");
+  const kimiSkillsDir = join(root, ".kimi", "skills");
   let kimiSkillsCount = 0;
   if (await pathExists(kimiSkillsDir)) {
     try {
@@ -199,7 +199,7 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: ".kimi/skills",
     status: kimiSkillsCount > 0 ? "ok" : "warn",
-    message: kimiSkillsCount > 0 ? `${kimiSkillsCount}개 skills 존재` : ".kimi/skills 없음 또는 비어 있음",
+    message: kimiSkillsCount > 0 ? t("doctor.skillsExist", kimiSkillsCount) : t("doctor.skillsMissing"),
   });
 
   // .agents/skills
@@ -214,7 +214,7 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: ".agents/skills",
     status: agentsSkillsCount > 0 ? "ok" : "warn",
-    message: agentsSkillsCount > 0 ? `${agentsSkillsCount}개 skills 존재` : ".agents/skills 없음 또는 비어 있음",
+    message: agentsSkillsCount > 0 ? t("doctor.agentSkillsExist", agentsSkillsCount) : t("doctor.agentSkillsMissing"),
   });
 
   // .omk/mcp.json
@@ -222,7 +222,7 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: "OMK MCP",
     status: omkMcpExists ? "ok" : "info",
-    message: omkMcpExists ? ".omk/mcp.json 존재" : ".omk/mcp.json 없음 — MCP intentionally disabled 가능",
+    message: omkMcpExists ? t("doctor.mcpExists") : t("doctor.mcpMissing"),
   });
 
   const lspConfigPath = join(process.cwd(), ".omk", "lsp.json");
@@ -248,7 +248,7 @@ export async function doctorCommand(): Promise<void> {
     status: lspConfigValid && tsLspAvailable ? "ok" : "warn",
     message: lspConfigValid && tsLspAvailable
       ? `.omk/lsp.json + TypeScript LSP (${tsLspBinary})`
-      : "내장 TypeScript LSP 설정/바이너리 누락 — npm install 후 omk init 또는 omk lsp --check 확인",
+      : t("doctor.lspMissing"),
   });
 
   // dangerous hooks executable
@@ -268,37 +268,10 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: "Hooks Exec",
     status: hooksExecutable ? "ok" : "warn",
-    message: hooksExecutable ? "dangerous hooks executable" : ".omk/hooks/*.sh 실행 권한 없음 — chmod +x 필요",
+    message: hooksExecutable ? t("doctor.hooksExecutable") : t("doctor.hooksNotExecutable"),
   });
 
-  // 8. .kimi/skills (병렬로 카운트)
-  const [skillsExists, kimiMcpExists] = await Promise.all([
-    pathExists(skillsDir),
-    pathExists(kimiMcpPath),
-  ]);
-  let skillsCount = 0;
-  if (skillsExists) {
-    try {
-      const entries = await (await import("fs/promises")).readdir(skillsDir, { withFileTypes: true });
-      skillsCount = entries.filter((e) => e.isDirectory()).length;
-    } catch {
-      // ignore
-    }
-  }
-  results.push({
-    name: "Kimi Skills",
-    status: skillsCount > 0 ? "ok" : "info",
-    message: skillsCount > 0 ? `${skillsCount}개 skills 발견 (${skillsDir})` : `${skillsDir} 없음 또는 비어 있음`,
-  });
-
-  // 9. .kimi/mcp.json
-  results.push({
-    name: "Kimi MCP",
-    status: kimiMcpExists ? "ok" : "info",
-    message: kimiMcpExists ? `.kimi/mcp.json 존재` : `.kimi/mcp.json 없음`,
-  });
-
-  // 10-11. Global MCP + Global Skills (병렬)
+  // 8-9. Global MCP + Global Skills (parallel)
   const globalMcpPath = join(homedir(), ".kimi", "mcp.json");
   const globalSkillsDir = join(homedir(), ".kimi", "skills");
   const [globalMcpExists, globalSkillsExists] = await Promise.all([
@@ -319,7 +292,7 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: "Global MCP",
     status: globalMcpCount > 0 ? "ok" : "warn",
-    message: globalMcpCount > 0 ? `${globalMcpCount}개 MCP 동기화됨 (~/.kimi/mcp.json)` : "~/.kimi/mcp.json 없음 — omk sync 실행 권장",
+    message: globalMcpCount > 0 ? t("doctor.globalMcpSynced", globalMcpCount) : t("doctor.globalMcpMissing"),
   });
 
   let globalSkillCount = 0;
@@ -334,7 +307,7 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: "Global Skills",
     status: globalSkillCount > 0 ? "ok" : "info",
-    message: globalSkillCount > 0 ? `${globalSkillCount}개 skills 동기화됨 (~/.kimi/skills/)` : "~/.kimi/skills/ 없음",
+    message: globalSkillCount > 0 ? t("doctor.globalSkillsSynced", globalSkillCount) : t("doctor.globalSkillsMissing"),
   });
 
   const globalMemoryConfigPath = getGlobalMemoryConfigPath();
@@ -346,8 +319,8 @@ export async function doctorCommand(): Promise<void> {
     name: "Global Memory",
     status: globalMemoryConfigExists ? "ok" : "warn",
     message: globalMemoryConfigExists
-      ? "~/.kimi/omk.memory.toml 동기화됨"
-      : "~/.kimi/omk.memory.toml 없음 — omk sync 실행 권장",
+      ? t("doctor.memorySynced")
+      : t("doctor.memoryMissing"),
   });
   results.push({
     name: "Graph Memory",
@@ -361,8 +334,8 @@ export async function doctorCommand(): Promise<void> {
         ? `backend=local_graph, ontology=${memorySettings.localGraph.ontology}, state=${memorySettings.localGraph.path}`
         : memorySettings.neo4j.configured
           ? `backend=${memorySettings.backend}, database=${memorySettings.neo4j.database}, project=${memorySettings.project.key}`
-          : `backend=${memorySettings.backend}, 필수 env 누락: ${memorySettings.neo4j.missing.join(", ")}`
-      : "file backend 사용 중",
+          : t("doctor.memoryNeo4jBackend", memorySettings.backend, memorySettings.neo4j.missing.join(", "))
+      : t("doctor.memoryFileBackend"),
   });
 
   // Global ~/.kimi pollution check
@@ -378,14 +351,14 @@ export async function doctorCommand(): Promise<void> {
   results.push({
     name: "Global Pollution",
     status: globalPollution ? "warn" : "ok",
-    message: globalPollution ? "~/.kimi에 예상外 파일 존재 — omk --global opt-in 확인" : "~/.kimi 정상",
+    message: globalPollution ? t("doctor.globalPollution") : t("doctor.globalClean"),
   });
 
   // 12. Tmux (optional for team mode)
   results.push({
     name: "tmux",
     status: tmuxExists ? "ok" : "info",
-    message: tmuxExists ? "설치됨" : "omk team 사용 시 권장 (apt/brew install tmux)",
+    message: tmuxExists ? t("doctor.tmuxInstalled") : t("doctor.tmuxRecommend"),
   });
 
   // Print results
@@ -399,11 +372,11 @@ export async function doctorCommand(): Promise<void> {
 
   console.log();
   if (fails > 0) {
-    console.log(`❌ ${fails}개 실패, ${warns}개 경고. 해결 후 다시 실행하세요.`);
+    console.log(t("doctor.failures", fails, warns));
     process.exit(1);
   } else if (warns > 0) {
-    console.log(`⚠️ ${warns}개 경고. 동작에는 문제 없으나 개선 권장.`);
+    console.log(t("doctor.warnings", warns));
   } else {
-    console.log("✅ 모든 검사 통과!");
+    console.log(t("doctor.allPassed"));
   }
 }

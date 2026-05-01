@@ -18,7 +18,7 @@ export async function createWorktree(runId: string, nodeId: string): Promise<str
   });
 
   if (result.failed) {
-    // 브랜치가 이미 존재하면 기존 브랜치로 시도
+    // If branch already exists, try using the existing branch
     const retry = await runShell("git", ["worktree", "add", worktreePath, branchName], {
       cwd: root,
       timeout: 15000,
