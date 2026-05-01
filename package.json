@@ -1,6 +1,6 @@
 {
   "name": "oh-my-kimichan",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Kimi Code CLI용 multi-agent orchestration harness. Kimi K2.6 위에 올라가는 하네스 + 팀 런타임 + 스킬/훅/워크플로 배포판",
   "type": "module",
   "bin": {
@@ -87,9 +87,19 @@
     "docs",
     "kimichan.png",
     "kimiagent.png",
+    "omk-hud-1.png",
+    "omk-hud-screenshot.png",
+    "omk-hud-dev-screenshot.png",
+    "omk-statusline-gauge.png",
+    "omk-statusline-reset.png",
     "README.md",
+    "AGENTS.md",
     "SECURITY.md",
     "ROADMAP.md",
+    "DESIGN.md",
+    "WORKER_MANIFEST.md",
+    "CLAUDE.md",
+    "GEMINI.md",
     "LICENSE"
   ],
   "repository": {

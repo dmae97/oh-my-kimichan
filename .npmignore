@@ -1,31 +1,35 @@
-.git
-node_modules
-src
-.playwright-mcp
-.omk/runs
-.omk/worktrees
-*.zip
-*.tgz
-.DS_Store
-.env
-.env.*
+# Source code (built dist/ is distributed instead)
+src/
+
+# Git
+git/
+gitignore
+
+# Tests
+test/
+*.test.*
+*.spec.*
+
+# Development configs
+tsconfig.json
+eslint.config.*
+.prettierrc*
+.vscode/
+.idea/
+
+# CI
+.github/
+
+# Scripts that are only for development
+scripts/
+
+# Local / runtime data
+.omk/
+.kimi/
+.agents/
+.env*
 *.pem
 *.key
-id_rsa
-id_ed25519
-credentials.json
-service-account*.json
-coverage/
-.nyc_output/
-.envrc
-.npmrc
-.pypirc
-.netrc
-secrets/
-.secrets
-.secrets.*
-*.secret
-*.secret.*
 *.p8
 *.p12
 *.pfx
@@ -33,10 +37,27 @@ secrets/
 *.csr
 *.gpg
 *.asc
-.omk/memory/
-.omk/state/
-.omk/logs/
-.omk/cache/
-.omk/tmp/
-.omk/notepad.md
-.omk/project-memory.json
+id_rsa
+id_ed25519
+credentials.json
+service-account*.json
+secrets/
+.secrets
+.secrets.*
+*.secret
+*.secret.*
+.npmrc
+.pypirc
+.netrc
+coverage/
+.nyc_output/
+.playwright-mcp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Archives
+*.zip
+*.tgz
+*.tar.gz

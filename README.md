@@ -54,35 +54,39 @@
 
 ## GitHub Release Snapshot
 
-> **Current GitHub-ready version:** `0.2.2` — documented for the active open-source README branch.
+> **Current GitHub-ready version:** `0.3.0`
 
-### What's New in this release
+### What's New in v0.3.0
 
-| Area | GitHub-visible update | Why it matters |
-|------|-----------------------|----------------|
-| **`omk parallel <goal>`** | Parallel DAG execution with coordinator → worker fan-out → reviewer pattern | Spin up a multi-agent team from a single goal with live UI and ETA tracking |
-| **`omk hud`** | Full live dashboard: System Usage, Kimi Usage gauges, Project Status, Latest Run, TODO & Changed Files sidebar | Real-time visibility into your agent fleet without external monitoring tools |
-| **TTY Menu** | Running bare `omk` now prints HUD dashboard + interactive `@inquirer/prompts` menu | Zero-config entry point for new users; no more "what do I type first?" |
-| **Resume with `--run-id`** | `omk run --run-id <id>` resumes a previous run from persisted state | Long-running agent tasks survive restarts and context switches |
-| **First-run Star Prompt** | `OMK_STAR_PROMPT` guided GitHub star experience on first CLI use | Community growth without being intrusive; respects `CI` and `--help` |
-| **Checkpoint & Snippet utils** | `SendDMail` checkpoint helpers + reusable `.omk/snippets/` storage | Safer refactors and reusable code blocks across agent sessions |
-| **Enhanced DAG engine** | Priority, cost, routing, failurePolicy, and evidence gates per node | Production-grade orchestration: retries, fallbacks, and input/output validation |
-| **Live Parallel UI** | `ParallelLiveRenderer` refreshes every 1.5s with run state transitions | See workers start, finish, fail, and retry in real time |
-| **OAuth Usage Gauges** | `OMK_KIMI_STATUS_GAUGES=1` enables visual bar gauges for 5h/weekly quota | Know your Kimi API budget at a glance |
-| **Expanded safety hooks** | `stop-verify.sh` now runs comprehensive final verification | Even in `yolo` mode, destructive commands and secret leakage are blocked |
-| **16GB-friendly runtime** | `runtime.resource_profile = "auto"` selects a lite profile on memory-constrained machines | Keeps OMK usable on 16GB laptops and WSL environments |
-| **Role-aware ensemble** | Coder/planner/architect/reviewer/QA/explorer nodes can run weighted candidate perspectives with quorum aggregation | Improves agent-call quality while keeping `max_parallel = 1` by default |
-| **Local graph memory** | Project memory defaults to `.omk/memory/graph-state.json` with ontology mindmap and GraphQL-lite recall | Local-first memory works without external Neo4j setup |
-| **Built-in LSP** | `omk lsp typescript` exposes the bundled TypeScript language server | Helps coding agents and editors share the same language intelligence |
-| **Quality gates** | `npm run check`, `npm test`, `npm run lint`, `npm run build` are wired into CI and release checks | GitHub contributors can verify changes before PRs |
+| **Area** | **GitHub-visible update** | **Why it matters** |
+|----------|---------------------------|--------------------|
+| **Core Engine** | `omk parallel <goal>` — coordinator → worker fan-out → reviewer with live ETA tracking | Spin up a multi-agent team from a single goal with real-time progress |
+| **Core Engine** | Enhanced DAG engine with priority, cost, routing, `failurePolicy`, and evidence gates per node | Production-grade orchestration: retries, fallbacks, and I/O validation |
+| **Core Engine** | Role-aware ensemble — coder/planner/architect/reviewer/QA/explorer with weighted candidates + quorum aggregation | Improves agent-call quality while keeping `max_parallel = 1` by default |
+| **Core Engine** | `omk run --run-id <id>` resumes persisted run state | Long-running agent tasks survive restarts and context switches |
+| **Core Engine** | `SendDMail` checkpoint helpers + `.omk/snippets/` reusable storage | Safer refactors and reusable code blocks across agent sessions |
+| **UI/UX** | `omk hud` — live dashboard with System Usage, Kimi Usage gauges, Project Status, Latest Run, TODO & Changed Files sidebar | Real-time visibility into your agent fleet without external monitoring tools |
+| **UI/UX** | Bare `omk` TTY entry point — HUD + interactive `@inquirer/prompts` menu | Zero-config entry point for new users; no more "what do I type first?" |
+| **UI/UX** | `ParallelLiveRenderer` refreshes every 1.5 s with run state transitions | See workers start, finish, fail, and retry in real time |
+| **UI/UX** | `OMK_KIMI_STATUS_GAUGES=1` enables visual bar gauges for 5 h/weekly quota | Know your Kimi API budget at a glance |
+| **UI/UX** | `OMK_STAR_PROMPT` guided GitHub star experience on first CLI use | Community growth without being intrusive; respects `CI` and `--help` |
+| **Memory & Intelligence** | Local graph memory — `.omk/memory/graph-state.json` with ontology mindmap and GraphQL-lite recall | Local-first memory works without external Neo4j setup |
+| **Memory & Intelligence** | `omk lsp typescript` exposes the bundled TypeScript language server | Helps coding agents and editors share the same language intelligence |
+| **Memory & Intelligence** | I18n utilities added for multi-language agent workflows | Foundation for localized agent prompts and CLI output |
+| **Safety & Quality** | `stop-verify.sh` comprehensive verification + eslint + hardened path validation | Even in `yolo` mode, destructive commands and credential exposure are blocked |
+| **Safety & Quality** | `runtime.resource_profile = "auto"` selects lite profile on 16 GB machines | Keeps OMK usable on 16 GB laptops and WSL environments |
+| **Safety & Quality** | `npm run check`, `npm test`, `npm run lint`, `npm run build` wired into CI | GitHub contributors can verify changes before PRs |
+| **Assets** | 5 new PNG screenshots: `omk-hud-1.png`, `omk-hud-screenshot.png`, `omk-statusline-gauge.png`, `omk-statusline-reset.png`, `readme-in.png` | Rich visual documentation for the GitHub landing page |
 
 ### GitHub Markdown checklist
 
 - [x] GitHub Actions / package version / npm / stars / forks / issues badges are visible at the top.
 - [x] Mermaid architecture diagrams render in GitHub-flavored Markdown.
 - [x] Repository topic badges below match the recommended GitHub topics.
-- [x] README logo PNG display width increased to `720px` for a stronger GitHub landing page.
-- [x] Screenshots for HUD and status-line gauges are embedded with alt text.
+- [x] README logo PNG display width increased to `720 px` for a stronger GitHub landing page.
+- [x] Screenshots for HUD, parallel UI, and status-line gauges are embedded with alt text.
+- [x] I18n utilities and multi-language README sections are present.
+- [x] New PNG assets (`omk-hud-1.png`, `omk-statusline-gauge.png`, `readme-in.png`, etc.) are included in the repo.
 
 ## Repository Topics
 
@@ -140,6 +144,21 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 | OAuth Usage Badge | Kimi `context:` 상태줄 옆에 masked 계정, 5h/weekly quota 표시; `OMK_KIMI_STATUS_GAUGES=1`로 시각적 게이지 활성화 |
 | YOLO-by-default | 오픈소스 기본값은 `approval_policy = "yolo"`; secret/destructive hooks는 계속 차단 |
 | Safety Hooks | yolo mode에서도 파괴적 명령어 및 비밀 유출 방지 기본 제공 |
+
+### 🆕 v0.3.0 Highlights
+
+- **`omk parallel <goal>`** — coordinator → worker fan-out → reviewer 패턴으로 병렬 에이전트 팀 구성, 실시간 ETA 추적
+- **`omk hud` 대시보드** — System Usage / Kimi Usage 게이지, Project Status, TODO & Changed Files 사이드바를 포함한 실시간 터미널 대시보드
+- **TTY 인터랙티브 메뉴** — `omk` 단독 실행 시 HUD + `@inquirer/prompts` 메뉴 자동 실행
+- **`--run-id` 실행 재개** — 이전 실행 상태를 `.omk/runs/`에서 복원하여 장기 작업도 안전하게 이어감
+- **SendDMail 체크포인트 + Snippets** — 리팩토링 전 D-Mail 체크포인트 저장 및 `.omk/snippets/` 코드 블록 재사용
+- **OAuth Usage Gauges** — `OMK_KIMI_STATUS_GAUGES=1`로 5시간/주간 할당량 시각적 게이지 활성화
+- **16GB-friendly Runtime** — 메모리 자동 감지 후 lite 프로파일 전환, 저사양 노트북/WSL 지원
+- **역할 기반 앙상블** — coder/planner/architect/reviewer/QA/explorer 가중 후보 + 쿼럼 집계
+- **로컬 그래프 메모리** — `.omk/memory/graph-state.json` 온톨로지 그래프 + mindmap/GraphQL-lite
+- **내장 LSP** — `omk lsp typescript`로 TypeScript language server 바로 실행
+- **품질 게이트 강화** — `npm run check/test/lint/build`를 CI와 릴리스 체크에 연동
+- **신규 PNG 에셋** — HUD, 상태줄 게이지, 대시보드 스크린샷 등 5종 추가
 
 ### Install
 
@@ -239,18 +258,43 @@ Team Runtime starting...
 
 ```mermaid
 graph TD
-    A[User / omk CLI] --> B[OMK Controller]
-    B --> C[DAG Scheduler]
-    B --> D[HUD / Trace Viewer]
-    B --> E[Memory & Context Broker]
-    B --> F[Safety / Approval Gateway]
-    B --> G[Kimi Native Layer]
-    G --> G1[Wire Mode JSON-RPC]
-    G --> G2[Print Mode]
-    G --> G3[Agents / Subagents]
-    G --> G4[Skills / Flows]
-    G --> G5[Hooks]
-    G --> G6[MCP Servers]
+    A["👤 User / omk CLI"] --> B["🎮 Command Router"]
+    B --> C1["omk init / doctor"]
+    B --> C2["omk plan / run / parallel"]
+    B --> C3["omk hud / team / design"]
+    B --> C4["omk chat / lsp / snip"]
+
+    C2 --> D["⚙️ Orchestration Engine"]
+    C3 --> H["📊 HUD & Live UI"]
+
+    D --> D1["DAG Scheduler"]
+    D --> D2["Task Graph"]
+    D --> D3["Executor + ETA"]
+    D --> D4["Ensemble (Role-aware Quorum)"]
+    D --> D5["Routing + State Persister"]
+
+    H --> H1["Parallel Live Renderer"]
+    H --> H2["System / Kimi Gauges"]
+    H --> H3["Banner + Theme + i18n"]
+
+    D --> K["🤖 Kimi Native Layer"]
+    K --> K1["Wire Client"]
+    K --> K2["Kimi Runner + Bug Filter"]
+    K --> K3["Usage / OAuth / Status Line"]
+
+    D --> M["🧠 Memory & Context"]
+    M --> M1["Local Graph Memory (graph-state.json)"]
+    M --> M2["Neo4j Memory"]
+    M --> M3["Snippets + Checkpoints"]
+
+    D --> S["🛡️ Safety & Quality"]
+    S --> S1["Guard Hooks"]
+    S --> S2["Quality Gates"]
+    S --> S3["Secret Scan"]
+
+    K --> E["🔌 Extensions"]
+    E --> E1["MCP Servers"]
+    E --> E2["LSP TypeScript"]
 ```
 
 ### 🛡️ 안전
@@ -298,6 +342,21 @@ omk lsp typescript
 | Local Graph Memory | Stores project/session memory in `.omk/memory/graph-state.json` as an ontology graph with mindmap/GraphQL-lite tools |
 | Parallel DAG | `omk parallel <goal>` runs coordinator → worker fan-out → reviewer with live UI and ETA tracking |
 | Safety Hooks | Default protection against destructive commands and secret leakage |
+
+### 🆕 v0.3.0 Highlights
+
+- **`omk parallel <goal>`** — Run coordinator → worker fan-out → reviewer with live ETA tracking and 1.5 s UI refresh
+- **`omk hud` dashboard** — Real-time terminal dashboard with System / Kimi Usage gauges, Project Status, TODO & Changed Files sidebar
+- **TTY interactive menu** — Bare `omk` launches HUD + `@inquirer/prompts` menu for zero-config onboarding
+- **`--run-id` resume** — Restore any previous run from `.omk/runs/` persisted state
+- **SendDMail checkpoints + Snippets** — Save D-Mail checkpoints before risky refactors and reuse code blocks via `.omk/snippets/`
+- **OAuth Usage Gauges** — Visual bar gauges for 5 h/weekly quota via `OMK_KIMI_STATUS_GAUGES=1`
+- **16 GB-friendly runtime** — Auto-detects memory and switches to lite profile for low-spec laptops / WSL
+- **Role-aware ensemble** — Weighted candidate scoring + quorum aggregation across coder/planner/architect/reviewer/QA/explorer
+- **Local graph memory** — Ontology graph in `.omk/memory/graph-state.json` with mindmap and GraphQL-lite recall
+- **Built-in LSP** — `omk lsp typescript` bundles TypeScript language server out of the box
+- **Quality gates wired to CI** — `npm run check / test / lint / build` enforced in CI and release checks
+- **New PNG assets** — 5 screenshots added: HUD, status-line gauges, dashboard, and more
 
 ### Install
 
@@ -385,18 +444,43 @@ Team Runtime starting...
 
 ```mermaid
 graph TD
-    A[User / omk CLI] --> B[OMK Controller]
-    B --> C[DAG Scheduler]
-    B --> D[HUD / Trace Viewer]
-    B --> E[Memory & Context Broker]
-    B --> F[Safety / Approval Gateway]
-    B --> G[Kimi Native Layer]
-    G --> G1[Wire Mode JSON-RPC]
-    G --> G2[Print Mode]
-    G --> G3[Agents / Subagents]
-    G --> G4[Skills / Flows]
-    G --> G5[Hooks]
-    G --> G6[MCP Servers]
+    A["👤 User / omk CLI"] --> B["🎮 Command Router"]
+    B --> C1["omk init / doctor"]
+    B --> C2["omk plan / run / parallel"]
+    B --> C3["omk hud / team / design"]
+    B --> C4["omk chat / lsp / snip"]
+
+    C2 --> D["⚙️ Orchestration Engine"]
+    C3 --> H["📊 HUD & Live UI"]
+
+    D --> D1["DAG Scheduler"]
+    D --> D2["Task Graph"]
+    D --> D3["Executor + ETA"]
+    D --> D4["Ensemble (Role-aware Quorum)"]
+    D --> D5["Routing + State Persister"]
+
+    H --> H1["Parallel Live Renderer"]
+    H --> H2["System / Kimi Gauges"]
+    H --> H3["Banner + Theme + i18n"]
+
+    D --> K["🤖 Kimi Native Layer"]
+    K --> K1["Wire Client"]
+    K --> K2["Kimi Runner + Bug Filter"]
+    K --> K3["Usage / OAuth / Status Line"]
+
+    D --> M["🧠 Memory & Context"]
+    M --> M1["Local Graph Memory (graph-state.json)"]
+    M --> M2["Neo4j Memory"]
+    M --> M3["Snippets + Checkpoints"]
+
+    D --> S["🛡️ Safety & Quality"]
+    S --> S1["Guard Hooks"]
+    S --> S2["Quality Gates"]
+    S --> S3["Secret Scan"]
+
+    K --> E["🔌 Extensions"]
+    E --> E1["MCP Servers"]
+    E --> E2["LSP TypeScript"]
 ```
 
 ### 🛡️ Safety
@@ -433,6 +517,21 @@ Default hooks block destructive commands and secret leakage:
 | Local Graph Memory | 将项目/会话记忆存入 `.omk/memory/graph-state.json` 本地本体图，并提供 mindmap/GraphQL-lite |
 | 并行 DAG | `omk parallel <goal>` 执行 coordinator → worker 扇出 → reviewer，带实时 UI 与 ETA 追踪 |
 | 安全钩子 | 默认防止破坏性命令与密钥泄漏 |
+
+### 🆕 v0.3.0 更新亮点
+
+- **`omk parallel <goal>`** — 协调器 → 多 Worker 分发 → Reviewer 闭环，支持实时 ETA 追踪与 1.5 秒 UI 刷新
+- **`omk hud` 仪表盘** — 实时终端仪表盘：系统/Kimi 资源 gauges、项目状态、TODO & 变更文件侧边栏
+- **TTY 交互式入口** — 直接执行 `omk` 即可唤起 HUD + 交互式菜单，零配置上
+- **`--run-id` 运行恢复** — 从 `.omk/runs/` 持久化状态恢复任意历史运行
+- **SendDMail 检查点 + Snippets** — 危险重构前保存 D-Mail 检查点，通过 `.omk/snippets/` 复用代码块
+- **OAuth 用量可视化** — `OMK_KIMI_STATUS_GAUGES=1` 实时展示 API 配额与重置倒计时
+- **16GB 友好运行时** — 自动检测内存并切换轻量资源画像，低内存设备流畅运行
+- **角色感知型编排** — 加权候选者 + 仲裁投票机制覆盖 coder/planner/architect/reviewer/QA/explorer
+- **本地图记忆** — `.omk/memory/graph-state.json` 本体图谱，支持 mindmap / GraphQL-lite 查询
+- **内置 LSP** — `omk lsp typescript` 开箱即用 TypeScript 语言服务
+- **CI 质量门禁** — `npm run check/test/lint/build` 全链路接入 CI 与发布检查
+- **新增 PNG 截图** — HUD、状态栏 gauges、仪表盘等 5 张界面截图补充
 
 ### Install
 
@@ -520,18 +619,43 @@ Team Runtime 启动中...
 
 ```mermaid
 graph TD
-    A[User / omk CLI] --> B[OMK Controller]
-    B --> C[DAG Scheduler]
-    B --> D[HUD / Trace Viewer]
-    B --> E[Memory & Context Broker]
-    B --> F[Safety / Approval Gateway]
-    B --> G[Kimi Native Layer]
-    G --> G1[Wire Mode JSON-RPC]
-    G --> G2[Print Mode]
-    G --> G3[Agents / Subagents]
-    G --> G4[Skills / Flows]
-    G --> G5[Hooks]
-    G --> G6[MCP Servers]
+    A["👤 User / omk CLI"] --> B["🎮 Command Router"]
+    B --> C1["omk init / doctor"]
+    B --> C2["omk plan / run / parallel"]
+    B --> C3["omk hud / team / design"]
+    B --> C4["omk chat / lsp / snip"]
+
+    C2 --> D["⚙️ Orchestration Engine"]
+    C3 --> H["📊 HUD & Live UI"]
+
+    D --> D1["DAG Scheduler"]
+    D --> D2["Task Graph"]
+    D --> D3["Executor + ETA"]
+    D --> D4["Ensemble (Role-aware Quorum)"]
+    D --> D5["Routing + State Persister"]
+
+    H --> H1["Parallel Live Renderer"]
+    H --> H2["System / Kimi Gauges"]
+    H --> H3["Banner + Theme + i18n"]
+
+    D --> K["🤖 Kimi Native Layer"]
+    K --> K1["Wire Client"]
+    K --> K2["Kimi Runner + Bug Filter"]
+    K --> K3["Usage / OAuth / Status Line"]
+
+    D --> M["🧠 Memory & Context"]
+    M --> M1["Local Graph Memory (graph-state.json)"]
+    M --> M2["Neo4j Memory"]
+    M --> M3["Snippets + Checkpoints"]
+
+    D --> S["🛡️ Safety & Quality"]
+    S --> S1["Guard Hooks"]
+    S --> S2["Quality Gates"]
+    S --> S3["Secret Scan"]
+
+    K --> E["🔌 Extensions"]
+    E --> E1["MCP Servers"]
+    E --> E2["LSP TypeScript"]
 ```
 
 ### 🛡️ 安全
@@ -568,6 +692,21 @@ graph TD
 | Local Graph Memory | プロジェクト/セッション記憶を `.omk/memory/graph-state.json` のローカル ontology graph に保存し、mindmap/GraphQL-lite を提供 |
 | 並列 DAG | `omk parallel <goal>` は coordinator → worker ファンアウト → reviewer を実行。ライブ UI と ETA 追跡付き |
 | 安全フック | 破壊的コマンドとシークレット漏洩をデフォルトで防止 |
+
+### 🆕 v0.3.0 の主な更新
+
+- **`omk parallel <goal>`** — コーディネーター → Worker 分散 → Reviewer 集約。リアルタイム ETA 追跡と 1.5 秒間隔の UI 更新
+- **`omk hud` ダッシュボード** — システム／Kimi のメーター、プロジェクト状態、TODO & 変更ファイルサイドバーを含むリアルタイムターミナルダッシュボード
+- **TTY インタラクティブメニュー** — `omk` 単体実行で HUD + 対話型プロンプトを自動起動。設定不要ですぐに使える
+- **`--run-id` 実行再開** — `.omk/runs/` の永続化状態から任意の過去実行を再開
+- **SendDMail チェックポイント + Snippets** — 危険なリファクタ前に D-Mail チェックポイントを保存し、`.omk/snippets/` でコードブロックを再利用
+- **OAuth 使用量ゲージ** — `OMK_KIMI_STATUS_GAUGES=1` で API クォータとリセット残時間をステータスバーにリアルタイム表示
+- **16GB メモリ対応ランタイム** — 搭載メモリを自動検出し軽量プロファイルに切り替え。低スペック環境でも快適に動作
+- **役割認識型アンサンブル** — 重み付き候補＋クォーラム投票を coder/planner/architect/reviewer/QA/explorer で実現
+- **ローカルグラフメモリ** — `.omk/memory/graph-state.json` オントロジーで知識を構造化。mindmap / GraphQL-lite 対応
+- **組み込み LSP** — `omk lsp typescript` で TypeScript 言語サーバーを即座に利用可能
+- **CI 品質ゲート** — `npm run check/test/lint/build` を CI とリリースチェックに統合
+- **新規スクリーンショット** — HUD、ステータスバー gauges、ダッシュボードなど 5 点の UI スクリーンショットを追加
 
 ### Install
 
@@ -655,18 +794,43 @@ Team Runtime 開始中...
 
 ```mermaid
 graph TD
-    A[User / omk CLI] --> B[OMK Controller]
-    B --> C[DAG Scheduler]
-    B --> D[HUD / Trace Viewer]
-    B --> E[Memory & Context Broker]
-    B --> F[Safety / Approval Gateway]
-    B --> G[Kimi Native Layer]
-    G --> G1[Wire Mode JSON-RPC]
-    G --> G2[Print Mode]
-    G --> G3[Agents / Subagents]
-    G --> G4[Skills / Flows]
-    G --> G5[Hooks]
-    G --> G6[MCP Servers]
+    A["👤 User / omk CLI"] --> B["🎮 Command Router"]
+    B --> C1["omk init / doctor"]
+    B --> C2["omk plan / run / parallel"]
+    B --> C3["omk hud / team / design"]
+    B --> C4["omk chat / lsp / snip"]
+
+    C2 --> D["⚙️ Orchestration Engine"]
+    C3 --> H["📊 HUD & Live UI"]
+
+    D --> D1["DAG Scheduler"]
+    D --> D2["Task Graph"]
+    D --> D3["Executor + ETA"]
+    D --> D4["Ensemble (Role-aware Quorum)"]
+    D --> D5["Routing + State Persister"]
+
+    H --> H1["Parallel Live Renderer"]
+    H --> H2["System / Kimi Gauges"]
+    H --> H3["Banner + Theme + i18n"]
+
+    D --> K["🤖 Kimi Native Layer"]
+    K --> K1["Wire Client"]
+    K --> K2["Kimi Runner + Bug Filter"]
+    K --> K3["Usage / OAuth / Status Line"]
+
+    D --> M["🧠 Memory & Context"]
+    M --> M1["Local Graph Memory (graph-state.json)"]
+    M --> M2["Neo4j Memory"]
+    M --> M3["Snippets + Checkpoints"]
+
+    D --> S["🛡️ Safety & Quality"]
+    S --> S1["Guard Hooks"]
+    S --> S2["Quality Gates"]
+    S --> S3["Secret Scan"]
+
+    K --> E["🔌 Extensions"]
+    E --> E1["MCP Servers"]
+    E --> E2["LSP TypeScript"]
 ```
 
 ### 🛡️ セーフティ

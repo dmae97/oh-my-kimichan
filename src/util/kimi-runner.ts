@@ -2,7 +2,7 @@ import pty from "node-pty";
 import { BannerReplacer } from "./kimi-banner.js";
 import { KimiBugFilter } from "./kimi-bug-filter.js";
 import { kimichanBanner, style } from "./theme.js";
-import { ensureDir, injectKimiGlobals, getProjectRoot } from "./fs.js";
+import { ensureDir, injectKimiGlobals, getProjectRoot, pathExists } from "./fs.js";
 import { join } from "path";
 import type { TaskRunner, TaskResult } from "../contracts/orchestration.js";
 import type { DagNode } from "../orchestration/dag.js";
@@ -145,6 +145,8 @@ export interface KimiTaskRunnerOptions {
   mcpScope?: OmkRuntimeScope;
   skillsScope?: OmkRuntimeScope;
   onThinking?: (thinking: string) => void;
+  /** If true, automatically pick .omk/agents/{role}.yaml per node role */
+  roleAgentFiles?: boolean;
 }
 
 function createLiveThinkingHandler(onThinking: ((thinking: string) => void) | undefined) {
@@ -185,8 +187,23 @@ function createLiveThinkingHandler(onThinking: ((thinking: string) => void) | un
   };
 }
 
+async function resolveAgentFileForRole(role: string, fallback?: string): Promise<string | undefined> {
+  const projectRoot = getProjectRoot();
+  const candidates = [
+    join(projectRoot, ".omk", "agents", `${role}.yaml`),
+    join(projectRoot, ".omk", "agents", `${role}.yml`),
+    join(projectRoot, ".omk", "agents", "roles", `${role}.yaml`),
+    join(projectRoot, ".omk", "agents", "roles", `${role}.yml`),
+    join(projectRoot, ".kimi", "agents", `${role}.yaml`),
+  ];
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return fallback;
+}
+
 export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskRunner {
-  const { cwd, timeout = 120000, env, agentFile, promptPrefix, mcpScope, skillsScope, onThinking } = options;
+  const { cwd, timeout = 120000, env, agentFile, promptPrefix, mcpScope, skillsScope, onThinking, roleAgentFiles } = options;
   let currentOnThinking = onThinking;
 
   const runner: TaskRunner = {
@@ -201,8 +218,12 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
       const mergedEnv = { ...env, ...nodeEnv };
       const args: string[] = [];
       await injectKimiGlobals(args, { mcpScope, skillsScope });
-      if (agentFile) {
-        args.push("--agent-file", agentFile);
+
+      const resolvedAgentFile = roleAgentFiles
+        ? await resolveAgentFileForRole(node.role, agentFile)
+        : agentFile;
+      if (resolvedAgentFile) {
+        args.push("--agent-file", resolvedAgentFile);
       }
       args.push("--prompt", buildNodeMessage(node, mergedEnv, promptPrefix));
       args.push("--print");
@@ -267,6 +288,20 @@ function buildNodeMessage(
   promptPrefix?: string
 ): string {
   const routing = node.routing;
+  const mandatoryRouting: string[] = [];
+  if (routing?.skills?.length) {
+    mandatoryRouting.push(`- Skills (MUST use): ${routing.skills.join(", ")}`);
+  }
+  if (routing?.mcpServers?.length) {
+    mandatoryRouting.push(`- MCP servers (MUST activate): ${routing.mcpServers.join(", ")}`);
+  }
+  if (routing?.tools?.length) {
+    mandatoryRouting.push(`- Tools (MUST call when relevant): ${routing.tools.join(", ")}`);
+  }
+  if (routing?.rationale) {
+    mandatoryRouting.push(`- Rationale: ${routing.rationale}`);
+  }
+
   const sections = [
     promptPrefix?.trim(),
     [
@@ -275,12 +310,17 @@ function buildNodeMessage(
       `Role: ${node.role}`,
       `Run ID: ${env.OMK_RUN_ID ?? ""}`,
       `Dependencies: ${node.dependsOn.length > 0 ? node.dependsOn.join(", ") : "none"}`,
-      `Skill hints: ${routing?.skills?.join(", ") || env.OMK_SKILL_HINTS || "none"}`,
-      `MCP hints: ${routing?.mcpServers?.join(", ") || env.OMK_MCP_HINTS || "none"}`,
-      `Tool hints: ${routing?.tools?.join(", ") || env.OMK_TOOL_HINTS || "none"}`,
       `Context budget: ${routing?.contextBudget ?? env.OMK_CONTEXT_BUDGET ?? "small"}`,
       `Evidence required: ${String(routing?.evidenceRequired ?? env.OMK_ROUTE_EVIDENCE_REQUIRED ?? false)}`,
     ].join("\n"),
+    mandatoryRouting.length > 0
+      ? [
+          "Routing directives (MANDATORY — activate these skills/MCP/tools explicitly):",
+          ...mandatoryRouting,
+          "- Do not ignore the routing hints above.",
+          "- If a skill or MCP server is listed, prefer its capabilities over generic reasoning.",
+        ].join("\n")
+      : undefined,
     [
       "Instructions:",
       "- Keep context small and read only the files needed for this node.",

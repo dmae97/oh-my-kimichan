@@ -165,6 +165,12 @@ export async function runCommand(
     ``,
     t("run.planPrompt"),
     ``,
+    `SKILLS & MCP USAGE (MANDATORY):`,
+    `- Activate relevant skills from the routing hints for each node.`,
+    `- Use MCP servers (omk-project, memory, quality-gate, etc.) when they fit the task.`,
+    `- Prefer omk-project MCP tools for checkpoint, memory, and run-state operations.`,
+    `- Use SearchWeb / FetchURL for external docs, official APIs, or citations.`,
+    ``,
     flowContent,
   );
   const promptText = promptLines.join("\n");
@@ -190,6 +196,7 @@ export async function runCommand(
     promptPrefix: promptText,
     mcpScope: "all",
     skillsScope: "all",
+    roleAgentFiles: true,
     env: {
       ...createOmkSessionEnv(root, runId),
       OMK_RUN_ID: runId,

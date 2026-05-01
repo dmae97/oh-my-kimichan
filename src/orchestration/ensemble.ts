@@ -83,6 +83,13 @@ let ensembleConfigPromise: Promise<EnsembleConfig> | undefined;
 
 export function createEnsembleTaskRunner(baseRunner: TaskRunner, policy: EnsemblePolicy = {}): TaskRunner {
   return {
+    get onThinking() {
+      return baseRunner.onThinking;
+    },
+    set onThinking(fn) {
+      baseRunner.onThinking = fn;
+    },
+
     async run(node: DagNode, env: Record<string, string>): Promise<TaskResult> {
       const resources = await getOmkResourceSettings();
       const config = await getEnsembleConfig();

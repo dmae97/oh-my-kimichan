@@ -76,7 +76,10 @@ export async function parallelCommand(
   await writeFile(statePath, JSON.stringify(routedState, null, 2));
 
   const dag = createExecutableDagFromState(routedState);
-  const executor = createExecutor({ persister: createStatePersister(join(root, ".omk", "runs")), ensemble: false });
+  const executor = createExecutor({
+    persister: createStatePersister(join(root, ".omk", "runs")),
+    ensemble: resources.ensembleDefaultEnabled ? {} : false,
+  });
 
   console.log(kimichanCliHero(formatOmkVersionFooter()));
   console.log(style.purpleBold("🐾 omk parallel — DAG executor with live UI"));
@@ -115,6 +118,7 @@ export async function parallelCommand(
     promptPrefix: promptText,
     mcpScope: "all",
     skillsScope: "all",
+    roleAgentFiles: true,
     env: {
       ...createOmkSessionEnv(root, runId),
       OMK_RUN_ID: runId,
@@ -200,6 +204,12 @@ function buildPromptText(goal: string, runId: string, profile: string, workerCou
     `- Workers execute scoped sub-tasks in parallel.`,
     `- The reviewer verifies and merges outputs.`,
     `- Produce concrete evidence, changed files, and verification results.`,
+    ``,
+    `SKILLS & MCP USAGE (MANDATORY):`,
+    `- Activate relevant skills from the routing hints for each node.`,
+    `- Use MCP servers (omk-project, memory, quality-gate, etc.) when they fit the task.`,
+    `- Prefer omk-project MCP tools for checkpoint, memory, and run-state operations.`,
+    `- Use SearchWeb / FetchURL for external docs, official APIs, or citations.`,
   ].join("\n");
 }
 
