@@ -74,7 +74,11 @@ export function getOmkPath(subPath?: string): string {
 }
 
 export function getRunPath(runId: string, subPath?: string): string {
-  const runDir = getOmkPath(join("runs", runId));
+  const sanitized = runId.replace(/[^a-zA-Z0-9_.\-]/g, "");
+  if (sanitized !== runId || sanitized.length === 0 || sanitized.length > 128) {
+    throw new Error(`Invalid runId: ${runId}`);
+  }
+  const runDir = getOmkPath(join("runs", sanitized));
   return subPath ? join(runDir, subPath) : runDir;
 }
 
@@ -288,37 +292,37 @@ export async function syncKimiMemoryGlobal(): Promise<boolean> {
   return true;
 }
 
-/** hooks + MCP + skills 를 ~/.kimi/ 에 한 번에 동기화 */
+/** Sync hooks + MCP + skills to ~/.kimi/ at once */
 export async function syncAllKimiGlobals(): Promise<void> {
   const configFile = getOmkPath("kimi.config.toml");
   if (await pathExists(configFile)) {
     try {
       await mergeKimiHooks(configFile);
     } catch (err) {
-      console.warn("⚠️  hooks 동기화 실패:", (err as Error).message);
+      console.warn("⚠️  hooks sync failed:", (err as Error).message);
     }
   }
 
   try {
     await syncKimiMcpGlobal();
   } catch (err) {
-    console.warn("⚠️  MCP 글로벌 동기화 실패:", (err as Error).message);
+    console.warn("⚠️  MCP global sync failed:", (err as Error).message);
   }
 
   try {
     await syncKimiSkillsGlobal();
   } catch (err) {
-    console.warn("⚠️  skills 글로벌 동기화 실패:", (err as Error).message);
+    console.warn("⚠️  skills global sync failed:", (err as Error).message);
   }
 
   try {
     await syncKimiMemoryGlobal();
   } catch (err) {
-    console.warn("⚠️  local graph memory 글로벌 동기화 실패:", (err as Error).message);
+    console.warn("⚠️  local graph memory global sync failed:", (err as Error).message);
   }
 }
 
-/** .omk/mcp.json + .kimi/mcp.json + ~/.kimi/mcp.json 모두 수집 */
+/** .omk/mcp.json + .kimi/mcp.json + ~/.kimi/mcp.json 수집 */
 export async function collectMcpConfigs(scope: OmkRuntimeScope = "all"): Promise<string[]> {
   const configs: string[] = [];
   if (scope === "none") return configs;
@@ -326,9 +330,16 @@ export async function collectMcpConfigs(scope: OmkRuntimeScope = "all"): Promise
   const omkMcp = getOmkPath("mcp.json");
   const kimiMcp = join(getProjectRoot(), ".kimi", "mcp.json");
   const globalMcp = join(homedir(), ".kimi", "mcp.json");
-  if (await pathExists(omkMcp)) configs.push(omkMcp);
-  if (await pathExists(kimiMcp)) configs.push(kimiMcp);
-  if (scope === "all" && await pathExists(globalMcp)) configs.push(globalMcp);
+
+  if (scope === "all") {
+    // syncKimiMcpGlobal() already merges project configs into ~/.kimi/mcp.json.
+    // Passing only the global file avoids duplicate/overlapping configs that
+    // can confuse Kimi CLI into loading only the last (or first) file.
+    if (await pathExists(globalMcp)) configs.push(globalMcp);
+  } else {
+    if (await pathExists(omkMcp)) configs.push(omkMcp);
+    if (await pathExists(kimiMcp)) configs.push(kimiMcp);
+  }
   return configs;
 }
 
@@ -431,8 +442,13 @@ function isWebp(bytes: Uint8Array): boolean {
 }
 
 /** Kimi CLI 실행 인자에 model + MCP + Skills 주입 (전역 동기화는 별도) */
-export async function injectKimiGlobals(args: string[]): Promise<void> {
+export async function injectKimiGlobals(
+  args: string[],
+  options: { mcpScope?: OmkRuntimeScope; skillsScope?: OmkRuntimeScope } = {}
+): Promise<void> {
   const resources = await getOmkResourceSettings();
+  const mcpScope = options.mcpScope ?? resources.mcpScope;
+  const skillsScope = options.skillsScope ?? resources.skillsScope;
 
   // default_model이 있으면 주입 (agent-file 사용 시 model이 unset 될 수 있음)
   const defaultModel = await getKimiDefaultModel();
@@ -440,12 +456,35 @@ export async function injectKimiGlobals(args: string[]): Promise<void> {
     args.push("--model", defaultModel);
   }
 
-  for (const mcp of await collectMcpConfigs(resources.mcpScope)) {
+  // Ensure global mcp.json is up-to-date before Kimi CLI reads it
+  if (mcpScope !== "none") {
+    try {
+      await syncKimiMcpGlobal();
+    } catch {
+      // ignore sync failure — we still pass whatever exists
+    }
+  }
+
+  for (const mcp of await collectMcpConfigs(mcpScope)) {
     args.push("--mcp-config-file", mcp);
   }
 
   const globalSkillsDir = join(homedir(), ".kimi", "skills");
   const projectSkillsDir = getKimiSkillsDir();
-  if (resources.skillsScope === "all" && await pathExists(globalSkillsDir)) args.push("--skills-dir", globalSkillsDir);
-  if (resources.skillsScope !== "none" && await pathExists(projectSkillsDir)) args.push("--skills-dir", projectSkillsDir);
+  if (skillsScope === "all" && await pathExists(globalSkillsDir)) args.push("--skills-dir", globalSkillsDir);
+  if (skillsScope !== "none" && await pathExists(projectSkillsDir)) args.push("--skills-dir", projectSkillsDir);
+
+  if (process.env.OMK_DEBUG === "1") {
+    const mcpFiles = await collectMcpConfigs(mcpScope);
+    const skillDirs: string[] = [];
+    if (skillsScope === "all" && await pathExists(globalSkillsDir)) skillDirs.push(globalSkillsDir);
+    if (skillsScope !== "none" && await pathExists(projectSkillsDir)) skillDirs.push(projectSkillsDir);
+    console.error("[OMK_DEBUG] injectKimiGlobals:", {
+      model: defaultModel,
+      mcpFiles,
+      skillDirs,
+      mcpScope,
+      skillsScope,
+    });
+  }
 }

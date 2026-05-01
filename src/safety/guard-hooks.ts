@@ -1,8 +1,10 @@
 import type { ApprovalDecision } from "../contracts/safety.js";
 
 const DESTRUCTIVE_PATTERNS = [
-  /^\s*rm\s+-rf\s+\/(\s|$)/,
-  /^\s*rm\s+-rf\s+\.\//,
+  /\brm\b.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/($|\s)/,
+  /\brm\b.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+(~|\$\w+)/,
+  /\brm\b.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\.{0,2}\//,
+  /\brm\b.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s*\.{1,2}\s*$/,
   /^\s*sudo\s+/,
   /^\s*git\s+push\s+--force/,
   /^\s*git\s+push\s+-f\s/,

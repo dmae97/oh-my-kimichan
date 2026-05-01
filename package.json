@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
-    "lint": "npm run secret:scan",
+    "lint": "eslint src/ && npm run secret:scan",
     "check": "tsc --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
     "secret:scan": "node scripts/secret-scan.mjs",
@@ -75,12 +75,18 @@
   "devDependencies": {
     "@types/fs-extra": "^11.0.0",
     "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "@eslint/js": "^9.0.0",
+    "typescript-eslint": "^8.0.0",
+    "globals": "^15.0.0",
     "tsx": "^4.0.0"
   },
   "files": [
     "dist",
     "templates",
     "docs",
+    "kimichan.png",
+    "kimiagent.png",
     "README.md",
     "SECURITY.md",
     "ROADMAP.md",
