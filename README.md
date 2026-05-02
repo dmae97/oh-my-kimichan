@@ -46,6 +46,7 @@
 
 - [GitHub Release Snapshot](#github-release-snapshot)
 - [Repository Topics](#repository-topics)
+- [One Prompt to Landing Page](#one-prompt-to-landing-page)
 - [Korean](#korean)
 - [English](#english)
 - [Chinese](#chinese)
@@ -141,6 +142,14 @@ Recommended GitHub topics:
 ```txt
 kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic-coding, orchestration, dag, task-graph, ensemble, mcp, model-context-protocol, lsp, typescript, nodejs, cli, developer-tools, worktree
 ```
+
+---
+
+## One Prompt to Landing Page
+
+> `@oneprompt.mp4` prompt → COS landing page. 10–20 min. Kimi-native multi-agent CLI behind it.
+
+![One Prompt Demo](./oneprompt.gif)
 
 ---
 
