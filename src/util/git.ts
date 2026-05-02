@@ -1,5 +1,10 @@
 import { runShell } from "./shell.js";
 
+export async function isGitAvailable(): Promise<boolean> {
+  const result = await runShell("git", ["--version"], { timeout: 5000 });
+  return !result.failed;
+}
+
 export async function isGitRepo(cwd?: string): Promise<boolean> {
   const result = await runShell("git", ["rev-parse", "--git-dir"], { cwd, timeout: 5000 });
   return !result.failed;

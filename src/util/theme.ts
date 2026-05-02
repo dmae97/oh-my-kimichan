@@ -90,7 +90,6 @@ export const status = {
 
 // ── Layout primitives ────────────────────────────────────────
 export function header(text: string): string {
-  const line = "═".repeat(Math.min(text.length + 6, 60));
   return [
     "",
     style.purple("╔" + "═".repeat(2) + "✦" + "═".repeat(text.length + 2) + "✦" + "═".repeat(2) + "╗"),
@@ -242,7 +241,8 @@ export function sanitizeTerminalText(value: string): string {
     .replace(/\x1B\][\s\S]*?(?:\x07|\x1B\\)/g, "")
     .replace(/\x1B[P^_][\s\S]*?\x1B\\/g, "")
     .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "");
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "")
+    .replace(/^::code-comment\{.*?\}[ \t]*\r?\n?/gm, "");
 }
 
 // ── Kimichan Emoji Kit ───────────────────────────────────────
@@ -371,8 +371,6 @@ export function ensembleQuorumBar(successWeight: number, totalWeight: number, qu
   const quorumRatio = totalWeight > 0 ? Math.min(1, quorumWeight / totalWeight) : 0;
   const filled = Math.round(ratio * width);
   const quorumPos = Math.round(quorumRatio * width);
-  const empty = width - filled;
-
   const bar: string[] = [];
   for (let i = 0; i < width; i++) {
     if (i === quorumPos) {

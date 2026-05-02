@@ -6,10 +6,14 @@ import { createStatePersister } from "./state-persister.js";
 import { createEnsembleTaskRunner, type EnsemblePolicy } from "./ensemble.js";
 import { estimateRunProgress } from "./eta.js";
 import { dagNodeRoutingEnv } from "./routing.js";
+import { checkEvidenceGates } from "./evidence-gate.js";
+import { invalidateTaskDagGraph } from "./task-graph.js";
 
 export interface ExecutorOptions {
   persister?: StatePersister;
   ensemble?: false | EnsemblePolicy;
+  signal?: AbortSignal;
+  resumeFromState?: RunState;
 }
 
 export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecutor {
@@ -19,12 +23,11 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
   const nodeStartHandlers: Array<(node: DagNode) => void> = [];
   const nodeCompleteHandlers: Array<(node: DagNode, result: TaskResult) => void> = [];
   let commitQueue: Promise<void> = Promise.resolve();
-  let commitQueueDepth = 0;
-  const MAX_COMMIT_QUEUE_DEPTH = 10;
 
   function buildState(dag: Dag, options: RunOptions): RunState {
     const startedAt = new Date().toISOString();
     return {
+      schemaVersion: 1,
       runId: options.runId,
       nodes: dag.nodes.map((n) => ({ ...n })),
       startedAt,
@@ -55,21 +58,14 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
 
   async function commitState(state: RunState): Promise<void> {
     const snapshot = cloneState(state);
-    if (commitQueueDepth >= MAX_COMMIT_QUEUE_DEPTH) {
-      emit(snapshot);
-      return;
-    }
-    commitQueueDepth++;
     commitQueue = commitQueue
       .then(async () => {
         await persister.save(snapshot);
         emit(snapshot);
       })
-      .catch(() => {
-        // swallow persist/emit errors so chain continues
-      })
-      .finally(() => {
-        commitQueueDepth--;
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[omk] state persist warning: ${message}\n`);
       });
     await commitQueue;
   }
@@ -97,7 +93,7 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
 
   function markNodeFinished(node: DagNode, status: "done" | "failed"): void {
     const completedAt = new Date().toISOString();
-    const startedAtMs = Date.parse(node.startedAt ?? completedAt);
+    const startedAtMs = node.startedAt ? Date.parse(node.startedAt) : Date.parse(completedAt);
     const completedAtMs = Date.parse(completedAt);
     const durationMs = Math.max(0, completedAtMs - startedAtMs);
     const latestAttempt = node.attempts?.[node.attempts.length - 1];
@@ -137,6 +133,49 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
     }
   }
 
+  async function checkNodeEvidence(
+    node: DagNode,
+    result: TaskResult,
+    options: RunOptions
+  ): Promise<{ passed: boolean; evidence: import("./dag.js").DagNodeEvidence[] }> {
+    const gates: import("./evidence-gate.js").EvidenceGate[] = [];
+
+    for (const output of node.outputs ?? []) {
+      switch (output.gate) {
+        case "file-exists":
+          if (output.ref) gates.push({ type: "file-exists", path: output.ref });
+          break;
+        case "test-pass":
+          gates.push({ type: "command-pass", command: output.ref ?? "npm test" });
+          break;
+        case "command-pass":
+          gates.push({ type: "command-pass", command: output.ref ?? "" });
+          break;
+        case "review-pass":
+        case "summary":
+          gates.push({ type: "summary-present", summaryMarker: output.ref ?? "## Summary" });
+          break;
+        case "none":
+        default:
+          break;
+      }
+    }
+
+    if (node.routing?.evidenceRequired) {
+      gates.push({ type: "summary-present", summaryMarker: "## Evidence" });
+    }
+
+    if (gates.length === 0) {
+      return { passed: true, evidence: [] };
+    }
+
+    return checkEvidenceGates(gates, {
+      cwd: options.worktreeRoot ?? process.cwd(),
+      stdout: result.stdout,
+      nodeId: node.id,
+    });
+  }
+
   async function runNode(
     node: DagNode,
     dag: Dag,
@@ -161,11 +200,18 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
     let result: TaskResult;
     node.thinking = undefined;
 
-    // Wire live thinking from runner into the node so parallel UI can surface it.
-    const originalOnThinking = runner.onThinking;
-    runner.onThinking = (thinking: string) => {
-      node.thinking = thinking;
-    };
+    // Use fork() if available for parallel-safe isolated thinking callbacks.
+    const nodeRunner = runner.fork
+      ? runner.fork((thinking: string) => {
+          node.thinking = thinking;
+        })
+      : {
+          ...runner,
+          onThinking: (thinking: string) => {
+            node.thinking = thinking;
+          },
+          run: runner.run.bind(runner),
+        };
 
     // Sync thinking back to state.nodes periodically so the live UI
     // can show ensemble / runner progress while the node is running.
@@ -175,20 +221,29 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
       emit(cloneState(state));
     }, 500);
 
-    const nodeTimeoutMs = options.nodeTimeoutMs ?? 0;
+    const nodeTimeoutMs = node.timeoutMs ?? options.nodeTimeoutMs ?? 0;
     try {
-      const runPromise = runner.run(node, env);
+      const runPromise = nodeRunner.run(node, env);
       if (nodeTimeoutMs > 0) {
+        let timeoutHandle: ReturnType<typeof setTimeout>;
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error(`Node ${node.id} timed out after ${nodeTimeoutMs}ms`)), nodeTimeoutMs);
+          timeoutHandle = setTimeout(() => reject(new Error(`Node ${node.id} timed out after ${nodeTimeoutMs}ms`)), nodeTimeoutMs);
         });
         result = await Promise.race([runPromise, timeoutPromise]);
+        clearTimeout(timeoutHandle!);
       } else {
         result = await runPromise;
       }
       if (result.success) {
-        markNodeFinished(node, "done");
-        scheduler.updateNodeStatus(dag, node.id, "done");
+        const evidenceCheck = await checkNodeEvidence(node, result, options);
+        node.evidence = evidenceCheck.evidence;
+        if (evidenceCheck.passed) {
+          markNodeFinished(node, "done");
+          scheduler.updateNodeStatus(dag, node.id, "done");
+        } else {
+          markNodeFinished(node, "failed");
+          scheduler.updateNodeStatus(dag, node.id, "failed");
+        }
       } else {
         markNodeFinished(node, "failed");
         scheduler.updateNodeStatus(dag, node.id, "failed");
@@ -204,7 +259,6 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
       scheduler.updateNodeStatus(dag, node.id, "failed");
     } finally {
       clearInterval(progressTimer);
-      runner.onThinking = originalOnThinking;
       const stateNode = state.nodes.find((sn) => sn.id === node.id);
       if (stateNode) stateNode.thinking = node.thinking;
     }
@@ -246,7 +300,29 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
       const effectiveRunner = executorOptions.ensemble === false
         ? runner
         : createEnsembleTaskRunner(runner, executorOptions.ensemble ?? {});
-      const state = buildState(dag, options);
+
+      let state: RunState;
+      if (executorOptions.resumeFromState) {
+        state = cloneState(executorOptions.resumeFromState);
+        const stateNodeById = new Map(state.nodes.map((n) => [n.id, n]));
+        for (const node of dag.nodes) {
+          const saved = stateNodeById.get(node.id);
+          if (saved) {
+            // Do not restore non-terminal running state; reset to pending so
+            // the scheduler can re-dispatch it. Only preserve terminal states.
+            node.status = saved.status === "running" ? "pending" : saved.status;
+            node.retries = saved.retries;
+            node.startedAt = saved.startedAt;
+            node.completedAt = saved.completedAt;
+            node.durationMs = saved.durationMs;
+            node.attempts = saved.attempts?.map((a) => ({ ...a }));
+            node.evidence = saved.evidence?.map((e) => ({ ...e }));
+            node.blockedReason = saved.blockedReason;
+          }
+        }
+      } else {
+        state = buildState(dag, options);
+      }
       await commitState(state);
 
       const runningMap = new Map<string, Promise<void>>();
@@ -255,7 +331,74 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
         resolveDone = resolve;
       });
 
+      const fallbackNodes = new Map<string, DagNode>();
+
       async function tick(): Promise<void> {
+        // Handle fallback nodes FIRST, before isFailed check, so that a
+        // terminal failure with a fallbackRole does not immediately fail the run.
+        let fallbackCreated = false;
+        for (const node of dag.nodes) {
+          if (node.status === "failed" && node.retries >= node.maxRetries && node.failurePolicy?.fallbackRole && !fallbackNodes.has(node.id)) {
+            let fallbackId = `${node.id}--fallback`;
+            let fallbackCounter = 1;
+            while (dag.nodes.some((n) => n.id === fallbackId)) {
+              fallbackId = `${node.id}--fallback-${fallbackCounter++}`;
+            }
+            const fallbackNode: DagNode = {
+              id: fallbackId,
+              name: `${node.name} (fallback)`,
+              role: node.failurePolicy.fallbackRole,
+              dependsOn: node.dependsOn,
+              status: "pending",
+              retries: 0,
+              maxRetries: 1,
+              priority: node.priority,
+              cost: node.cost,
+              routing: node.routing,
+              failurePolicy: { retryable: false, blockDependents: true },
+            };
+            dag.nodes.push(fallbackNode);
+            fallbackNodes.set(node.id, fallbackNode);
+            state.nodes.push({ ...fallbackNode });
+            // Mark original node as skipped so dependents can proceed via fallback
+            node.status = "skipped";
+            node.blockedReason = `fallback created: ${fallbackId}`;
+            invalidateTaskDagGraph(dag);
+            // Redirect dependents from original node to fallback node
+            for (const dep of dag.nodes) {
+              if (dep.dependsOn.includes(node.id)) {
+                if (dep.status === "blocked") {
+                  dep.status = "pending";
+                  dep.blockedReason = undefined;
+                }
+                dep.dependsOn = dep.dependsOn.filter((id) => id !== node.id);
+                if (!dep.dependsOn.includes(fallbackId)) {
+                  dep.dependsOn.push(fallbackId);
+                }
+              }
+            }
+            fallbackCreated = true;
+          }
+        }
+        if (fallbackCreated) {
+          void tick();
+          return;
+        }
+
+        if (executorOptions.signal?.aborted) {
+          for (const node of dag.nodes) {
+            if (node.status === "running" || node.status === "pending") {
+              node.status = "blocked";
+              node.blockedReason = "cancelled";
+            }
+          }
+          state.completedAt = new Date().toISOString();
+          refreshState(state, dag, options);
+          await commitState(state);
+          resolveDone({ state, success: false });
+          return;
+        }
+
         if (scheduler.isComplete(dag)) {
           state.completedAt = new Date().toISOString();
           refreshState(state, dag, options);
@@ -275,7 +418,7 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
         const runnable = scheduler.getRunnableNodes(dag);
         const availableSlots = Math.max(0, options.workers - runningMap.size);
         const toRun = runnable
-          .filter((node) => !runningMap.has(node.id))
+          .filter((node) => !runningMap.has(node.id) && !fallbackNodes.has(node.id))
           .slice(0, availableSlots);
 
         for (const node of toRun) {

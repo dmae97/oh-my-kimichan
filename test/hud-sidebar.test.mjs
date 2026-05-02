@@ -64,3 +64,27 @@ test("HUD latest run selection ignores stale latest directory", () => {
 
   assert.equal(selected, "2026-05-01T00-00-00-000Z");
 });
+
+test("HUD latest run selection prefers newer state-only run over older state+goal+plan", () => {
+  const selected = selectLatestRunName([
+    { name: "2026-05-01T00-00-00-000Z", mtimeMs: 100, hasState: true, hasGoal: true, hasPlan: true },
+    { name: "2026-05-02T00-00-00-000Z", mtimeMs: 200, hasState: true, hasGoal: false, hasPlan: false },
+  ]);
+  assert.equal(selected, "2026-05-02T00-00-00-000Z");
+});
+
+test("HUD latest run selection deprioritizes latest alias", () => {
+  const selected = selectLatestRunName([
+    { name: "latest", mtimeMs: 200, hasState: true, hasGoal: true, hasPlan: true },
+    { name: "2026-05-01T00-00-00-000Z", mtimeMs: 200, hasState: true, hasGoal: true, hasPlan: true },
+  ]);
+  assert.equal(selected, "2026-05-01T00-00-00-000Z");
+});
+
+test("HUD latest run selection prefers schemaVersion:1 over old schema when same mtime", () => {
+  const selected = selectLatestRunName([
+    { name: "old-run", mtimeMs: 200, hasState: true, hasGoal: false, hasPlan: false, schemaVersion: 0 },
+    { name: "new-run", mtimeMs: 200, hasState: true, hasGoal: false, hasPlan: false, schemaVersion: 1 },
+  ]);
+  assert.equal(selected, "new-run");
+});

@@ -9,13 +9,18 @@ export function createRoutedRunState(input: {
   nodes: DagNodeDefinition[];
   completedAt?: string;
   workerCount?: number;
+  goalId?: string;
+  goalSnapshot?: RunState["goalSnapshot"];
 }): RunState {
   const dag = createDag({ nodes: input.nodes });
   const nodes = dag.nodes.map((node) => ({ ...node }));
   return {
+    schemaVersion: 1,
     runId: input.runId,
     startedAt: input.startedAt,
     completedAt: input.completedAt,
+    goalId: input.goalId,
+    goalSnapshot: input.goalSnapshot,
     nodes,
     estimate: estimateFor(nodes, input.startedAt, input.workerCount),
   };
@@ -24,20 +29,46 @@ export function createRoutedRunState(input: {
 export function createDagFromRunState(state: RunState): Dag {
   return createDag({
     nodes: state.nodes.map((node): DagNodeDefinition => {
+      /* eslint-disable @typescript-eslint/no-unused-vars */
       const {
-        status: _status,
-        retries: _retries,
-        startedAt: _startedAt,
-        completedAt: _completedAt,
-        durationMs: _durationMs,
-        attempts: _attempts,
-        blockedReason: _blockedReason,
-        evidence: _evidence,
+        status,
+        retries,
+        startedAt,
+        completedAt,
+        durationMs,
+        attempts,
+        blockedReason,
+        evidence,
         ...definition
       } = node;
+      /* eslint-enable @typescript-eslint/no-unused-vars */
       return definition;
     }),
   });
+}
+
+export function createExecutableDagFromState(state: RunState): Dag {
+  const dag = createDagFromRunState(state);
+  const runtimeById = new Map(state.nodes.map((node) => [node.id, node]));
+
+  for (const node of dag.nodes) {
+    const runtime = runtimeById.get(node.id);
+    if (runtime?.status !== "done") continue;
+    node.status = "done";
+    node.startedAt = runtime.startedAt;
+    node.completedAt = runtime.completedAt;
+    node.durationMs = runtime.durationMs;
+    node.attempts = runtime.attempts?.map((attempt) => ({ ...attempt }));
+  }
+
+  const bootstrap = dag.nodes.find((node) => node.id === "bootstrap");
+  if (bootstrap) {
+    bootstrap.status = "done";
+    bootstrap.startedAt ??= state.startedAt;
+    bootstrap.completedAt ??= state.startedAt;
+  }
+
+  return dag;
 }
 
 export function routeRunState(state: RunState, workerCount?: number): RunState {

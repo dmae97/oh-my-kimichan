@@ -290,7 +290,7 @@ export class KimiWireClient {
 
 export function createKimiTaskRunner(client: KimiWireClient): TaskRunner {
   return {
-    async run(node: DagNode, env: Record<string, string>): Promise<TaskResult> {
+    async run(node: DagNode, _env: Record<string, string>): Promise<TaskResult> {
       const resources = await getOmkResourceSettings();
       const prompt = `[${node.role}] ${node.name}`;
       const stdout = new CappedOutputBuffer(resources.wireOutputBytes, "wire stdout");

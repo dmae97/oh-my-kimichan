@@ -90,6 +90,11 @@ export function createEnsembleTaskRunner(baseRunner: TaskRunner, policy: Ensembl
       baseRunner.onThinking = fn;
     },
 
+    fork(newOnThinking) {
+      const forkedBase = baseRunner.fork ? baseRunner.fork(newOnThinking) : baseRunner;
+      return createEnsembleTaskRunner(forkedBase, policy);
+    },
+
     async run(node: DagNode, env: Record<string, string>): Promise<TaskResult> {
       const resources = await getOmkResourceSettings();
       const config = await getEnsembleConfig();

@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
+  getStarPromptSummary,
   isStarPromptEligible,
   maybeAskForGitHubStar,
+  maybeAskForGitHubStarAfterCommand,
   parseGitHubRepoSlug,
   readStarPromptState,
 } from "../dist/util/first-run-star.js";
@@ -106,6 +108,194 @@ test("first-run star prompt records star failure without opening a browser", asy
 test("GitHub repo slug parser supports browser and git URLs", () => {
   assert.equal(parseGitHubRepoSlug("https://github.com/dmae97/oh-my-kimichan"), "dmae97/oh-my-kimichan");
   assert.equal(parseGitHubRepoSlug("git@github.com:dmae97/oh-my-kimichan.git"), "dmae97/oh-my-kimichan");
+});
+
+test("maybeAskForGitHubStarAfterCommand skips non-whitelist commands", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "omk-star-after-cmd-"));
+  try {
+    for (const commandName of ["chat", "lsp", "--help"]) {
+      const result = await maybeAskForGitHubStarAfterCommand({
+        version: "1.2.3",
+        homeDir,
+        env: { OMK_STAR_PROMPT: "force" },
+        stdin: { isTTY: true },
+        stdout: { isTTY: true },
+        argv: ["node", "omk", commandName],
+        commandName,
+        prompt: async () => true,
+      });
+      assert.equal(result, "skipped", `expected ${commandName} to be skipped`);
+    }
+
+    for (const commandName of ["doctor", "hud", "plan", "parallel", "run"]) {
+      const result = await maybeAskForGitHubStarAfterCommand({
+        version: "1.2.3",
+        homeDir: await mkdtemp(join(tmpdir(), "omk-star-after-cmd-")),
+        env: { OMK_STAR_PROMPT: "force" },
+        stdin: { isTTY: true },
+        stdout: { isTTY: true },
+        argv: ["node", "omk", commandName],
+        commandName,
+        prompt: async () => true,
+        starRepo: async () => {},
+      });
+      assert.equal(result, "yes", `expected ${commandName} to be eligible`);
+    }
+
+    // init should NOT trigger the prompt
+    {
+      const result = await maybeAskForGitHubStarAfterCommand({
+        version: "1.2.3",
+        homeDir: await mkdtemp(join(tmpdir(), "omk-star-after-cmd-")),
+        env: { OMK_STAR_PROMPT: "force" },
+        stdin: { isTTY: true },
+        stdout: { isTTY: true },
+        argv: ["node", "omk", "init"],
+        commandName: "init",
+        prompt: async () => true,
+        starRepo: async () => {},
+      });
+      assert.equal(result, "skipped", "expected init to be skipped");
+    }
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("maybeAskForGitHubStarAfterCommand records NO and never calls starRepo", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "omk-star-after-no-"));
+  const starred = [];
+  try {
+    const result = await maybeAskForGitHubStarAfterCommand({
+      version: "1.2.3",
+      homeDir,
+      env: { OMK_STAR_PROMPT: "force" },
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      argv: ["node", "omk", "doctor"],
+      commandName: "doctor",
+      prompt: async () => false,
+      starRepo: async (url) => { starred.push(url); },
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+    });
+
+    assert.equal(result, "no");
+    assert.deepEqual(starred, []);
+    const state = await readStarPromptState(homeDir);
+    assert.equal(state.answer, "no");
+    assert.equal(state.starred, undefined);
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("maybeAskForGitHubStarAfterCommand gh failure records starError but returns command success", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "omk-star-after-err-"));
+  try {
+    const result = await maybeAskForGitHubStarAfterCommand({
+      version: "1.2.3",
+      homeDir,
+      env: { OMK_STAR_PROMPT: "force" },
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      argv: ["node", "omk", "doctor"],
+      commandName: "doctor",
+      prompt: async () => true,
+      starRepo: async () => { throw new Error("gh not found"); },
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+    });
+
+    assert.equal(result, "yes");
+    const state = await readStarPromptState(homeDir);
+    assert.equal(state.starred, false);
+    assert.equal(state.starError, "gh not found");
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("unauthenticated gh skips star with error recorded", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "omk-star-auth-err-"));
+  try {
+    const result = await maybeAskForGitHubStar({
+      version: "1.2.3",
+      homeDir,
+      env: { OMK_STAR_PROMPT: "force" },
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      argv: ["node", "omk", "doctor"],
+      commandName: "doctor",
+      prompt: async () => true,
+      starRepo: async () => { throw new Error("GitHub CLI not authenticated. Run `gh auth login` first."); },
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+    });
+
+    assert.equal(result, "yes");
+    const state = await readStarPromptState(homeDir);
+    assert.equal(state.starred, false);
+    assert.equal(state.starError, "GitHub CLI not authenticated. Run `gh auth login` first.");
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("getStarPromptSummary returns null when no state", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "omk-star-summary-null-"));
+  try {
+    const summary = await getStarPromptSummary(homeDir);
+    assert.equal(summary, null);
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("getStarPromptSummary returns summary when state exists", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "omk-star-summary-ok-"));
+  try {
+    await maybeAskForGitHubStarAfterCommand({
+      version: "1.2.3",
+      homeDir,
+      env: { OMK_STAR_PROMPT: "force" },
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      argv: ["node", "omk", "doctor"],
+      commandName: "doctor",
+      prompt: async () => true,
+      starRepo: async () => {},
+    });
+
+    const summary = await getStarPromptSummary(homeDir);
+    assert.deepEqual(summary, { answered: true, starred: true, starError: undefined });
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("state file privacy assertion", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "omk-star-privacy-"));
+  try {
+    await maybeAskForGitHubStarAfterCommand({
+      version: "1.2.3",
+      homeDir,
+      env: { OMK_STAR_PROMPT: "force" },
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      argv: ["node", "omk", "doctor"],
+      commandName: "doctor",
+      prompt: async () => true,
+      starRepo: async () => {},
+    });
+
+    const raw = await readFile(join(homeDir, ".omk", "star-prompt.json"), "utf-8");
+    const parsed = JSON.parse(raw);
+    for (const key of ["token", "password", "secret", "auth"]) {
+      assert.equal(parsed[key], undefined, `state file must not contain ${key}`);
+    }
+    assert.equal(raw.includes("ghp_"), false, "state file must not contain ghp_ token");
+    assert.equal(raw.includes("github_pat"), false, "state file must not contain github_pat token");
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
 });
 
 test("OMK version footer reads package version", () => {

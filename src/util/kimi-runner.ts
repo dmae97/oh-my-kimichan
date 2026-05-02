@@ -3,7 +3,9 @@ import { BannerReplacer } from "./kimi-banner.js";
 import { KimiBugFilter } from "./kimi-bug-filter.js";
 import { kimichanBanner, style } from "./theme.js";
 import { ensureDir, injectKimiGlobals, getProjectRoot, pathExists } from "./fs.js";
-import { join } from "path";
+import { readClipboardImage } from "./clipboard-image.js";
+import { join, resolve } from "path";
+import { spawn } from "child_process";
 import type { TaskRunner, TaskResult } from "../contracts/orchestration.js";
 import type { DagNode } from "../orchestration/dag.js";
 import { runShellStreaming } from "./shell.js";
@@ -17,12 +19,15 @@ export async function runKimiInteractive(
     cwd?: string;
     env?: Record<string, string>;
     onMeta?: (meta: { directory?: string; session?: string; model?: string }) => void;
+    onData?: (data: string) => void;
   }
-): Promise<void> {
+): Promise<number> {
   const resources = await getOmkResourceSettings();
 
   // Debug: log args so we can verify MCP/skills flags are present
-  process.stderr.write(`[omk-debug] runKimiInteractive args: ${JSON.stringify(args)}\n`);
+  if (process.env.OMK_DEBUG === "1") {
+    process.stderr.write(`[omk-debug] runKimiInteractive args: ${JSON.stringify(args)}\n`);
+  }
 
   const replacer = new BannerReplacer((meta) => {
     writeStdout(kimichanBanner(meta, formatOmkVersionFooter()) + "\n");
@@ -86,6 +91,7 @@ export async function runKimiInteractive(
 
   // stdout → 터미널 (버그 필터 → 배너 필터링 적용)
   ptyProcess.onData((data) => {
+    options?.onData?.(data);
     const bugResult = bugFilter.process(data);
     if (bugResult.sendEnter) {
       ptyProcess.write("\n");
@@ -106,7 +112,50 @@ export async function runKimiInteractive(
   process.stdin.setEncoding("utf8");
   process.stdin.resume();
   process.stdin.on("data", (data: string | Buffer) => {
-    ptyProcess.write(typeof data === "string" ? data : data.toString("utf8"));
+    const text = typeof data === "string" ? data : data.toString("utf8");
+
+    // Ctrl+V (0x16) — paste clipboard image directly into the prompt
+    if (text.includes("\x16")) {
+      const remaining = text.replace(/\x16/g, "");
+      const result = readClipboardImage(getProjectRoot());
+      if (result.path && result.relativePath) {
+        // If user pressed Ctrl+V by itself, auto-submit with a newline so Kimi sees it immediately.
+        // If Ctrl+V was mixed with other typed text, only insert the path without newline.
+        const autoSubmit = remaining.trim().length === 0 ? "\n" : "";
+        ptyProcess.write(`[IMAGE: ./${result.relativePath}]${autoSubmit}`);
+      } else if (remaining.trim().length === 0) {
+        ptyProcess.write(`[Clipboard: no image found]\n`);
+      }
+      if (remaining) {
+        ptyProcess.write(remaining);
+      }
+      return;
+    }
+
+    // /paste-image — explicit command to insert clipboard image path
+    if (text.trim() === "/paste-image") {
+      const result = readClipboardImage(getProjectRoot());
+      if (result.path && result.relativePath) {
+        ptyProcess.write(`[IMAGE: ./${result.relativePath}]\n`);
+      } else {
+        ptyProcess.write(`[Clipboard image error: ${result.error ?? "No image found"}]\n`);
+      }
+      return;
+    }
+
+    // /goal-image — create an omk goal from clipboard image and run in parallel
+    if (text.trim() === "/goal-image") {
+      const result = readClipboardImage(getProjectRoot());
+      if (result.path && result.relativePath) {
+        ptyProcess.write(`[Goal image: ./${result.relativePath}] — spawning parallel agents…\n`);
+        spawnImageGoal(result.path, result.relativePath);
+      } else {
+        ptyProcess.write(`[Clipboard image error: ${result.error ?? "No image found"}]\n`);
+      }
+      return;
+    }
+
+    ptyProcess.write(text);
   });
 
   // 터미널 리사이즈 → pty 동기화
@@ -115,7 +164,7 @@ export async function runKimiInteractive(
   });
 
   // 종료 대기
-  return new Promise<void>((resolve) => {
+  return new Promise<number>((resolve) => {
     ptyProcess.onExit(({ exitCode }) => {
       const bugRest = bugFilter.forceFlush();
       if (bugRest) writeStdout(statusLine.process(bugRest));
@@ -131,7 +180,7 @@ export async function runKimiInteractive(
       if (exitCode !== 0) {
         process.stderr.write(style.red(`[omk] kimi exited with code ${exitCode}\n`));
       }
-      resolve();
+      resolve(exitCode);
     });
   });
 }
@@ -214,10 +263,14 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
       currentOnThinking = fn;
     },
 
+    fork(newOnThinking) {
+      return createKimiTaskRunner({ ...options, onThinking: newOnThinking });
+    },
+
     async run(node: DagNode, nodeEnv: Record<string, string>): Promise<TaskResult> {
       const mergedEnv = { ...env, ...nodeEnv };
       const args: string[] = [];
-      await injectKimiGlobals(args, { mcpScope, skillsScope });
+      await injectKimiGlobals(args, { mcpScope, skillsScope, role: node.role });
 
       const resolvedAgentFile = roleAgentFiles
         ? await resolveAgentFileForRole(node.role, agentFile)
@@ -280,6 +333,59 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
   };
 
   return runner;
+}
+
+function spawnImageGoal(imagePath: string, relativePath: string): void {
+  const goalPrompt = `Analyze and process the attached image at ${relativePath}. Inspect the image contents, describe what you see, and propose relevant actions or code changes.`;
+  const omkCli = process.argv[1] ? resolve(process.argv[1]) : "omk";
+  const root = getProjectRoot();
+
+  // Step 1: create goal
+  const create = spawn(process.execPath, [omkCli, "goal", "create", goalPrompt, "--json"], {
+    cwd: root,
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: process.env as NodeJS.ProcessEnv,
+  });
+
+  let stdout = "";
+  let stderr = "";
+  create.stdout.on("data", (d: Buffer) => {
+    stdout += d.toString("utf8");
+  });
+  create.stderr.on("data", (d: Buffer) => {
+    stderr += d.toString("utf8");
+  });
+
+  create.on("close", (code: number | null) => {
+    if (code !== 0) {
+      process.stderr.write(
+        `[omk] goal create failed for image ${relativePath}${stderr ? `: ${stderr.trim()}` : ""}\n`
+      );
+      return;
+    }
+    try {
+      const spec = JSON.parse(stdout);
+      const goalId = spec.goalId as string | undefined;
+      if (!goalId) {
+        process.stderr.write(`[omk] goal create returned no goalId\n`);
+        return;
+      }
+      // Step 2: run goal in parallel (detached)
+      const run = spawn(process.execPath, [omkCli, "goal", "run", goalId], {
+        cwd: root,
+        detached: true,
+        stdio: "ignore",
+        env: process.env as NodeJS.ProcessEnv,
+      });
+      run.unref();
+      process.stderr.write(`[omk] Spawned parallel goal ${goalId} for image ${relativePath}\n`);
+    } catch {
+      process.stderr.write(`[omk] Failed to parse goal create output: ${stdout.slice(0, 200)}\n`);
+    }
+  });
+
+  create.unref();
 }
 
 function buildNodeMessage(

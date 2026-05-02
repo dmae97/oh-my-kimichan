@@ -45,7 +45,7 @@ test("Kimi usage masks OAuth identity and parses 5h/weekly quota", async () => {
     assert.equal(usage.oauth.displayId, "de…r@example.com");
     assert.equal(usage.quota.weekly?.remainingPercent, 80);
     assert.equal(usage.quota.fiveHour?.remainingPercent, 70);
-    assert.equal(formatKimiUsageInline(usage), "acct:de…r@example.com | 5h:70% left | wk:80% left");
+    assert.equal(formatKimiUsageInline(usage), "acct:de…r@example.com | 5h:30% used | wk:20% used");
   } finally {
     await rm(home, { recursive: true, force: true });
   }
@@ -53,10 +53,10 @@ test("Kimi usage masks OAuth identity and parses 5h/weekly quota", async () => {
 
 test("Kimi context status line is augmented once", () => {
   const input = "context: 35.6% (93.2k/262.1k) | in:93.2k out:1.8k";
-  const once = enhanceKimiContextStatusLine(input, "acct:oauth:abc | 5h:70% left | wk:80% left", false);
-  const twice = enhanceKimiContextStatusLine(once, "acct:oauth:abc | 5h:70% left | wk:80% left", false);
+  const once = enhanceKimiContextStatusLine(input, "acct:oauth:abc | 5h:30% used | wk:20% used", false);
+  const twice = enhanceKimiContextStatusLine(once, "acct:oauth:abc | 5h:30% used | wk:20% used", false);
 
-  assert.equal(once, "omk:acct:oauth:abc | 5h:70% left | wk:80% left | context: 35.6% (93.2k/262.1k) | in:93.2k out:1.8k");
+  assert.equal(once, "omk:acct:oauth:abc | 5h:30% used | wk:20% used | context: 35.6% (93.2k/262.1k) | in:93.2k out:1.8k");
   assert.equal(twice, once);
 });
 

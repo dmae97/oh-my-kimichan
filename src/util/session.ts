@@ -1,4 +1,4 @@
-export function createOmkSessionId(prefix: "chat" | "plan" | "run" | "team" | "session" = "session"): string {
+export function createOmkSessionId(prefix: "chat" | "plan" | "run" | "team" | "session" | "feature" | "bugfix" | "refactor" | "review" = "session"): string {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   return `${prefix}-${timestamp}-${process.pid}`;
 }

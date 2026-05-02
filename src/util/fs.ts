@@ -15,7 +15,10 @@ import { dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import { homedir } from "os";
 import { execSync } from "child_process";
 import { GLOBAL_MEMORY_CONFIG_TOML, getGlobalMemoryConfigPath } from "../memory/memory-config.js";
+import { SyncManifestEntry, sha256, simpleDiff } from "./sync-manifest.js";
 import { getOmkResourceSettings, type OmkRuntimeScope } from "./resource-profile.js";
+import { getKimiCapabilities } from "./kimi-capability.js";
+import { resolveRuntimeProfile, buildProfileArgs } from "./runtime-profile.js";
 
 export async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
@@ -35,9 +38,47 @@ export async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+function isGlobalWriteAllowed(): boolean {
+  return process.env.OMK_MCP_ALLOW_WRITE_CONFIG === "1";
+}
+
+export function getManifestPath(): string {
+  return getOmkPath("sync-manifest.json");
+}
+
+export function getBackupDir(timestamp: string): string {
+  return getOmkPath(join("sync-backups", timestamp));
+}
+
+export async function readManifest(): Promise<SyncManifestEntry[]> {
+  const path = getManifestPath();
+  if (!(await pathExists(path))) return [];
+  try {
+    const content = await readFile(path, "utf-8");
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed)) return parsed as SyncManifestEntry[];
+  } catch {
+    // ignore invalid manifest
+  }
+  return [];
+}
+
+export async function writeManifest(entries: SyncManifestEntry[]): Promise<void> {
+  const path = getManifestPath();
+  await ensureDir(dirname(path));
+  await writeFile(path, JSON.stringify(entries, null, 2), "utf-8");
+}
+
+export async function backupFile(sourcePath: string, backupDir: string, relativePath: string): Promise<string> {
+  const dest = join(backupDir, relativePath);
+  await ensureDir(dirname(dest));
+  await copyFile(sourcePath, dest);
+  return dest;
+}
+
 export async function isDirectory(path: string): Promise<boolean> {
   try {
-    const entries = await readdir(path);
+    await readdir(path);
     return true;
   } catch {
     return false;
@@ -93,7 +134,12 @@ const OMK_END_MARKER = "# >>> end omk managed hooks";
  * .omk/kimi.config.toml 의 hooks 를 ~/.kimi/config.toml 에 병합.
  * 상대 경로를 절대 경로로 변환하여 어디서 실행돼도 작동하도록 함.
  */
-export async function mergeKimiHooks(omkConfigPath: string): Promise<boolean> {
+export async function mergeKimiHooks(
+  omkConfigPath: string,
+  options: { dryRun?: boolean; diff?: boolean; manifest?: SyncManifestEntry[]; timestamp?: string } = {}
+): Promise<boolean> {
+  const manifest = options.manifest ?? [];
+  const timestamp = options.timestamp ?? new Date().toISOString();
   const kimiConfigPath = getKimiConfigPath();
   const omkContent = await readTextFile(omkConfigPath, "");
   if (!omkContent.trim()) return false;
@@ -105,6 +151,7 @@ export async function mergeKimiHooks(omkConfigPath: string): Promise<boolean> {
   if (!hooksContent) return false;
 
   let kimiContent = await readTextFile(kimiConfigPath, "");
+  const previousContent = kimiContent;
 
   // 기존 omk 섹션 제거
   const startIdx = kimiContent.indexOf(OMK_START_MARKER);
@@ -125,7 +172,56 @@ export async function mergeKimiHooks(omkConfigPath: string): Promise<boolean> {
     kimiContent = kimiContent.trimEnd() + "\n\n" + omkSection;
   }
 
-  await writeFileSafe(kimiConfigPath, kimiContent);
+  if (previousContent === kimiContent) return false;
+
+  if (!isGlobalWriteAllowed()) {
+    console.warn(`⚠️  Skipping global write to ${kimiConfigPath} (set OMK_MCP_ALLOW_WRITE_CONFIG=1 to allow)`);
+    manifest.push({
+      path: kimiConfigPath,
+      scope: "global",
+      action: "blocked",
+      previousHash: previousContent.trim() ? sha256(previousContent) : null,
+      newHash: sha256(kimiContent),
+      backupPath: null,
+      timestamp,
+    });
+    return true;
+  }
+
+  if (options.diff && previousContent.trim()) {
+    console.log(`--- ${kimiConfigPath}`);
+    console.log(`+++ ${kimiConfigPath}`);
+    console.log(simpleDiff(previousContent, kimiContent));
+  }
+
+  if (!options.dryRun) {
+    let backupPath: string | null = null;
+    if (await pathExists(kimiConfigPath)) {
+      const backupDir = getBackupDir(timestamp);
+      backupPath = await backupFile(kimiConfigPath, backupDir, relative(homedir(), kimiConfigPath));
+    }
+    await writeFileSafe(kimiConfigPath, kimiContent);
+    manifest.push({
+      path: kimiConfigPath,
+      scope: "global",
+      action: previousContent.trim() ? "update" : "create",
+      previousHash: previousContent.trim() ? sha256(previousContent) : null,
+      newHash: sha256(kimiContent),
+      backupPath,
+      timestamp,
+    });
+  } else {
+    manifest.push({
+      path: kimiConfigPath,
+      scope: "global",
+      action: previousContent.trim() ? "update" : "create",
+      previousHash: previousContent.trim() ? sha256(previousContent) : null,
+      newHash: sha256(kimiContent),
+      backupPath: null,
+      timestamp,
+    });
+  }
+
   return true;
 }
 
@@ -155,7 +251,11 @@ function extractHooksBlocks(content: string): string {
  * ────────────────────────────────────────────── */
 
 /** 프로젝트의 .omk/mcp.json + .kimi/mcp.json → ~/.kimi/mcp.json 병합 */
-export async function syncKimiMcpGlobal(): Promise<boolean> {
+export async function syncKimiMcpGlobal(
+  options: { dryRun?: boolean; diff?: boolean; manifest?: SyncManifestEntry[]; timestamp?: string } = {}
+): Promise<boolean> {
+  const manifest = options.manifest ?? [];
+  const timestamp = options.timestamp ?? new Date().toISOString();
   const globalMcpPath = join(homedir(), ".kimi", "mcp.json");
   const projectConfigs = [getOmkPath("mcp.json"), join(getProjectRoot(), ".kimi", "mcp.json")];
 
@@ -196,10 +296,11 @@ export async function syncKimiMcpGlobal(): Promise<boolean> {
 
   // 기존 글로벌 mcp.json 읽기
   let globalParsed: { mcpServers?: Record<string, unknown> } = {};
+  let previousContent = "";
   if (await pathExists(globalMcpPath)) {
     try {
-      const content = await readTextFile(globalMcpPath, "{}");
-      globalParsed = JSON.parse(content);
+      previousContent = await readTextFile(globalMcpPath, "{}");
+      globalParsed = JSON.parse(previousContent);
     } catch {
       // ignore
     }
@@ -207,13 +308,65 @@ export async function syncKimiMcpGlobal(): Promise<boolean> {
 
   // 병합: 글로벌 먼저, 프로젝트가 같은 키 덮어씀
   const finalServers = { ...(globalParsed.mcpServers ?? {}), ...mergedServers };
+  const newContent = JSON.stringify({ mcpServers: finalServers }, null, 2);
 
-  await writeFileSafe(globalMcpPath, JSON.stringify({ mcpServers: finalServers }, null, 2));
+  if (previousContent === newContent) return false;
+
+  if (!isGlobalWriteAllowed()) {
+    console.warn(`⚠️  Skipping global write to ${globalMcpPath} (set OMK_MCP_ALLOW_WRITE_CONFIG=1 to allow)`);
+    manifest.push({
+      path: globalMcpPath,
+      scope: "global",
+      action: "blocked",
+      previousHash: previousContent ? sha256(previousContent) : null,
+      newHash: sha256(newContent),
+      backupPath: null,
+      timestamp,
+    });
+    return true;
+  }
+
+  if (options.diff && previousContent) {
+    console.log(`--- ${globalMcpPath}`);
+    console.log(`+++ ${globalMcpPath}`);
+    console.log(simpleDiff(previousContent, newContent));
+  }
+
+  if (!options.dryRun) {
+    let backupPath: string | null = null;
+    if (await pathExists(globalMcpPath)) {
+      const backupDir = getBackupDir(timestamp);
+      backupPath = await backupFile(globalMcpPath, backupDir, relative(homedir(), globalMcpPath));
+    }
+    await writeFileSafe(globalMcpPath, newContent);
+    manifest.push({
+      path: globalMcpPath,
+      scope: "global",
+      action: previousContent ? "update" : "create",
+      previousHash: previousContent ? sha256(previousContent) : null,
+      newHash: sha256(newContent),
+      backupPath,
+      timestamp,
+    });
+  } else {
+    manifest.push({
+      path: globalMcpPath,
+      scope: "global",
+      action: previousContent ? "update" : "create",
+      previousHash: previousContent ? sha256(previousContent) : null,
+      newHash: sha256(newContent),
+      backupPath: null,
+      timestamp,
+    });
+  }
+
   return true;
 }
 
 /** 프로젝트의 .kimi/skills/* → ~/.kimi/skills/ 심링크 */
-export async function syncKimiSkillsGlobal(): Promise<boolean> {
+export async function syncKimiSkillsGlobal(
+  options: { dryRun?: boolean; manifest?: SyncManifestEntry[]; timestamp?: string } = {}
+): Promise<boolean> {
   const projectSkillsDir = join(getProjectRoot(), ".kimi", "skills");
   const globalSkillsDir = join(homedir(), ".kimi", "skills");
 
@@ -222,6 +375,37 @@ export async function syncKimiSkillsGlobal(): Promise<boolean> {
   const entries = await readdir(projectSkillsDir, { withFileTypes: true });
   const skillDirs = entries.filter((e) => e.isDirectory());
   if (skillDirs.length === 0) return false;
+
+  if (options.dryRun) {
+    for (const dir of skillDirs) {
+      options.manifest?.push({
+        path: join(globalSkillsDir, dir.name),
+        scope: "global",
+        action: "symlink",
+        previousHash: null,
+        newHash: null,
+        backupPath: null,
+        timestamp: options.timestamp ?? new Date().toISOString(),
+      });
+    }
+    return true;
+  }
+
+  if (!isGlobalWriteAllowed()) {
+    console.warn(`⚠️  Skipping global skills sync to ${globalSkillsDir} (set OMK_MCP_ALLOW_WRITE_CONFIG=1 to allow)`);
+    for (const dir of skillDirs) {
+      options.manifest?.push({
+        path: join(globalSkillsDir, dir.name),
+        scope: "global",
+        action: "blocked",
+        previousHash: null,
+        newHash: null,
+        backupPath: null,
+        timestamp: options.timestamp ?? new Date().toISOString(),
+      });
+    }
+    return true;
+  }
 
   await ensureDir(globalSkillsDir);
 
@@ -287,43 +471,102 @@ async function copyDir(src: string, dest: string): Promise<void> {
 }
 
 /** local graph memory policy를 ~/.kimi/omk.memory.toml 에 동기화 */
-export async function syncKimiMemoryGlobal(): Promise<boolean> {
-  await writeFileSafe(getGlobalMemoryConfigPath(), GLOBAL_MEMORY_CONFIG_TOML);
+export async function syncKimiMemoryGlobal(
+  options: { dryRun?: boolean; diff?: boolean; manifest?: SyncManifestEntry[]; timestamp?: string } = {}
+): Promise<boolean> {
+  const manifest = options.manifest ?? [];
+  const timestamp = options.timestamp ?? new Date().toISOString();
+  const memoryPath = getGlobalMemoryConfigPath();
+  const previousContent = await readTextFile(memoryPath, "");
+  const newContent = GLOBAL_MEMORY_CONFIG_TOML;
+
+  if (previousContent === newContent) return false;
+
+  if (!isGlobalWriteAllowed()) {
+    console.warn(`⚠️  Skipping global write to ${memoryPath} (set OMK_MCP_ALLOW_WRITE_CONFIG=1 to allow)`);
+    manifest.push({
+      path: memoryPath,
+      scope: "global",
+      action: "blocked",
+      previousHash: previousContent.trim() ? sha256(previousContent) : null,
+      newHash: sha256(newContent),
+      backupPath: null,
+      timestamp,
+    });
+    return true;
+  }
+
+  if (options.diff && previousContent.trim()) {
+    console.log(`--- ${memoryPath}`);
+    console.log(`+++ ${memoryPath}`);
+    console.log(simpleDiff(previousContent, newContent));
+  }
+
+  if (!options.dryRun) {
+    let backupPath: string | null = null;
+    if (await pathExists(memoryPath)) {
+      const backupDir = getBackupDir(timestamp);
+      backupPath = await backupFile(memoryPath, backupDir, relative(homedir(), memoryPath));
+    }
+    await writeFileSafe(memoryPath, newContent);
+    manifest.push({
+      path: memoryPath,
+      scope: "global",
+      action: previousContent.trim() ? "update" : "create",
+      previousHash: previousContent.trim() ? sha256(previousContent) : null,
+      newHash: sha256(newContent),
+      backupPath,
+      timestamp,
+    });
+  } else {
+    manifest.push({
+      path: memoryPath,
+      scope: "global",
+      action: previousContent.trim() ? "update" : "create",
+      previousHash: previousContent.trim() ? sha256(previousContent) : null,
+      newHash: sha256(newContent),
+      backupPath: null,
+      timestamp,
+    });
+  }
+
   return true;
 }
 
 /** Sync hooks + MCP + skills to ~/.kimi/ at once */
-export async function syncAllKimiGlobals(): Promise<void> {
+export async function syncAllKimiGlobals(
+  options: { dryRun?: boolean; diff?: boolean; manifest?: SyncManifestEntry[]; timestamp?: string } = {}
+): Promise<void> {
   const configFile = getOmkPath("kimi.config.toml");
   if (await pathExists(configFile)) {
     try {
-      await mergeKimiHooks(configFile);
+      await mergeKimiHooks(configFile, options);
     } catch (err) {
       console.warn("⚠️  hooks sync failed:", (err as Error).message);
     }
   }
 
   try {
-    await syncKimiMcpGlobal();
+    await syncKimiMcpGlobal(options);
   } catch (err) {
     console.warn("⚠️  MCP global sync failed:", (err as Error).message);
   }
 
   try {
-    await syncKimiSkillsGlobal();
+    await syncKimiSkillsGlobal(options);
   } catch (err) {
     console.warn("⚠️  skills global sync failed:", (err as Error).message);
   }
 
   try {
-    await syncKimiMemoryGlobal();
+    await syncKimiMemoryGlobal(options);
   } catch (err) {
     console.warn("⚠️  local graph memory global sync failed:", (err as Error).message);
   }
 }
 
 /** .omk/mcp.json + .kimi/mcp.json + ~/.kimi/mcp.json 수집 */
-export async function collectMcpConfigs(scope: OmkRuntimeScope = "all"): Promise<string[]> {
+export async function collectMcpConfigs(scope: OmkRuntimeScope = "project"): Promise<string[]> {
   const configs: string[] = [];
   if (scope === "none") return configs;
 
@@ -444,24 +687,33 @@ function isWebp(bytes: Uint8Array): boolean {
 /** Kimi CLI 실행 인자에 model + MCP + Skills 주입 (전역 동기화는 별도) */
 export async function injectKimiGlobals(
   args: string[],
-  options: { mcpScope?: OmkRuntimeScope; skillsScope?: OmkRuntimeScope } = {}
+  options: { mcpScope?: OmkRuntimeScope; skillsScope?: OmkRuntimeScope; role?: string } = {}
 ): Promise<void> {
   const resources = await getOmkResourceSettings();
   const mcpScope = options.mcpScope ?? resources.mcpScope;
   const skillsScope = options.skillsScope ?? resources.skillsScope;
 
-  // default_model이 있으면 주입 (agent-file 사용 시 model이 unset 될 수 있음)
-  const defaultModel = await getKimiDefaultModel();
-  if (defaultModel) {
-    args.push("--model", defaultModel);
+  // Resolve role-based runtime profile and inject supported flags
+  let injectedModel: string | undefined;
+  if (options.role) {
+    const profile = await resolveRuntimeProfile(options.role);
+    const caps = getKimiCapabilities();
+    const profileArgs = buildProfileArgs(profile, caps);
+    args.push(...profileArgs);
+    injectedModel = profile.model;
+
+    // maxOutputMb is not a native CLI flag; map to env hint if present
+    if (profile.maxOutputMb !== undefined && !process.env.OMK_MAX_OUTPUT_MB) {
+      // Handled downstream by resource-profile.ts / shell runners
+    }
   }
 
-  // Ensure global mcp.json is up-to-date before Kimi CLI reads it
-  if (mcpScope !== "none") {
-    try {
-      await syncKimiMcpGlobal();
-    } catch {
-      // ignore sync failure — we still pass whatever exists
+  // default_model이 있으면 주입 (agent-file 사용 시 model이 unset 될 수 있음)
+  // Profile model takes precedence; skip duplicate injection.
+  if (!injectedModel) {
+    const defaultModel = await getKimiDefaultModel();
+    if (defaultModel) {
+      args.push("--model", defaultModel);
     }
   }
 
@@ -479,8 +731,11 @@ export async function injectKimiGlobals(
     const skillDirs: string[] = [];
     if (skillsScope === "all" && await pathExists(globalSkillsDir)) skillDirs.push(globalSkillsDir);
     if (skillsScope !== "none" && await pathExists(projectSkillsDir)) skillDirs.push(projectSkillsDir);
+    const modelIdx = args.indexOf("--model");
+    const effectiveModel = modelIdx >= 0 ? args[modelIdx + 1] : null;
     console.error("[OMK_DEBUG] injectKimiGlobals:", {
-      model: defaultModel,
+      role: options.role ?? null,
+      model: effectiveModel,
       mcpFiles,
       skillDirs,
       mcpScope,

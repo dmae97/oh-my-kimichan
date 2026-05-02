@@ -36,7 +36,7 @@ export interface KimiQuotaRow {
   used: number;
   limit: number;
   remaining: number;
-  remainingPercent: number;
+  remainingPercent: number | null;
   resetHint?: string;
   window: "5h" | "weekly" | "other";
 }
@@ -90,13 +90,6 @@ function isSameKstDay(d1: Date, d2: Date): boolean {
     d1.getUTCMonth() === d2.getUTCMonth() &&
     d1.getUTCDate() === d2.getUTCDate()
   );
-}
-
-function isSameKstWeek(d1: Date, d2: Date): boolean {
-  // Rolling 7-day window in KST, not calendar-week reset. This matches quota visibility better.
-  const dayMs = 24 * 60 * 60 * 1000;
-  const diff = Math.abs(d1.getTime() - d2.getTime());
-  return diff <= 7 * dayMs;
 }
 
 function overlapsWindow(st: SessionTime, windowStartSec: number, windowEndSec: number): boolean {
@@ -271,8 +264,9 @@ export async function getKimiUsage(options: GetKimiUsageOptions = {}): Promise<U
       totalSecondsLast5Hours += overlappedSeconds(st, last5hStart, nowSec);
       sessionCountLast5Hours++;
     }
-    if (isSameKstWeek(st.date, nowKst)) {
-      totalSecondsWeek += duration;
+    const weekStart = nowSec - 7 * 24 * 3600;
+    if (overlapsWindow(st, weekStart, nowSec)) {
+      totalSecondsWeek += overlappedSeconds(st, weekStart, nowSec);
       sessionCountWeek++;
     }
   }
@@ -383,7 +377,7 @@ function toQuotaRow(data: JsonObject, defaultLabel: string, window: KimiQuotaRow
   const safeLimit = Math.max(0, limit ?? 0);
   const safeUsed = Math.max(0, used ?? 0);
   const remaining = safeLimit > 0 ? Math.min(Math.max(safeLimit - safeUsed, 0), safeLimit) : 0;
-  const remainingPercent = safeLimit > 0 ? Math.round((remaining / safeLimit) * 100) : 0;
+  const remainingPercent = safeLimit > 0 ? Math.round((remaining / safeLimit) * 100) : null;
   return {
     label: String(data.name ?? data.title ?? defaultLabel),
     used: safeUsed,
@@ -508,7 +502,10 @@ export function formatDuration(seconds: number): string {
 }
 
 export function formatQuota(row: KimiQuotaRow | undefined, fallbackSeconds: number): string {
-  if (row) return `${row.remainingPercent}% left`;
+  if (row && row.remainingPercent !== null) {
+    const usedPercent = Math.min(100, Math.max(0, 100 - row.remainingPercent));
+    return `${usedPercent}% used`;
+  }
   return formatDuration(fallbackSeconds);
 }
 

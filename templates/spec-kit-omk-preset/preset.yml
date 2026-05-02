@@ -1,0 +1,12 @@
+name: omk
+version: 1.0.0
+description: OMK (oh-my-kimichan) orchestration preset. Generates spec-kit artifacts optimized for OMK DAG execution, evidence gates, worktree isolation, and multi-agent parallel pipelines.
+author: oh-my-kimichan
+priority: 100
+templates:
+  spec: templates/spec-template.md
+  plan: templates/plan-template.md
+  tasks: templates/tasks-template.md
+commands:
+  plan: commands/plan.md
+  tasks: commands/tasks.md

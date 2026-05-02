@@ -1,5 +1,6 @@
 import { style } from "./theme.js";
 import { formatKimiUsageInline, getKimiUsage, type UsageStats } from "./kimi-usage.js";
+import { buildUsageViewModel } from "./usage-view-model.js";
 
 function miniGauge(percent: number, width = 6): string {
   const safePercent = Math.min(100, Math.max(0, percent));
@@ -14,17 +15,24 @@ function miniGauge(percent: number, width = 6): string {
 export function formatKimiUsageGauges(stats: UsageStats): string {
   const LIMIT_HOURS = 5;
   const limitSeconds = LIMIT_HOURS * 3600;
-  const fiveHourPercent = stats.quota.fiveHour
-    ? Math.min(100, 100 - stats.quota.fiveHour.remainingPercent)
+  const vm = buildUsageViewModel(stats);
+
+  if (vm.source === "missingAuth") {
+    return "login required";
+  }
+
+  // Convert remaining percent to used percent to match Kimi console style.
+  const fiveHourPercent = vm.fiveHour.percent !== null
+    ? Math.min(100, Math.max(0, 100 - vm.fiveHour.percent))
     : Math.min(100, Math.round((stats.totalSecondsLast5Hours / limitSeconds) * 100));
-  const weekPercent = stats.quota.weekly
-    ? Math.min(100, 100 - stats.quota.weekly.remainingPercent)
+  const weekPercent = vm.weekly.percent !== null
+    ? Math.min(100, Math.max(0, 100 - vm.weekly.percent))
     : Math.min(100, Math.round((stats.totalSecondsWeek / (limitSeconds * 7)) * 100));
-  const fiveHint = stats.quota.fiveHour?.resetHint
-    ? style.gray(` ↻${stats.quota.fiveHour.resetHint.replace(/^resets\s+/, "")}`)
+  const fiveHint = vm.fiveHour.resetHint
+    ? style.gray(` ↻${vm.fiveHour.resetHint.replace(/^resets\s+/, "")}`)
     : "";
-  const weekHint = stats.quota.weekly?.resetHint
-    ? style.gray(` ↻${stats.quota.weekly.resetHint.replace(/^resets\s+/, "")}`)
+  const weekHint = vm.weekly.resetHint
+    ? style.gray(` ↻${vm.weekly.resetHint.replace(/^resets\s+/, "")}`)
     : "";
   return `5h[${miniGauge(fiveHourPercent)}${fiveHint}] wk[${miniGauge(weekPercent)}${weekHint}]`;
 }

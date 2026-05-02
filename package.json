@@ -1,6 +1,6 @@
 {
   "name": "oh-my-kimichan",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Kimi Code CLI용 multi-agent orchestration harness. Kimi K2.6 위에 올라가는 하네스 + 팀 런타임 + 스킬/훅/워크플로 배포판",
   "type": "module",
   "bin": {
@@ -10,10 +10,11 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
-    "lint": "eslint src/ && npm run secret:scan",
+    "lint": "node node_modules/eslint/bin/eslint.js --max-warnings=0 src/ && npm run secret:scan",
     "check": "tsc --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
     "secret:scan": "node scripts/secret-scan.mjs",
+    "audit:package": "node scripts/package-audit.mjs",
     "prepare": "npm run build",
     "prepublishOnly": "npm run lint && npm test && npm run build"
   },
@@ -84,7 +85,6 @@
   "files": [
     "dist",
     "templates",
-    "docs",
     "kimichan.png",
     "kimiagent.png",
     "omk-hud-1.png",

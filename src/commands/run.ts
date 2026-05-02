@@ -7,21 +7,19 @@ import { createKimiTaskRunner } from "../util/kimi-runner.js";
 import { createOmkSessionEnv } from "../util/session.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { t } from "../util/i18n.js";
-import { createRoutedRunState, createDagFromRunState, refreshRunStateEstimate, routeRunState } from "../orchestration/run-state.js";
+import { createRoutedRunState, refreshRunStateEstimate, routeRunState, createExecutableDagFromState } from "../orchestration/run-state.js";
 import { createExecutor } from "../orchestration/executor.js";
 import { createStatePersister } from "../orchestration/state-persister.js";
 import { formatOmkVersionFooter } from "../util/version.js";
 import type { RunState } from "../contracts/orchestration.js";
-import type { Dag } from "../orchestration/dag.js";
+
 
 export async function runCommand(
   flow: string | undefined,
   goal: string | undefined,
-  options: { workers?: string; runId?: string }
+  options: { workers?: string; runId?: string; goalId?: string }
 ): Promise<void> {
   const root = getProjectRoot();
-  process.env.OMK_MCP_SCOPE = "all";
-  process.env.OMK_SKILLS_SCOPE = "all";
   const resources = await getOmkResourceSettings();
   const workerCount = normalizeWorkerCount(options.workers, resources.maxWorkers);
 
@@ -32,6 +30,30 @@ export async function runCommand(
   let startedAt: string;
   let isResume = false;
   let runState: RunState | undefined;
+  let goalSnapshot: RunState["goalSnapshot"] | undefined;
+
+  // Load goal if --goal is provided
+  if (options.goalId) {
+    const { createGoalPersister } = await import("../goal/persistence.js");
+    const goalPersister = createGoalPersister(join(root, ".omk", "goals"));
+    const goalSpec = await goalPersister.load(options.goalId);
+    if (!goalSpec) {
+      console.error(status.error(`Goal not found: ${options.goalId}`));
+      process.exit(1);
+    }
+    goalSnapshot = {
+      title: goalSpec.title,
+      objective: goalSpec.objective,
+      successCriteria: goalSpec.successCriteria.map((c) => ({
+        id: c.id,
+        description: c.description,
+        requirement: c.requirement,
+      })),
+    };
+    if (!resolvedGoal) {
+      resolvedGoal = goalSpec.objective;
+    }
+  }
 
   if (options.runId) {
     isResume = true;
@@ -93,6 +115,8 @@ export async function runCommand(
       goal: resolvedGoal,
       workerCount,
       startedAt,
+      goalId: options.goalId,
+      goalSnapshot,
     });
     await writeFile(join(runDir, "state.json"), JSON.stringify(runState, null, 2));
   }
@@ -194,8 +218,8 @@ export async function runCommand(
     timeout: 0,
     agentFile,
     promptPrefix: promptText,
-    mcpScope: "all",
-    skillsScope: "all",
+    mcpScope: resources.mcpScope,
+    skillsScope: resources.skillsScope,
     roleAgentFiles: true,
     env: {
       ...createOmkSessionEnv(root, runId),
@@ -205,8 +229,8 @@ export async function runCommand(
       OMK_WORKERS: String(workerCount),
       OMK_DAG_ROUTING: "1",
       OMK_DAG_STATE_PATH: statePath,
-      OMK_MCP_SCOPE: "all",
-      OMK_SKILLS_SCOPE: "all",
+      OMK_MCP_SCOPE: resources.mcpScope,
+      OMK_SKILLS_SCOPE: resources.skillsScope,
     },
   });
 
@@ -240,11 +264,15 @@ function createInteractiveRunState(input: {
   goal: string;
   workerCount: number;
   startedAt: string;
+  goalId?: string;
+  goalSnapshot?: RunState["goalSnapshot"];
 }): RunState {
   const state = createRoutedRunState({
     runId: input.runId,
     startedAt: input.startedAt,
     workerCount: input.workerCount,
+    goalId: input.goalId,
+    goalSnapshot: input.goalSnapshot,
     nodes: [
       {
         id: "bootstrap",
@@ -296,30 +324,6 @@ function createInteractiveRunState(input: {
     coordinator.startedAt = input.startedAt;
   }
   return refreshRunStateEstimate(state, input.workerCount);
-}
-
-function createExecutableDagFromState(state: RunState): Dag {
-  const dag = createDagFromRunState(state);
-  const runtimeById = new Map(state.nodes.map((node) => [node.id, node]));
-
-  for (const node of dag.nodes) {
-    const runtime = runtimeById.get(node.id);
-    if (runtime?.status !== "done") continue;
-    node.status = "done";
-    node.startedAt = runtime.startedAt;
-    node.completedAt = runtime.completedAt;
-    node.durationMs = runtime.durationMs;
-    node.attempts = runtime.attempts?.map((attempt) => ({ ...attempt }));
-  }
-
-  const bootstrap = dag.nodes.find((node) => node.id === "bootstrap");
-  if (bootstrap) {
-    bootstrap.status = "done";
-    bootstrap.startedAt ??= state.startedAt;
-    bootstrap.completedAt ??= state.startedAt;
-  }
-
-  return dag;
 }
 
 function logRunStateTransitions(stateSnapshot: RunState, previousStatuses: Map<string, string>): void {

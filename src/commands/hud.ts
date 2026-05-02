@@ -4,12 +4,21 @@ import { uptime } from "os";
 import { execFile, execSync } from "child_process";
 import { promisify } from "util";
 import { getOmkPath, pathExists, getProjectRoot } from "../util/fs.js";
-import { getKimiUsage, formatDuration, type UsageStats } from "../util/kimi-usage.js";
+import { getKimiUsage, type UsageStats } from "../util/kimi-usage.js";
+import { buildUsageViewModel } from "../util/usage-view-model.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { formatBytes } from "../util/output-buffer.js";
 import { formatOmkVersionFooter } from "../util/version.js";
 import { t } from "../util/i18n.js";
 import type { RunState } from "../contracts/orchestration.js";
+import type { GoalSpec, GoalEvidence } from "../contracts/goal.js";
+import {
+  parseRunStateResult,
+  buildRunViewModel,
+  renderRunSummary,
+  type RunViewModel,
+  type RunHealth,
+} from "../util/run-view-model.js";
 import {
   style,
   status,
@@ -38,19 +47,35 @@ export interface HudRunCandidate {
   hasState: boolean;
   hasGoal: boolean;
   hasPlan: boolean;
+  schemaVersion?: number;
 }
+
+export type HudSection = "run" | "project" | "resources";
 
 export interface HudRenderOptions {
   runId?: string;
   terminalWidth?: number;
   kimiUsage?: UsageStats;
   footerRefreshMs?: number;
+  compact?: boolean;
+  section?: HudSection;
 }
 
 export interface HudCommandOptions extends HudRenderOptions {
   watch?: boolean;
   refreshMs?: number;
   clear?: boolean;
+  noClear?: boolean;
+  alternateScreen?: boolean;
+}
+
+interface GoalData {
+  title: string;
+  status?: string;
+  requiredTotal: number;
+  requiredPassed: number;
+  firstUnmet?: { id: string; description: string };
+  latestEvidenceAt?: string;
 }
 
 function formatUptime(seconds: number): string {
@@ -58,29 +83,6 @@ function formatUptime(seconds: number): string {
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
   return `${h}h ${m}m ${s}s`;
-}
-
-function formatEtaMs(ms: number | undefined): string {
-  if (ms === undefined) return "unknown";
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-}
-
-function parseRunState(content: string): RunState | null {
-  try {
-    const value = JSON.parse(content) as Partial<RunState>;
-    if (!value || typeof value !== "object" || typeof value.runId !== "string" || !Array.isArray(value.nodes)) {
-      return null;
-    }
-    return value as RunState;
-  } catch {
-    return null;
-  }
 }
 
 function getDiskUsage(): { used: number; total: number; percent: number } | null {
@@ -174,21 +176,134 @@ function gitMarker(changeStatus: string): string {
   return style.orange("M");
 }
 
+function truncateLine(line: string, maxWidth: number): string {
+  const clean = sanitizeTerminalText(line);
+  if (clean.length <= maxWidth) return line;
+  const visible = clean.slice(0, Math.max(1, maxWidth - 1));
+  return visible + "…";
+}
+
+function healthColor(health: RunHealth): (s: string) => string {
+  switch (health) {
+    case "ok": return style.mint;
+    case "warn": return style.orange;
+    case "blocked": return style.orange;
+    case "failed": return style.red;
+    default: return style.gray;
+  }
+}
+
+function stateErrorRecovery(error: RunViewModel["stateError"], runId: string | null): string {
+  switch (error) {
+    case "corrupt": return `omk summary-show ${runId ?? "<run-id>"}`;
+    case "missing": return `omk run --run-id ${runId ?? "<id>"}`;
+    case "invalid":
+    case "oldSchema":
+      return `omk verify --run ${runId ?? "<run-id>"}`;
+    default:
+      return "";
+  }
+}
+
+async function loadGoalData(goalId: string): Promise<GoalData | null> {
+  const goalsBase = getOmkPath("goals");
+  const goalPath = join(goalsBase, goalId, "goal.json");
+  const evidencePath = join(goalsBase, goalId, "evidence.json");
+
+  try {
+    const goalContent = await readFile(goalPath, "utf-8");
+    const goal = JSON.parse(goalContent) as Partial<GoalSpec>;
+    if (!goal || typeof goal !== "object" || !goal.title) return null;
+
+    let evidence: GoalEvidence[] = [];
+    try {
+      const evContent = await readFile(evidencePath, "utf-8");
+      evidence = JSON.parse(evContent) as GoalEvidence[];
+    } catch {
+      // no evidence file
+    }
+
+    const criteria = (goal.successCriteria ?? []).filter((c) => c.requirement === "required");
+    const requiredTotal = criteria.length;
+    const requiredPassed = criteria.filter((c) =>
+      evidence.some((e) => e.criterionId === c.id && e.passed)
+    ).length;
+
+    const firstUnmet = criteria.find((c) =>
+      !evidence.some((e) => e.criterionId === c.id && e.passed)
+    );
+
+    const latestEvidenceAt = evidence.length > 0
+      ? evidence.sort((a, b) => b.checkedAt.localeCompare(a.checkedAt))[0].checkedAt
+      : undefined;
+
+    return {
+      title: goal.title,
+      status: goal.status,
+      requiredTotal,
+      requiredPassed,
+      firstUnmet: firstUnmet ? { id: firstUnmet.id, description: firstUnmet.description } : undefined,
+      latestEvidenceAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildSummaryBar(
+  vm: RunViewModel,
+  stateError: RunViewModel["stateError"],
+  _goalTitle: string | null,
+  width: number
+): string {
+  if (stateError !== "ok") {
+    const warning = `⚠ Latest Run state is ${stateError}. Run: ${stateErrorRecovery(stateError, vm.runId)}`;
+    return truncateLine(warning, width);
+  }
+
+  const summary = renderRunSummary(vm);
+  return truncateLine(summary, width);
+}
+
+function buildStateErrorPanel(
+  stateError: RunViewModel["stateError"],
+  runId: string | null
+): string {
+  const recovery = stateErrorRecovery(stateError, runId);
+  const lines = [
+    "",
+    `  ${style.orangeBold("⚠ State:")} ${style.orange(stateError)}`,
+    `  ${style.gray("Suggested recovery:")}`,
+    recovery ? `    ${style.cream(recovery)}` : "",
+    "",
+  ].filter(Boolean);
+  return panel(lines, gradient("Run State Warning"));
+}
+
 export function buildHudSidebar(
   state: RunState | null,
   changes: HudGitChange[],
-  options: { maxTodos?: number; maxFiles?: number } = {}
+  options: { maxTodos?: number; maxFiles?: number; viewModel?: RunViewModel; maxWidth?: number } = {}
 ): string {
   const maxTodos = options.maxTodos ?? 9;
   const maxFiles = options.maxFiles ?? 12;
   const lines: string[] = ["", `  ${style.pinkBold("Right Rail")}`];
+
+  const vm = options.viewModel ?? (state ? buildRunViewModel(state) : null);
 
   const nodes = [...(state?.nodes ?? [])].sort((a, b) => {
     const rank = statusRank(a.status) - statusRank(b.status);
     return rank !== 0 ? rank : a.id.localeCompare(b.id);
   });
 
-  if (state) {
+  if (vm) {
+    lines.push(`  ${style.gray("run")} ${style.creamBold(truncateText(vm.runId ?? "--", 34))}`);
+    lines.push(`  ${style.gray("progress")} ${style.mintBold(`${vm.progress.done}/${vm.progress.total}`)} ${style.gray(`done, ${vm.progress.running} active`)}`);
+    if (vm.health !== "ok") {
+      lines.push(`  ${style.gray("health")} ${healthColor(vm.health)(vm.health.toUpperCase())}`);
+    }
+    lines.push("");
+  } else if (state) {
     const done = nodes.filter((node) => node.status === "done").length;
     const active = nodes.filter((node) => node.status === "running").length;
     lines.push(`  ${style.gray("run")} ${style.creamBold(truncateText(state.runId, 34))}`);
@@ -224,7 +339,11 @@ export function buildHudSidebar(
   }
   lines.push("");
 
-  return panel(lines, gradient("TODO / Changed Files"));
+  const contentLines = options.maxWidth
+    ? lines.map((l) => truncateLine(l, Math.max(1, options.maxWidth! - 4)))
+    : lines;
+
+  return panel(contentLines, gradient("TODO / Changed Files"));
 }
 
 export function renderHudColumns(mainPanels: string[], sidebar: string, terminalWidth = defaultHudTerminalWidth()): string {
@@ -286,11 +405,17 @@ function clearScreen(): void {
   process.stdout.write("\x1b[2J\x1b[H");
 }
 
+function enterAlternateScreen(): void {
+  process.stdout.write("\x1b[?1049h");
+}
+
+function leaveAlternateScreen(): void {
+  process.stdout.write("\x1b[?1049l");
+}
+
 function runCandidateScore(candidate: HudRunCandidate): number {
   let score = 0;
-  if (candidate.hasState) score += 4;
-  if (candidate.hasGoal) score += 2;
-  if (candidate.hasPlan) score += 1;
+  if (candidate.schemaVersion === 1) score += 1;
   if (candidate.name === "latest") score -= 8;
   return score;
 }
@@ -301,15 +426,15 @@ export function selectLatestRunName(candidates: HudRunCandidate[]): string | nul
 
   return [...valid]
     .sort((a, b) => {
-      const score = runCandidateScore(b) - runCandidateScore(a);
-      if (score !== 0) return score;
       const mtime = b.mtimeMs - a.mtimeMs;
       if (mtime !== 0) return mtime;
+      const score = runCandidateScore(b) - runCandidateScore(a);
+      if (score !== 0) return score;
       return b.name.localeCompare(a.name);
     })[0].name;
 }
 
-async function listRunCandidates(runsDir: string): Promise<HudRunCandidate[]> {
+export async function listRunCandidates(runsDir: string): Promise<HudRunCandidate[]> {
   const entries = await readdir(runsDir, { withFileTypes: true });
   const dirs = entries.filter((entry) => entry.isDirectory());
   return Promise.all(dirs.map(async (entry) => {
@@ -320,30 +445,33 @@ async function listRunCandidates(runsDir: string): Promise<HudRunCandidate[]> {
       pathExists(join(runDir, "goal.md")),
       pathExists(join(runDir, "plan.md")),
     ]);
+    let schemaVersion: number | undefined;
+    if (hasState) {
+      try {
+        const stateContent = await readFile(join(runDir, "state.json"), "utf-8");
+        const parsed = JSON.parse(stateContent) as { schemaVersion?: number };
+        if (parsed && typeof parsed === "object" && typeof parsed.schemaVersion === "number") {
+          schemaVersion = parsed.schemaVersion;
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
     return {
       name: entry.name,
       mtimeMs: info?.mtimeMs ?? 0,
       hasState,
       hasGoal,
       hasPlan,
+      schemaVersion,
     };
   }));
 }
 
-export async function renderHudDashboard(options: HudRenderOptions = {}): Promise<string> {
-  const root = getProjectRoot();
-  const resources = await getOmkResourceSettings();
-  const kimiUsagePromise = options.kimiUsage ? Promise.resolve(options.kimiUsage) : getKimiUsage();
-  const gitChangesPromise = getGitChanges(root);
-  const mainPanels: string[] = [];
-  const output: string[] = [];
-
-  // ── Top banner ───────────────────────────────────────────────
-  output.push(sparkleHeader("oh-my-kimichan HUD"));
-
-  // ── System Usage Panel ───────────────────────────────────────
+async function buildSystemPanel(): Promise<string> {
   const usage = getSystemUsage();
   const disk = getDiskUsage();
+  const resources = await getOmkResourceSettings();
 
   const sysLines: string[] = [
     "",
@@ -360,41 +488,48 @@ export async function renderHudDashboard(options: HudRenderOptions = {}): Promis
     "",
   ].filter(Boolean);
 
-  mainPanels.push(panel(sysLines, gradient("System Usage")));
+  return panel(sysLines, gradient("System Usage"));
+}
 
-  // ── Coding Plan Usage ────────────────────────────────────────
-  const kimiUsage = await kimiUsagePromise;
+async function buildKimiUsagePanel(kimiUsage?: UsageStats): Promise<string> {
+  const usage = kimiUsage ?? await getKimiUsage();
   const LIMIT_HOURS = 5;
   const limitSeconds = LIMIT_HOURS * 3600;
-  const rollingPercent = kimiUsage.quota.fiveHour
-    ? Math.min(100, 100 - kimiUsage.quota.fiveHour.remainingPercent)
-    : Math.min(100, Math.round((kimiUsage.totalSecondsLast5Hours / limitSeconds) * 100));
-  const weekPercent = kimiUsage.quota.weekly
-    ? Math.min(100, 100 - kimiUsage.quota.weekly.remainingPercent)
-    : Math.min(100, Math.round((kimiUsage.totalSecondsWeek / (limitSeconds * 7)) * 100));
+  const vm = buildUsageViewModel(usage);
+
+  const fiveHourGaugePercent = vm.fiveHour.percent ??
+    Math.min(100, Math.round((usage.totalSecondsLast5Hours / limitSeconds) * 100));
+  const weekGaugePercent = vm.weekly.percent ??
+    Math.min(100, Math.round((usage.totalSecondsWeek / (limitSeconds * 7)) * 100));
+
+  const loginLine = vm.source === "missingAuth"
+    ? stat("OAuth Login", "login required; showing local sessions only", "")
+    : stat("OAuth Login", `${vm.accountLabel} (${vm.authStatus})`, "");
 
   const planLines: string[] = [
     "",
-    gauge("5h Window", rollingPercent, 100, 20),
-    gauge("This Week", weekPercent, 100, 20),
+    gauge("5h Window", fiveHourGaugePercent, 100, 20),
+    gauge("This Week", weekGaugePercent, 100, 20),
     "",
-    stat("OAuth Login", `${kimiUsage.oauth.displayId} (${kimiUsage.oauth.tokenStatus})`, ""),
-    stat("5h Usage", kimiUsage.quota.fiveHour ? `${kimiUsage.quota.fiveHour.remainingPercent}% left` : formatDuration(kimiUsage.totalSecondsLast5Hours), ""),
-    stat("5h Sessions", `${kimiUsage.sessionCountLast5Hours}`, ""),
-    stat("Today Used", formatDuration(kimiUsage.totalSecondsToday), ""),
-    stat("Today Sessions", `${kimiUsage.sessionCountToday}`, ""),
-    stat("Week Usage", kimiUsage.quota.weekly ? `${kimiUsage.quota.weekly.remainingPercent}% left` : formatDuration(kimiUsage.totalSecondsWeek), ""),
-    stat("Week Sessions", `${kimiUsage.sessionCountWeek}`, ""),
-    kimiUsage.quota.error ? stat("Quota Source", `local fallback (${kimiUsage.quota.error})`, "") : "",
+    loginLine,
+    stat("5h Usage", vm.fiveHour.label, ""),
+    stat("5h Sessions", `${usage.sessionCountLast5Hours}`, ""),
+    stat("Today Used", vm.today.label, ""),
+    stat("Today Sessions", `${vm.today.sessionCount}`, ""),
+    stat("Week Usage", vm.weekly.label, ""),
+    stat("Week Sessions", `${usage.sessionCountWeek}`, ""),
+    vm.error ? stat("Quota Source", `local fallback (${vm.error})`, "") : "",
     "",
   ].filter(Boolean);
 
-  mainPanels.push(panel(planLines, gradient("Kimi Usage")));
+  return panel(planLines, gradient("Kimi Usage"));
+}
 
-  // ── Project Status ───────────────────────────────────────────
-  const projLines: string[] = [""];
-  const gitChangesResult = await gitChangesPromise;
+async function buildProjectStatusPanel(gitChangesResult: HudGitChange[] | null): Promise<string> {
+  const root = getProjectRoot();
   const gitChanges = gitChangesResult ?? [];
+  const projLines: string[] = [""];
+
   projLines.push(
     `  ${style.purple("🌿 Git")}      ${gitChangesResult === null ? status.warn("unavailable") : gitChanges.length === 0 ? status.ok("clean") : status.warn(`${gitChanges.length} changes`)}`
   );
@@ -409,12 +544,18 @@ export async function renderHudDashboard(options: HudRenderOptions = {}): Promis
   projLines.push(`  ${style.purple("🎨 DESIGN")}   ${designMdExists ? status.ok("exists") : status.info("optional")}`);
 
   projLines.push("");
-  mainPanels.push(panel(projLines, gradient("Project Status")));
+  return panel(projLines, gradient("Project Status"));
+}
 
-  // ── Latest Run ───────────────────────────────────────────────
+async function buildLatestRunPanel(
+  options: HudRenderOptions,
+  vm: RunViewModel,
+  stateError: RunViewModel["stateError"],
+  _gitChanges: HudGitChange[],
+  maxWidth?: number
+): Promise<string> {
   const runsDir = getOmkPath("runs");
   let runLines: string[] = [];
-  let latestState: RunState | null = null;
 
   if (await pathExists(runsDir)) {
     let latestRunName: string | null = options?.runId ?? null;
@@ -427,34 +568,71 @@ export async function renderHudDashboard(options: HudRenderOptions = {}): Promis
     if (latestRunName) {
       const runDir = join(runsDir, latestRunName);
 
-      const goal = await readFile(join(runDir, "goal.md"), "utf-8").catch(() => "N/A");
-      const plan = await readFile(join(runDir, "plan.md"), "utf-8").catch(() => "N/A");
-      const state = await readFile(join(runDir, "state.json"), "utf-8")
-        .then(parseRunState)
-        .catch(() => null);
-      latestState = state;
-      const goalLine = goal.replace(/# Goal\n\n?/, "").split("\n")[0].trim();
+      let goalTitle: string | null = null;
+      let goalData: GoalData | null = null;
+
+      if (vm.runId && stateError === "ok") {
+        try {
+          const stateContent = await readFile(join(runDir, "state.json"), "utf-8");
+          const { state } = parseRunStateResult(stateContent);
+          if (state?.goalId) {
+            goalData = await loadGoalData(state.goalId);
+            if (goalData) goalTitle = goalData.title;
+          }
+          if (!goalData && state?.goalSnapshot?.title) {
+            goalTitle = state.goalSnapshot.title;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const goalMd = await readFile(join(runDir, "goal.md"), "utf-8").catch(() => null);
+      const plan = await readFile(join(runDir, "plan.md"), "utf-8").catch(() => null);
+
+      if (!goalTitle && goalMd) {
+        goalTitle = goalMd.replace(/# Goal\n\n?/, "").split("\n")[0].trim();
+      }
+      if (!goalTitle) goalTitle = "N/A";
 
       runLines = [
         "",
         `  ${style.gray("Run ID:")}   ${style.creamBold(latestRunName)}`,
-        `  ${style.gray("Goal:")}     ${style.cream(goalLine)}`,
-        `  ${style.gray("Plan:")}     ${plan !== "N/A" ? style.mint("✔ generated") : style.gray("none")}`,
+        `  ${style.gray("Goal:")}     ${style.cream(goalTitle)}`,
+        `  ${style.gray("Plan:")}     ${plan ? style.mint("✔ generated") : style.gray("none")}`,
         "",
       ];
 
-      if (state?.estimate) {
+      if (goalData) {
+        if (goalData.status) {
+          runLines.push(`  ${style.gray("Goal Status:")} ${style.creamBold(goalData.status)}`);
+        }
+        if (goalData.requiredTotal > 0) {
+          runLines.push(`  ${style.gray("Criteria:")}   ${style.mintBold(`${goalData.requiredPassed}/${goalData.requiredTotal}`)} ${style.gray("required passed")}`);
+        }
+        if (goalData.firstUnmet) {
+          runLines.push(`  ${style.gray("Next Up:")}    ${style.orange(truncateText(goalData.firstUnmet.description, 50))}`);
+        }
+        if (goalData.latestEvidenceAt) {
+          runLines.push(`  ${style.gray("Evidence:")}   ${style.gray(new Date(goalData.latestEvidenceAt).toLocaleString())}`);
+        }
+        runLines.push("");
+      } else if (vm.goalTitle) {
+        runLines.push(`  ${style.gray("Goal:")}     ${style.cream(vm.goalTitle ?? "N/A")}`);
+        if (vm.goalScore != null) {
+          runLines.push(`  ${style.gray("Score:")}     ${style.mintBold(`${vm.goalScore}%`)}`);
+        }
+        runLines.push("");
+      }
+
+      if (vm.eta || vm.progress.total > 0) {
         runLines.push(
-          `  ${style.pinkBold("ETA:")}      ${style.cream(formatEtaMs(state.estimate.estimatedRemainingMs))} ${style.gray(`(${state.estimate.confidence} confidence)`)}`,
-          `  ${style.gray("Progress:")} ${style.mintBold(`${state.estimate.completedNodes}/${state.estimate.totalNodes}`)} ${style.gray(`${state.estimate.percentComplete}%`)}`,
-          state.estimate.estimatedCompletedAt
-            ? `  ${style.gray("Done by:")}  ${style.cream(new Date(state.estimate.estimatedCompletedAt).toLocaleString())}`
-            : "",
+          `  ${style.pinkBold("ETA:")}      ${style.cream(vm.eta ?? "--")}`,
+          `  ${style.gray("Progress:")} ${style.mintBold(`${vm.progress.done}/${vm.progress.total}`)} ${style.gray(`${vm.progress.percent}%`)}`,
           "",
         );
       }
 
-      // Workers
       const worktreesDir = getOmkPath(`worktrees/${latestRunName}`);
       if (await pathExists(worktreesDir)) {
         const workers = await readdir(worktreesDir, { withFileTypes: true }).then((e) =>
@@ -475,14 +653,263 @@ export async function renderHudDashboard(options: HudRenderOptions = {}): Promis
     runLines = ["", `  ${style.gray(t("hud.noRunHistory"))}`, ""];
   }
 
-  mainPanels.push(panel(runLines, gradient("Latest Run")));
-  output.push(renderHudColumns(mainPanels, buildHudSidebar(latestState, gitChanges), options.terminalWidth ?? defaultHudTerminalWidth()));
+  if (maxWidth) {
+    const contentMaxWidth = Math.max(1, maxWidth - 4);
+    runLines = runLines.map((l) => truncateLine(l, contentMaxWidth));
+  }
+
+  return panel(runLines, gradient("Latest Run"));
+}
+
+async function renderCompactDashboard(options: HudRenderOptions): Promise<string> {
+  const width = options.terminalWidth ?? defaultHudTerminalWidth();
+  const effectiveWidth = Math.max(40, width - 4);
+  const root = getProjectRoot();
+  const gitChangesResult = await getGitChanges(root);
+  const gitChanges = gitChangesResult ?? [];
+
+  const runsDir = getOmkPath("runs");
+  let vm: RunViewModel = buildRunViewModel(null);
+  let stateError: RunViewModel["stateError"] = "missing";
+  let latestRunName: string | null = options.runId ?? null;
+
+  if (await pathExists(runsDir)) {
+    if (!latestRunName) {
+      const candidates = await listRunCandidates(runsDir);
+      latestRunName = selectLatestRunName(candidates);
+    }
+    if (latestRunName) {
+      const stateContent = await readFile(join(runsDir, latestRunName, "state.json"), "utf-8").catch(() => null);
+      if (stateContent) {
+        const result = parseRunStateResult(stateContent);
+        stateError = result.error;
+        vm = buildRunViewModel(result.state, { changedFiles: gitChanges.map((c) => c.path) });
+      }
+    }
+  }
+
+  const goalTitle = vm.goalTitle ?? null;
+  const output: string[] = [];
+
+  output.push(sparkleHeader("oh-my-kimichan HUD"));
+
+  const summary = buildSummaryBar(vm, stateError, goalTitle, effectiveWidth);
+  output.push(summary);
   output.push("");
 
-  // ── Tips ─────────────────────────────────────────────────────
+  const usage = getSystemUsage();
+  output.push(`${style.gray("CPU:")}${usage.cpuPercent}% ${style.gray("MEM:")}${usage.memPercent}% ${style.gray("LOAD:")}${usage.loadAvg[0].toFixed(1)}`);
+  output.push("");
+
+  const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges, effectiveWidth);
+  output.push(runPanel);
+  output.push("");
+
+  if (stateError !== "ok" && latestRunName) {
+    output.push(buildStateErrorPanel(stateError, latestRunName));
+    output.push("");
+  }
+
+  const sidebar = buildHudSidebar(null, gitChanges, { viewModel: vm, maxWidth: effectiveWidth });
+  output.push(sidebar);
+  output.push("");
+
   output.push(renderFooter(options.footerRefreshMs));
   output.push("");
   return output.join("\n");
+}
+
+async function renderMediumDashboard(options: HudRenderOptions): Promise<string> {
+  const width = options.terminalWidth ?? defaultHudTerminalWidth();
+  const root = getProjectRoot();
+  const gitChangesResult = await getGitChanges(root);
+  const gitChanges = gitChangesResult ?? [];
+  const mainPanels: string[] = [];
+  const output: string[] = [];
+
+  output.push(sparkleHeader("oh-my-kimichan HUD"));
+
+  const runsDir = getOmkPath("runs");
+  let vm: RunViewModel = buildRunViewModel(null);
+  let stateError: RunViewModel["stateError"] = "missing";
+  let latestRunName: string | null = options.runId ?? null;
+
+  if (await pathExists(runsDir)) {
+    if (!latestRunName) {
+      const candidates = await listRunCandidates(runsDir);
+      latestRunName = selectLatestRunName(candidates);
+    }
+    if (latestRunName) {
+      const stateContent = await readFile(join(runsDir, latestRunName, "state.json"), "utf-8").catch(() => null);
+      if (stateContent) {
+        const result = parseRunStateResult(stateContent);
+        stateError = result.error;
+        vm = buildRunViewModel(result.state, { changedFiles: gitChanges.map((c) => c.path) });
+      }
+    }
+  }
+
+  const goalTitle = vm.goalTitle ?? null;
+  const summary = buildSummaryBar(vm, stateError, goalTitle, width - 4);
+  output.push(summary);
+  output.push("");
+
+  const projPanel = await buildProjectStatusPanel(gitChangesResult);
+  mainPanels.push(projPanel);
+
+  const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges);
+  mainPanels.push(runPanel);
+
+  if (stateError !== "ok" && latestRunName) {
+    mainPanels.push(buildStateErrorPanel(stateError, latestRunName));
+  }
+
+  const sidebar = buildHudSidebar(null, gitChanges, { viewModel: vm });
+  output.push(renderHudColumns(mainPanels, sidebar, width));
+  output.push("");
+
+  output.push(renderFooter(options.footerRefreshMs));
+  output.push("");
+  return output.join("\n");
+}
+
+async function renderFullDashboard(options: HudRenderOptions): Promise<string> {
+  const width = options.terminalWidth ?? defaultHudTerminalWidth();
+  const root = getProjectRoot();
+  const gitChangesResult = await getGitChanges(root);
+  const gitChanges = gitChangesResult ?? [];
+  const mainPanels: string[] = [];
+  const output: string[] = [];
+
+  output.push(sparkleHeader("oh-my-kimichan HUD"));
+
+  const runsDir = getOmkPath("runs");
+  let vm: RunViewModel = buildRunViewModel(null);
+  let stateError: RunViewModel["stateError"] = "missing";
+  let latestRunName: string | null = options.runId ?? null;
+
+  if (await pathExists(runsDir)) {
+    if (!latestRunName) {
+      const candidates = await listRunCandidates(runsDir);
+      latestRunName = selectLatestRunName(candidates);
+    }
+    if (latestRunName) {
+      const stateContent = await readFile(join(runsDir, latestRunName, "state.json"), "utf-8").catch(() => null);
+      if (stateContent) {
+        const result = parseRunStateResult(stateContent);
+        stateError = result.error;
+        vm = buildRunViewModel(result.state, { changedFiles: gitChanges.map((c) => c.path) });
+      }
+    }
+  }
+
+  const goalTitle = vm.goalTitle ?? null;
+  const summary = buildSummaryBar(vm, stateError, goalTitle, width - 4);
+  output.push(summary);
+  output.push("");
+
+  mainPanels.push(await buildSystemPanel());
+  mainPanels.push(await buildKimiUsagePanel(options.kimiUsage));
+  mainPanels.push(await buildProjectStatusPanel(gitChangesResult));
+
+  const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges);
+  mainPanels.push(runPanel);
+
+  if (stateError !== "ok" && latestRunName) {
+    mainPanels.push(buildStateErrorPanel(stateError, latestRunName));
+  }
+
+  const sidebar = buildHudSidebar(null, gitChanges, { viewModel: vm });
+  output.push(renderHudColumns(mainPanels, sidebar, width));
+  output.push("");
+
+  output.push(renderFooter(options.footerRefreshMs));
+  output.push("");
+  return output.join("\n");
+}
+
+async function renderSectionDashboard(options: HudRenderOptions): Promise<string> {
+  const width = options.terminalWidth ?? defaultHudTerminalWidth();
+  const root = getProjectRoot();
+  const gitChangesResult = await getGitChanges(root);
+  const gitChanges = gitChangesResult ?? [];
+  const output: string[] = [];
+
+  output.push(sparkleHeader("oh-my-kimichan HUD"));
+
+  const runsDir = getOmkPath("runs");
+  let vm: RunViewModel = buildRunViewModel(null);
+  let stateError: RunViewModel["stateError"] = "missing";
+  let latestRunName: string | null = options.runId ?? null;
+
+  if (await pathExists(runsDir)) {
+    if (!latestRunName) {
+      const candidates = await listRunCandidates(runsDir);
+      latestRunName = selectLatestRunName(candidates);
+    }
+    if (latestRunName) {
+      const stateContent = await readFile(join(runsDir, latestRunName, "state.json"), "utf-8").catch(() => null);
+      if (stateContent) {
+        const result = parseRunStateResult(stateContent);
+        stateError = result.error;
+        vm = buildRunViewModel(result.state, { changedFiles: gitChanges.map((c) => c.path) });
+      }
+    }
+  }
+
+  const goalTitle = vm.goalTitle ?? null;
+  const summary = buildSummaryBar(vm, stateError, goalTitle, width - 4);
+  output.push(summary);
+  output.push("");
+
+  switch (options.section) {
+    case "run": {
+      const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges);
+      output.push(runPanel);
+      output.push("");
+      if (stateError !== "ok" && latestRunName) {
+        output.push(buildStateErrorPanel(stateError, latestRunName));
+        output.push("");
+      }
+      const sidebar = buildHudSidebar(null, gitChanges, { viewModel: vm });
+      output.push(sidebar);
+      break;
+    }
+    case "project": {
+      const projPanel = await buildProjectStatusPanel(gitChangesResult);
+      output.push(projPanel);
+      break;
+    }
+    case "resources": {
+      output.push(await buildSystemPanel());
+      output.push("");
+      output.push(await buildKimiUsagePanel(options.kimiUsage));
+      break;
+    }
+  }
+
+  output.push("");
+  output.push(renderFooter(options.footerRefreshMs));
+  output.push("");
+  return output.join("\n");
+}
+
+export async function renderHudDashboard(options: HudRenderOptions = {}): Promise<string> {
+  const width = options.terminalWidth ?? defaultHudTerminalWidth();
+
+  if (options.section) {
+    return renderSectionDashboard(options);
+  }
+
+  if (options.compact || width < 90) {
+    return renderCompactDashboard(options);
+  }
+
+  if (width < 120) {
+    return renderMediumDashboard(options);
+  }
+
+  return renderFullDashboard(options);
 }
 
 export async function hudCommand(options: HudCommandOptions = {}): Promise<void> {
@@ -504,6 +931,13 @@ export async function hudCommand(options: HudCommandOptions = {}): Promise<void>
   let lastUsageRefreshMs = 0;
   const usageRefreshMs = Math.max(60_000, refreshMs);
 
+  const useAlternateScreen = options.alternateScreen ?? false;
+  const shouldClear = !(options.noClear ?? false) && (options.clear ?? true);
+
+  if (useAlternateScreen) {
+    enterAlternateScreen();
+  }
+
   try {
     while (!stopped) {
       const now = Date.now();
@@ -512,7 +946,7 @@ export async function hudCommand(options: HudCommandOptions = {}): Promise<void>
         lastUsageRefreshMs = now;
       }
       const frame = await renderHudDashboard({ ...options, kimiUsage: cachedUsage, footerRefreshMs: refreshMs });
-      if (options.clear ?? true) clearScreen();
+      if (shouldClear) clearScreen();
       process.stdout.write(frame + "\n");
       if (stopped) break;
       await sleep(refreshMs);
@@ -520,6 +954,9 @@ export async function hudCommand(options: HudCommandOptions = {}): Promise<void>
   } finally {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
+    if (useAlternateScreen) {
+      leaveAlternateScreen();
+    }
   }
 
   process.stdout.write("\n");

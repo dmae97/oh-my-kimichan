@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile, rm } from "fs/promises";
+import { mkdir, readdir, writeFile, rm } from "fs/promises";
 import { join } from "path";
 import { getProjectRoot, pathExists, readTextFile } from "./fs.js";
 

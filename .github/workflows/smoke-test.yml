@@ -1,0 +1,53 @@
+name: Smoke Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  install-smoke:
+    name: Install Smoke (${{ matrix.os }} / Node ${{ matrix.node-version }})
+    strategy:
+      matrix:
+        node-version: [20, 22, 24]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Run smoke tests
+        run: node scripts/smoke-test.mjs
+
+  strict-release:
+    name: Strict Release Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run check
+      - run: node --test test/*.test.mjs
+      - run: npm run build
+
+      - name: Package audit
+        run: npm run audit:package
+
+      - name: Strict doctor
+        run: node dist/cli.js doctor --json --soft
+
+      - name: Dry-run publish
+        run: npm publish --dry-run

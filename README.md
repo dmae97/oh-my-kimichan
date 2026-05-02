@@ -5,9 +5,12 @@
 <h1>oh-my-kimichan</h1>
 
 <p>
-  <strong>Turn Kimi Code CLI into a worktree-based coding team</strong><br/>
-  <sub>Multi-agent orchestration harness / DESIGN.md-aware UI / Live quality gates / AGENTS.md compatible</sub>
+  <strong>🚀 The unofficial Kimi Code CLI power-up</strong><br/>
+  <sub>Turn your Kimi into a meme-tier multi-agent coding team — DESIGN.md-aware UI, live quality gates, AGENTS.md compatible</sub>
 </p>
+
+> ⚠️ <strong>Alpha Software</strong> — v0.4.0 is early-stage. Core commands are solid, but <code>parallel</code>, <code>run</code>, <code>sync</code>, and <code>goal</code> may change without notice. Not production-grade yet. Use at your own risk (and fun).
+
 
 <p>
   <a href="https://github.com/dmae97/oh-my-kimichan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dmae97/oh-my-kimichan/ci.yml?branch=main&amp;style=for-the-badge&amp;logo=githubactions&amp;label=CI" alt="GitHub CI" /></a>
@@ -54,16 +57,32 @@
 
 ## GitHub Release Snapshot
 
-> **Current GitHub-ready version:** `0.3.0`
+> **Current GitHub-ready version:** `0.4.0`
 
-### What's New in v0.3.0
+### What's New in v0.4.0
 
 | **Area** | **GitHub-visible update** | **Why it matters** |
 |----------|---------------------------|--------------------|
-| **Core Engine** | `omk parallel <goal>` — coordinator → worker fan-out → reviewer with live ETA tracking | Spin up a multi-agent team from a single goal with real-time progress |
-| **Core Engine** | Enhanced DAG engine with priority, cost, routing, `failurePolicy`, and evidence gates per node | Production-grade orchestration: retries, fallbacks, and I/O validation |
+| **Core Engine** | `omk specify` — GitHub Spec Kit integration (init, workflow, preset, version) | Connect structured planning to Kimi-native DAG execution |
+| **Core Engine** | `omk dag from-spec [dir]` — Convert spec Kit `tasks.md` into OMK DAG with dependency inference and role-based routing | Turn written specs into executable parallel pipelines |
+| **Core Engine** | `omk parallel --from-spec <dir>` — Load spec-based DAG and execute via existing parallel executor | Reuse the same spec for planning and execution |
+| **Core Engine** | `omk feature` / `bugfix` / `refactor` / `review` workflow presets with `--spec-kit` | One-command entry points for common development workflows |
+| **UI/UX** | `omk summary` / `summary-show` — Generate `summary.md` + `report.md` for the latest run | Understand what happened after a long agent run |
+| **UI/UX** | `omk index` / `index-show` — Build project index (package manager, git status, file tree) for context reduction | Faster agent context building without manual repo exploration |
+| **Memory & Intelligence** | `omk skill pack` / `install` / `sync` — Curated Kimi skill pack management | Share and version agent skills across projects |
+| **Memory & Intelligence** | `omk agent list` / `show` / `create` / `doctor` — Agent registry and YAML diagnostics | Manage 16 built-in roles and validate agent definitions |
+| **Safety & Quality** | Default `approval_policy = "auto"`, `yolo_mode = false` | Safe-by-default for open-source users |
+| **Safety & Quality** | `doctor` npm 10+ compatible; smoke test validates `doctor.errors` | First-install diagnostics work on modern Node/npm and catch real failures |
+
+<details>
+<summary>v0.3.0 release notes (click to expand)</summary>
+
+| **Area** | **GitHub-visible update** | **Why it matters** |
+|----------|---------------------------|--------------------|
+| **Core Engine** | `omk parallel <goal>` (alpha) — coordinator → worker fan-out → reviewer with live ETA tracking | Spin up a multi-agent team from a single goal with real-time progress |
+| **Core Engine** | Enhanced DAG engine with priority, cost, routing, `failurePolicy`, and evidence gates per node | DAG orchestration with retries, fallbacks, and I/O validation (alpha) |
 | **Core Engine** | Role-aware ensemble — coder/planner/architect/reviewer/QA/explorer with weighted candidates + quorum aggregation | Improves agent-call quality while keeping `max_parallel = 1` by default |
-| **Core Engine** | `omk run --run-id <id>` resumes persisted run state | Long-running agent tasks survive restarts and context switches |
+| **Core Engine** | `omk run --run-id <id>` (alpha) resumes persisted run state | Long-running agent tasks survive restarts and context switches |
 | **Core Engine** | `SendDMail` checkpoint helpers + `.omk/snippets/` reusable storage | Safer refactors and reusable code blocks across agent sessions |
 | **UI/UX** | `omk hud` — live dashboard with System Usage, Kimi Usage gauges, Project Status, Latest Run, TODO & Changed Files sidebar | Real-time visibility into your agent fleet without external monitoring tools |
 | **UI/UX** | Bare `omk` TTY entry point — HUD + interactive `@inquirer/prompts` menu | Zero-config entry point for new users; no more "what do I type first?" |
@@ -77,6 +96,8 @@
 | **Safety & Quality** | `runtime.resource_profile = "auto"` selects lite profile on 16 GB machines | Keeps OMK usable on 16 GB laptops and WSL environments |
 | **Safety & Quality** | `npm run check`, `npm test`, `npm run lint`, `npm run build` wired into CI | GitHub contributors can verify changes before PRs |
 | **Assets** | 5 new PNG screenshots: `omk-hud-1.png`, `omk-hud-screenshot.png`, `omk-statusline-gauge.png`, `omk-statusline-reset.png`, `readme-in.png` | Rich visual documentation for the GitHub landing page |
+
+</details>
 
 ### GitHub Markdown checklist
 
@@ -142,12 +163,28 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 | MCP Integration | 다양한 MCP 서버와의 원활한 연동 |
 | Local Graph Memory | 프로젝트/세션별 기억을 `.omk/memory/graph-state.json` 온톨로지 그래프로 저장하고 mindmap/GraphQL-lite 제공 |
 | OAuth Usage Badge | Kimi `context:` 상태줄 옆에 masked 계정, 5h/weekly quota 표시; `OMK_KIMI_STATUS_GAUGES=1`로 시각적 게이지 활성화 |
-| YOLO-by-default | 오픈소스 기본값은 `approval_policy = "yolo"`; secret/destructive hooks는 계속 차단 |
+| Approval Policy | 기본값은 `approval_policy = "auto"` (안전 모드); 필요시 `yolo`로 전환 가능 |
 | Safety Hooks | yolo mode에서도 파괴적 명령어 및 비밀 유출 방지 기본 제공 |
+
+### 🆕 v0.4.0 Highlights
+
+- **`omk specify`** — GitHub Spec Kit 연동 (init, workflow, preset, version)
+- **`omk dag from-spec [spec-dir]`** — Spec Kit `tasks.md`를 OMK DAG JSON으로 변환 (의존성 추론 + 역할 기반 라우팅)
+- **`omk parallel --from-spec <dir>`** — Spec 기반 DAG를 병렬 실행기로 실행
+- **`omk feature` / `bugfix` / `refactor` / `review`** — `--spec-kit` 지원 워크플로우 프리셋
+- **`omk summary`** / **`omk summary-show`** — 실행 요약 및 `report.md` 생성
+- **`omk index`** / **`omk index-show`** — 프로젝트 인덱싱으로 컨텍스트 축소
+- **`omk skill pack` / `install` / `sync`** — 큐레이트된 Kimi 스킬 팩 관리
+- **`omk agent`** — 16개 내장 역할 등록소 및 YAML 진단
+- **DAG evidence gates** — `command-pass` 등 증거 기반 게이트 지원
+- **MCP doctor** — MCP 진단 및 JSON-RPC 핸드셰이크 테스트
+- **안전 기본값** — `approval_policy = "auto"`, `yolo_mode = false`
+- **npm 10+ 지원** — doctor의 npm global bin 탐지 개선
+- **Smoke test 강화** — `doctor.errors` 검증으로 예기치 않은 실패 감지
 
 ### 🆕 v0.3.0 Highlights
 
-- **`omk parallel <goal>`** — coordinator → worker fan-out → reviewer 패턴으로 병렬 에이전트 팀 구성, 실시간 ETA 추적
+- **`omk parallel <goal>` (alpha)** — coordinator → worker fan-out → reviewer 패턴으로 병렬 에이전트 팀 구성, 실시간 ETA 추적
 - **`omk hud` 대시보드** — System Usage / Kimi Usage 게이지, Project Status, TODO & Changed Files 사이드바를 포함한 실시간 터미널 대시보드
 - **TTY 인터랙티브 메뉴** — `omk` 단독 실행 시 HUD + `@inquirer/prompts` 메뉴 자동 실행
 - **`--run-id` 실행 재개** — 이전 실행 상태를 `.omk/runs/`에서 복원하여 장기 작업도 안전하게 이어감
@@ -189,6 +226,10 @@ The interactive wrapper also augments Kimi’s native `context:` status line wit
 
 ### Preview
 
+#### Live Cockpit (`omk hud`)
+
+![omk hud cockpit](./readmeomkcockpit.png)
+
 #### Live HUD (`omk hud`)
 
 ![omk hud](./omk-hud-1.png)
@@ -226,23 +267,45 @@ Team Runtime starting...
 
 ### CLI Commands
 
+> Note: run, parallel, verify, summary, and goal are alpha features. Expect breaking changes.
+
 #### Stable
 
 | Command | Description |
 |---------|-------------|
 | `omk init` | Scaffold .omk/, .kimi/skills/, .agents/skills/, docs, hooks, agents |
 | `omk doctor` | Check Node, Kimi CLI, Git, python3, tmux, scaffold |
+| `omk doctor --soft` | Soft mode: do not fail on missing tools — useful for smoke tests and CI |
 | `omk chat` | Interactive Kimi with agent/config/MCP auto-detection |
 | `omk plan <goal>` | Plan-only mode |
-| `omk run <flow> <goal>` | Flow-based task execution |
-| `omk parallel <goal>` | Parallel DAG execution (coordinator → workers → reviewer) |
 | `omk hud` | Live dashboard with system usage, Kimi quota, project status, run tracking |
 | `omk lsp [server]` | Built-in LSP launcher; default server is TypeScript |
+| `omk star` | GitHub star helper; manual retry and status check |
 | `omk design init` | Create DESIGN.md with frontmatter |
 | `omk design list` | List local/remote DESIGN.md files |
 | `omk design apply <name>` | Convert DESIGN.md into code |
 | `omk google stitch-install` | Install Google Stitch skills |
-| `omk sync` | Sync Kimi assets |
+| `omk sync` | Sync Kimi assets (hooks, MCP, skills, local graph memory) |
+| `omk sync --dry-run` | Preview sync without applying changes |
+| `omk sync --diff` | Show diff of what would change |
+| `omk sync --rollback` | Rollback last sync from manifest |
+| `omk agent list` | List agent roles by maturity (see MATURITY.md) |
+| `omk agent show <name>` | Show agent role details |
+| `omk agent create <name>` | Create a new agent from a template |
+| `omk agent doctor` | Validate all agent YAMLs |
+
+#### Alpha
+
+| Command | Description |
+|---------|-------------|
+| `omk run <flow> <goal>` (alpha) | Flow-based task execution |
+| `omk parallel <goal>` (alpha) | Parallel DAG execution (coordinator → workers → reviewer) |
+| `omk review` (alpha) | Code review + security review of current changes |
+| `omk review --ci` (alpha) | CI mode: local checks only, no Kimi API calls |
+| `omk review --soft` (alpha) | Soft mode: always exit 0 even if review fails |
+| `omk verify` (alpha) | Evidence gate verification for completed runs |
+| `omk summary` (alpha) | Run summary and report generation |
+| `omk goal` (alpha) | Codex-style goal management |
 
 #### Experimental
 
@@ -254,54 +317,87 @@ Team Runtime starting...
 | `omk design diff` | Stub | Diff not yet implemented |
 | `omk design export` | Stub | Export not yet implemented |
 
+#### Agent Registry
+
+OMK ships with 16 built-in agent roles. Each role is a YAML file in `.omk/agents/roles/` that extends the Okabe-compatible base and defines `OMK_ROLE`, excluded tools, and specialized prompts.
+
+**Stable** — recommended for production DAG nodes:
+
+| Agent | Role | Best for |
+|-------|------|----------|
+| `planner` | Architecture / refactor planning | `omk plan`, `omk run` (alpha) plan-first flows |
+| `coder` | Scoped implementation | Feature dev, bugfix, typed languages |
+| `reviewer` | Adversarial code review | Pre-merge review, security audit |
+| `qa` | Lint / typecheck / test / build | `omk-quality-gate` enforcement |
+| `security` | Security review | Dependency audit, secret scan, RBAC |
+
+**Experimental** — use with caution or for specialized tasks:
+
+| Agent | Role | Best for |
+|-------|------|----------|
+| `coordinator` | Multi-agent coordination | `omk parallel` (alpha) fan-out orchestration |
+| `architect` | System design | High-level module design |
+| `explorer` | Repository discovery | Unfamiliar codebase mapping |
+| `tester` | Test generation | Unit / integration test authoring |
+| `docs` | Documentation | README, API docs, design docs |
+| `merger` | Branch / PR merge | Conflict resolution, cherry-pick |
+| `release` | Release flow | Version bump, changelog, tag |
+| `integrator` | Cross-service integration | API glue, adapter code |
+| `interviewer` | Interactive prompting | User requirement clarification |
+| `researcher` | Deep research | Web search, doc reading, comparison |
+| `vision-debugger` | UI / visual debugging | Screenshot analysis, CSS fixes |
+
 ### 🏗️ 아키텍처
 
 ```mermaid
 graph TD
-    A["👤 User / omk CLI"] --> B["🎮 Command Router"]
-    B --> C1["omk init / doctor"]
-    B --> C2["omk plan / run / parallel"]
-    B --> C3["omk hud / team / design"]
-    B --> C4["omk chat / lsp / snip"]
+    User["👤 User / omk CLI"] --> Router["🎮 Command Router"]
 
-    C2 --> D["⚙️ Orchestration Engine"]
-    C3 --> H["📊 HUD & Live UI"]
+    Router --> Stable["🟢 init / doctor / sync"]
+    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary"]
+    Router --> Hud["📺 omk hud / cockpit"]
+    Router --> Chat["💬 omk chat / lsp / design / star"]
 
-    D --> D1["DAG Scheduler"]
-    D --> D2["Task Graph"]
-    D --> D3["Executor + ETA"]
-    D --> D4["Ensemble (Role-aware Quorum)"]
-    D --> D5["Routing + State Persister"]
+    Alpha --> Orchestrator["⚡ Parallel Orchestrator"]
+    Orchestrator --> Coordinator["🎛️ coordinator agent"]
+    Orchestrator --> Workers["👷 worker agents\n(coder / explorer / tester)"]
+    Orchestrator --> Reviewer["🔍 reviewer + quorum aggregation"]
 
-    H --> H1["Parallel Live Renderer"]
-    H --> H2["System / Kimi Gauges"]
-    H --> H3["Banner + Theme + i18n"]
+    Orchestrator --> DAG["📊 DAG Scheduler + Task Graph"]
+    DAG --> Executor["🚀 Executor + ETA Estimator"]
+    DAG --> Evidence["🧪 Evidence Gate"]
+    DAG --> Ensemble["🎭 Role-aware Ensemble"]
 
-    D --> K["🤖 Kimi Native Layer"]
-    K --> K1["Wire Client"]
-    K --> K2["Kimi Runner + Bug Filter"]
-    K --> K3["Usage / OAuth / Status Line"]
+    Executor --> KimiLayer["🤖 Kimi Native Layer"]
+    KimiLayer --> Wire["📡 Wire Client"]
+    KimiLayer --> Runner["🏃 Kimi Runner + Bug Filter"]
+    KimiLayer --> Cockpit["🖥️ Chat Cockpit / Banner"]
+    KimiLayer --> StatusLine["📈 Usage / OAuth / Status Line"]
 
-    D --> M["🧠 Memory & Context"]
-    M --> M1["Local Graph Memory (graph-state.json)"]
-    M --> M2["Neo4j Memory"]
-    M --> M3["Snippets + Checkpoints"]
+    Executor --> Memory["🧠 Memory & Context"]
+    Memory --> LocalGraph["🗂️ Local Graph Memory"]
+    Memory --> Neo4j["🌐 Neo4j (optional)"]
+    Memory --> State["💾 Run State (.omk/runs/)"]
+    Memory --> Snippets["📎 Snippets + D-Mail Checkpoints"]
 
-    D --> S["🛡️ Safety & Quality"]
-    S --> S1["Guard Hooks"]
-    S --> S2["Quality Gates"]
-    S --> S3["Secret Scan"]
+    Orchestrator --> LiveUI["📺 Live HUD / Parallel Renderer"]
 
-    K --> E["🔌 Extensions"]
-    E --> E1["MCP Servers"]
-    E --> E2["LSP TypeScript"]
+    KimiLayer --> Extensions["🔌 Extensions"]
+    Extensions --> MCP["🔧 MCP Servers"]
+    Extensions --> LSP["🔨 LSP TypeScript"]
+    Extensions --> Skills["🎯 Project + Global Skills"]
+
+    Orchestrator --> Safety["🛡️ Safety & Quality"]
+    Safety --> Guard["🚧 Guard Hooks"]
+    Safety --> QG["✅ Quality Gates"]
+    Safety --> Secret["🔒 Secret Scan"]
 ```
 
 ### 🛡️ 안전
 
 기본 훅은 파괴적 명령과 비밀 유출을 차단합니다:
 
-- `.omk/config.toml`의 기본 approval policy는 오픈소스 자동화를 위해 `yolo`입니다.
+- `.omk/config.toml`의 기본 approval policy는 `auto`이며, `yolo_mode = false`입니다.
 - `pre-shell-guard.sh` — `rm -rf /`, `sudo`, `git push --force` 등 차단
 - `protect-secrets.sh` — `.env` 편집 및 비밀 유출 차단
 - `post-format.sh` — 수정된 파일 자동 포맷
@@ -325,7 +421,7 @@ omk lsp typescript
 
 <h2 id="english">English</h2>
 
-> Turn Kimi Code CLI into a <strong>worktree-based coding team</strong> with DESIGN.md-aware UI generation, AGENTS.md compatibility, and live quality gates.
+> Turn Kimi Code CLI into a <strong>meme-tier multi-agent coding team</strong>. This is a Kimi-native wrapper — not a generic AI tool. DESIGN.md-aware UI, live quality gates, AGENTS.md compatible. Still alpha; expect sharp edges and breaking changes.
 
 ### Features
 
@@ -340,12 +436,28 @@ omk lsp typescript
 | Live HUD | Real-time dashboard with System Usage, Kimi Usage gauges, Project Status, Latest Run, and TODO / Changed Files sidebar |
 | MCP Integration | Seamless connection with various MCP servers |
 | Local Graph Memory | Stores project/session memory in `.omk/memory/graph-state.json` as an ontology graph with mindmap/GraphQL-lite tools |
-| Parallel DAG | `omk parallel <goal>` runs coordinator → worker fan-out → reviewer with live UI and ETA tracking |
+| Parallel DAG | `omk parallel <goal>` (alpha) runs coordinator → worker fan-out → reviewer with live UI and ETA tracking |
 | Safety Hooks | Default protection against destructive commands and secret leakage |
+
+### 🆕 v0.4.0 Highlights
+
+- **`omk specify`** — GitHub Spec Kit integration (init, workflow, preset, version)
+- **`omk dag from-spec [spec-dir]`** — Convert spec Kit `tasks.md` into OMK DAG JSON with dependency inference and role-based routing
+- **`omk parallel --from-spec <dir>`** — Load spec-based DAG and execute via existing parallel executor
+- **`omk feature` / `bugfix` / `refactor` / `review`** — Workflow presets with `--spec-kit` support
+- **`omk summary`** / **`omk summary-show`** — Generate `summary.md` + `report.md` for the latest run
+- **`omk index`** / **`omk index-show`** — Build project index for context reduction
+- **`omk skill pack` / `install` / `sync`** — Curated Kimi skill pack management
+- **`omk agent`** — 16 built-in role registry and YAML diagnostics
+- **DAG evidence gates** — `command-pass` and other evidence-based gate support
+- **MCP doctor** — MCP diagnostics with executable checks and JSON-RPC handshake tests
+- **Safe defaults** — `approval_policy = "auto"`, `yolo_mode = false`
+- **npm 10+ support** — Improved npm global bin detection in doctor
+- **Hardened smoke tests** — Validates `doctor.errors` to catch unexpected failures
 
 ### 🆕 v0.3.0 Highlights
 
-- **`omk parallel <goal>`** — Run coordinator → worker fan-out → reviewer with live ETA tracking and 1.5 s UI refresh
+- **`omk parallel <goal>` (alpha)** — Run coordinator → worker fan-out → reviewer with live ETA tracking and 1.5 s UI refresh
 - **`omk hud` dashboard** — Real-time terminal dashboard with System / Kimi Usage gauges, Project Status, TODO & Changed Files sidebar
 - **TTY interactive menu** — Bare `omk` launches HUD + `@inquirer/prompts` menu for zero-config onboarding
 - **`--run-id` resume** — Restore any previous run from `.omk/runs/` persisted state
@@ -413,22 +525,41 @@ Team Runtime starting...
 
 ### CLI Commands
 
+> Note: run, parallel, verify, summary, goal, and sync are alpha features. Expect breaking changes.
+
 #### Stable
 
 | Command | Description |
 |---------|-------------|
 | `omk init` | Scaffold .omk/, .kimi/skills/, .agents/skills/, docs, hooks, agents |
 | `omk doctor` | Check Node, Kimi CLI, Git, python3, tmux, scaffold |
+| `omk doctor --soft` | Soft mode: do not fail on missing tools — useful for smoke tests and CI |
 | `omk chat` | Interactive Kimi with agent/config/MCP auto-detection |
 | `omk plan <goal>` | Plan-only mode |
-| `omk run <flow> <goal>` | Flow-based task execution |
-| `omk parallel <goal>` | Parallel DAG execution (coordinator → workers → reviewer) |
 | `omk hud` | Live dashboard with system usage, Kimi quota, project status, run tracking |
+| `omk lsp [server]` | Built-in LSP launcher; default server is TypeScript |
+| `omk star` | GitHub star helper; manual retry and status check |
 | `omk design init` | Create DESIGN.md with frontmatter |
 | `omk design list` | List local/remote DESIGN.md files |
 | `omk design apply <name>` | Convert DESIGN.md into code |
 | `omk google stitch-install` | Install Google Stitch skills |
-| `omk sync` | Sync Kimi assets |
+
+#### Alpha
+
+| Command | Description |
+|---------|-------------|
+| `omk run <flow> <goal>` (alpha) | Flow-based task execution |
+| `omk parallel <goal>` (alpha) | Parallel DAG execution (coordinator → workers → reviewer) |
+| `omk review` (alpha) | Code review + security review of current changes |
+| `omk review --ci` (alpha) | CI mode: local checks only, no Kimi API calls |
+| `omk review --soft` (alpha) | Soft mode: always exit 0 even if review fails |
+| `omk verify` (alpha) | Evidence gate verification for completed runs |
+| `omk summary` (alpha) | Run summary and report generation |
+| `omk goal` (alpha) | Codex-style goal management |
+| `omk sync` (alpha) | Sync Kimi assets (hooks, MCP, skills, local graph memory) |
+| `omk sync --dry-run` (alpha) | Preview sync without applying changes |
+| `omk sync --diff` (alpha) | Show diff of what would change |
+| `omk sync --rollback` (alpha) | Rollback last sync from manifest |
 
 #### Experimental
 
@@ -444,43 +575,46 @@ Team Runtime starting...
 
 ```mermaid
 graph TD
-    A["👤 User / omk CLI"] --> B["🎮 Command Router"]
-    B --> C1["omk init / doctor"]
-    B --> C2["omk plan / run / parallel"]
-    B --> C3["omk hud / team / design"]
-    B --> C4["omk chat / lsp / snip"]
+    User["👤 User / omk CLI"] --> Router["🎮 Command Router"]
 
-    C2 --> D["⚙️ Orchestration Engine"]
-    C3 --> H["📊 HUD & Live UI"]
+    Router --> Stable["🟢 init / doctor / sync"]
+    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary"]
+    Router --> Hud["📺 omk hud / cockpit"]
+    Router --> Chat["💬 omk chat / lsp / design / star"]
 
-    D --> D1["DAG Scheduler"]
-    D --> D2["Task Graph"]
-    D --> D3["Executor + ETA"]
-    D --> D4["Ensemble (Role-aware Quorum)"]
-    D --> D5["Routing + State Persister"]
+    Alpha --> Orchestrator["⚡ Parallel Orchestrator"]
+    Orchestrator --> Coordinator["🎛️ coordinator agent"]
+    Orchestrator --> Workers["👷 worker agents\n(coder / explorer / tester)"]
+    Orchestrator --> Reviewer["🔍 reviewer + quorum aggregation"]
 
-    H --> H1["Parallel Live Renderer"]
-    H --> H2["System / Kimi Gauges"]
-    H --> H3["Banner + Theme + i18n"]
+    Orchestrator --> DAG["📊 DAG Scheduler + Task Graph"]
+    DAG --> Executor["🚀 Executor + ETA Estimator"]
+    DAG --> Evidence["🧪 Evidence Gate"]
+    DAG --> Ensemble["🎭 Role-aware Ensemble"]
 
-    D --> K["🤖 Kimi Native Layer"]
-    K --> K1["Wire Client"]
-    K --> K2["Kimi Runner + Bug Filter"]
-    K --> K3["Usage / OAuth / Status Line"]
+    Executor --> KimiLayer["🤖 Kimi Native Layer"]
+    KimiLayer --> Wire["📡 Wire Client"]
+    KimiLayer --> Runner["🏃 Kimi Runner + Bug Filter"]
+    KimiLayer --> Cockpit["🖥️ Chat Cockpit / Banner"]
+    KimiLayer --> StatusLine["📈 Usage / OAuth / Status Line"]
 
-    D --> M["🧠 Memory & Context"]
-    M --> M1["Local Graph Memory (graph-state.json)"]
-    M --> M2["Neo4j Memory"]
-    M --> M3["Snippets + Checkpoints"]
+    Executor --> Memory["🧠 Memory & Context"]
+    Memory --> LocalGraph["🗂️ Local Graph Memory"]
+    Memory --> Neo4j["🌐 Neo4j (optional)"]
+    Memory --> State["💾 Run State (.omk/runs/)"]
+    Memory --> Snippets["📎 Snippets + D-Mail Checkpoints"]
 
-    D --> S["🛡️ Safety & Quality"]
-    S --> S1["Guard Hooks"]
-    S --> S2["Quality Gates"]
-    S --> S3["Secret Scan"]
+    Orchestrator --> LiveUI["📺 Live HUD / Parallel Renderer"]
 
-    K --> E["🔌 Extensions"]
-    E --> E1["MCP Servers"]
-    E --> E2["LSP TypeScript"]
+    KimiLayer --> Extensions["🔌 Extensions"]
+    Extensions --> MCP["🔧 MCP Servers"]
+    Extensions --> LSP["🔨 LSP TypeScript"]
+    Extensions --> Skills["🎯 Project + Global Skills"]
+
+    Orchestrator --> Safety["🛡️ Safety & Quality"]
+    Safety --> Guard["🚧 Guard Hooks"]
+    Safety --> QG["✅ Quality Gates"]
+    Safety --> Secret["🔒 Secret Scan"]
 ```
 
 ### 🛡️ Safety
@@ -515,12 +649,28 @@ Default hooks block destructive commands and secret leakage:
 | 实时 HUD | 实时仪表盘：系统用量、Kimi 配额条、项目状态、最新运行、TODO / 变更文件侧边栏 |
 | MCP 集成 | 与多种 MCP 服务器无缝连接 |
 | Local Graph Memory | 将项目/会话记忆存入 `.omk/memory/graph-state.json` 本地本体图，并提供 mindmap/GraphQL-lite |
-| 并行 DAG | `omk parallel <goal>` 执行 coordinator → worker 扇出 → reviewer，带实时 UI 与 ETA 追踪 |
+| 并行 DAG | `omk parallel <goal>` (alpha) 执行 coordinator → worker 扇出 → reviewer，带实时 UI 与 ETA 追踪 |
 | 安全钩子 | 默认防止破坏性命令与密钥泄漏 |
+
+### 🆕 v0.4.0 更新亮点
+
+- **`omk specify`** — GitHub Spec Kit 连动（init、workflow、preset、version）
+- **`omk dag from-spec [spec-dir]`** — 将 Spec Kit `tasks.md` 转换为 OMK DAG JSON（依赖推断 + 角色路由）
+- **`omk parallel --from-spec <dir>`** — 通过并行执行器加载并执行 Spec 驱动 DAG
+- **`omk feature` / `bugfix` / `refactor` / `review`** — 支持 `--spec-kit` 的工作流预设
+- **`omk summary`** / **`omk summary-show`** — 生成执行摘要及 `report.md`
+- **`omk index`** / **`omk index-show`** — 项目索引构建，压缩上下文
+- **`omk skill pack` / `install` / `sync`** — 精选 Kimi 技能包管理
+- **`omk agent`** — 16 个内置角色注册表及 YAML 诊断
+- **DAG evidence gates** — 支持 `command-pass` 等证据门控
+- **MCP doctor** — MCP 诊断及 JSON-RPC 握手测试
+- **安全默认值** — `approval_policy = "auto"`，`yolo_mode = false`
+- **npm 10+ 支持** — 改进 doctor 的 npm global bin 探测
+- **Smoke test 强化** — 验证 `doctor.errors` 以捕获意外失败
 
 ### 🆕 v0.3.0 更新亮点
 
-- **`omk parallel <goal>`** — 协调器 → 多 Worker 分发 → Reviewer 闭环，支持实时 ETA 追踪与 1.5 秒 UI 刷新
+- **`omk parallel <goal>` (alpha)** — 协调器 → 多 Worker 分发 → Reviewer 闭环，支持实时 ETA 追踪与 1.5 秒 UI 刷新
 - **`omk hud` 仪表盘** — 实时终端仪表盘：系统/Kimi 资源 gauges、项目状态、TODO & 变更文件侧边栏
 - **TTY 交互式入口** — 直接执行 `omk` 即可唤起 HUD + 交互式菜单，零配置上
 - **`--run-id` 运行恢复** — 从 `.omk/runs/` 持久化状态恢复任意历史运行
@@ -588,22 +738,41 @@ Team Runtime 启动中...
 
 ### CLI Commands
 
+> Note: run, parallel, verify, summary, and goal are alpha features. Expect breaking changes.
+
 #### Stable
 
 | Command | Description |
 |---------|-------------|
 | `omk init` | 创建 .omk/、.kimi/skills/、.agents/skills/、docs、hooks、agents 脚手架 |
 | `omk doctor` | 检查 Node、Kimi CLI、Git、python3、tmux、脚手架 |
+| `omk doctor --soft` | 软模式：缺少工具时不失败 — 适用于 smoke 测试和 CI |
 | `omk chat` | 支持代理/配置/MCP 自动检测的交互式 Kimi |
 | `omk plan <goal>` | 仅计划模式 |
-| `omk run <flow> <goal>` | 基于流程的任务执行 |
-| `omk parallel <goal>` | 并行 DAG 执行（coordinator → workers → reviewer） |
 | `omk hud` | 实时仪表盘：系统用量、Kimi 配额、项目状态、运行追踪 |
+| `omk lsp [server]` | 内置 LSP 启动器；默认服务器为 TypeScript |
+| `omk star` | GitHub star 助手；手动重试与状态检查 |
 | `omk design init` | 创建带 frontmatter 的 DESIGN.md |
 | `omk design list` | 列出本地/远程 DESIGN.md |
 | `omk design apply <name>` | 将 DESIGN.md 转换为代码 |
 | `omk google stitch-install` | 安装 Google Stitch 技能 |
-| `omk sync` | 同步 Kimi 资源 |
+| `omk sync` | 同步 Kimi 资源（hooks、MCP、skills、本地图记忆） |
+| `omk sync --dry-run` | 预览变更，不实际应用 |
+| `omk sync --diff` | 显示将要变更的 diff |
+| `omk sync --rollback` | 从 manifest 回滚上次同步 |
+
+#### Alpha
+
+| Command | Description |
+|---------|-------------|
+| `omk run <flow> <goal>` (alpha) | 基于流程的任务执行 |
+| `omk parallel <goal>` (alpha) | 并行 DAG 执行（coordinator → workers → reviewer） |
+| `omk review` (alpha) | 当前变更的代码审查 + 安全审查 |
+| `omk review --ci` (alpha) | CI 模式：仅本地检查，不调用 Kimi API |
+| `omk review --soft` (alpha) | 软模式：审查失败也返回 exit 0 |
+| `omk verify` (alpha) | 已完成运行的证据门验证 |
+| `omk summary` (alpha) | 运行摘要与报告生成 |
+| `omk goal` (alpha) | Codex 风格的目标管理 |
 
 #### Experimental
 
@@ -619,43 +788,46 @@ Team Runtime 启动中...
 
 ```mermaid
 graph TD
-    A["👤 User / omk CLI"] --> B["🎮 Command Router"]
-    B --> C1["omk init / doctor"]
-    B --> C2["omk plan / run / parallel"]
-    B --> C3["omk hud / team / design"]
-    B --> C4["omk chat / lsp / snip"]
+    User["👤 User / omk CLI"] --> Router["🎮 Command Router"]
 
-    C2 --> D["⚙️ Orchestration Engine"]
-    C3 --> H["📊 HUD & Live UI"]
+    Router --> Stable["🟢 init / doctor / sync"]
+    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary"]
+    Router --> Hud["📺 omk hud / cockpit"]
+    Router --> Chat["💬 omk chat / lsp / design / star"]
 
-    D --> D1["DAG Scheduler"]
-    D --> D2["Task Graph"]
-    D --> D3["Executor + ETA"]
-    D --> D4["Ensemble (Role-aware Quorum)"]
-    D --> D5["Routing + State Persister"]
+    Alpha --> Orchestrator["⚡ Parallel Orchestrator"]
+    Orchestrator --> Coordinator["🎛️ coordinator agent"]
+    Orchestrator --> Workers["👷 worker agents\n(coder / explorer / tester)"]
+    Orchestrator --> Reviewer["🔍 reviewer + quorum aggregation"]
 
-    H --> H1["Parallel Live Renderer"]
-    H --> H2["System / Kimi Gauges"]
-    H --> H3["Banner + Theme + i18n"]
+    Orchestrator --> DAG["📊 DAG Scheduler + Task Graph"]
+    DAG --> Executor["🚀 Executor + ETA Estimator"]
+    DAG --> Evidence["🧪 Evidence Gate"]
+    DAG --> Ensemble["🎭 Role-aware Ensemble"]
 
-    D --> K["🤖 Kimi Native Layer"]
-    K --> K1["Wire Client"]
-    K --> K2["Kimi Runner + Bug Filter"]
-    K --> K3["Usage / OAuth / Status Line"]
+    Executor --> KimiLayer["🤖 Kimi Native Layer"]
+    KimiLayer --> Wire["📡 Wire Client"]
+    KimiLayer --> Runner["🏃 Kimi Runner + Bug Filter"]
+    KimiLayer --> Cockpit["🖥️ Chat Cockpit / Banner"]
+    KimiLayer --> StatusLine["📈 Usage / OAuth / Status Line"]
 
-    D --> M["🧠 Memory & Context"]
-    M --> M1["Local Graph Memory (graph-state.json)"]
-    M --> M2["Neo4j Memory"]
-    M --> M3["Snippets + Checkpoints"]
+    Executor --> Memory["🧠 Memory & Context"]
+    Memory --> LocalGraph["🗂️ Local Graph Memory"]
+    Memory --> Neo4j["🌐 Neo4j (optional)"]
+    Memory --> State["💾 Run State (.omk/runs/)"]
+    Memory --> Snippets["📎 Snippets + D-Mail Checkpoints"]
 
-    D --> S["🛡️ Safety & Quality"]
-    S --> S1["Guard Hooks"]
-    S --> S2["Quality Gates"]
-    S --> S3["Secret Scan"]
+    Orchestrator --> LiveUI["📺 Live HUD / Parallel Renderer"]
 
-    K --> E["🔌 Extensions"]
-    E --> E1["MCP Servers"]
-    E --> E2["LSP TypeScript"]
+    KimiLayer --> Extensions["🔌 Extensions"]
+    Extensions --> MCP["🔧 MCP Servers"]
+    Extensions --> LSP["🔨 LSP TypeScript"]
+    Extensions --> Skills["🎯 Project + Global Skills"]
+
+    Orchestrator --> Safety["🛡️ Safety & Quality"]
+    Safety --> Guard["🚧 Guard Hooks"]
+    Safety --> QG["✅ Quality Gates"]
+    Safety --> Secret["🔒 Secret Scan"]
 ```
 
 ### 🛡️ 安全
@@ -690,12 +862,28 @@ graph TD
 | ライブ HUD | リアルタイムダッシュボード：システム使用量、Kimi クォータゲージ、プロジェクト状態、最新実行、TODO / 変更ファイルサイドバー |
 | MCP 統合 | 様々な MCP サーバーとのシームレスな連携 |
 | Local Graph Memory | プロジェクト/セッション記憶を `.omk/memory/graph-state.json` のローカル ontology graph に保存し、mindmap/GraphQL-lite を提供 |
-| 並列 DAG | `omk parallel <goal>` は coordinator → worker ファンアウト → reviewer を実行。ライブ UI と ETA 追跡付き |
+| 並列 DAG | `omk parallel <goal>` (alpha) は coordinator → worker ファンアウト → reviewer を実行。ライブ UI と ETA 追跡付き |
 | 安全フック | 破壊的コマンドとシークレット漏洩をデフォルトで防止 |
+
+### 🆕 v0.4.0 の主な更新
+
+- **`omk specify`** — GitHub Spec Kit 連携（init、workflow、preset、version）
+- **`omk dag from-spec [spec-dir]`** — Spec Kit `tasks.md` を OMK DAG JSON に変換（依存推論 + ロールルーティング）
+- **`omk parallel --from-spec <dir>`** — Spec ベース DAG を並列実行エンジンで実行
+- **`omk feature` / `bugfix` / `refactor` / `review`** — `--spec-kit` 対応ワークフロープリセット
+- **`omk summary`** / **`omk summary-show`** — 実行サマリーと `report.md` の生成
+- **`omk index`** / **`omk index-show`** — プロジェクトインデックス構築でコンテキスト削減
+- **`omk skill pack` / `install` / `sync`** — 厳選された Kimi スキルパック管理
+- **`omk agent`** — 16 種類のビルトインロールレジストリと YAML 診断
+- **DAG evidence gates** — `command-pass` などエビデンスベースゲート対応
+- **MCP doctor** — MCP 診断と JSON-RPC ハンドシェイクテスト
+- **安全なデフォルト** — `approval_policy = "auto"`、`yolo_mode = false`
+- **npm 10+ 対応** — doctor の npm global bin 検出を改善
+- **Smoke test 強化** — `doctor.errors` の検証で予期しない失敗を検知
 
 ### 🆕 v0.3.0 の主な更新
 
-- **`omk parallel <goal>`** — コーディネーター → Worker 分散 → Reviewer 集約。リアルタイム ETA 追跡と 1.5 秒間隔の UI 更新
+- **`omk parallel <goal>` (alpha)** — コーディネーター → Worker 分散 → Reviewer 集約。リアルタイム ETA 追跡と 1.5 秒間隔の UI 更新
 - **`omk hud` ダッシュボード** — システム／Kimi のメーター、プロジェクト状態、TODO & 変更ファイルサイドバーを含むリアルタイムターミナルダッシュボード
 - **TTY インタラクティブメニュー** — `omk` 単体実行で HUD + 対話型プロンプトを自動起動。設定不要ですぐに使える
 - **`--run-id` 実行再開** — `.omk/runs/` の永続化状態から任意の過去実行を再開
@@ -763,22 +951,41 @@ Team Runtime 開始中...
 
 ### CLI Commands
 
+> Note: run, parallel, verify, summary, and goal are alpha features. Expect breaking changes.
+
 #### Stable
 
 | Command | Description |
 |---------|-------------|
 | `omk init` | .omk/、.kimi/skills/、.agents/skills/、docs、hooks、agents のスキャフォールドを作成 |
 | `omk doctor` | Node、Kimi CLI、Git、python3、tmux、スキャフォールドを診断 |
+| `omk doctor --soft` | ソフトモード：不足ツールでも失敗しない — smoke テストや CI に適しています |
 | `omk chat` | エージェント/設定/MCP 自動検出対応の対話型 Kimi |
 | `omk plan <goal>` | 計画専用モード |
-| `omk run <flow> <goal>` | フローベースのタスク実行 |
-| `omk parallel <goal>` | 並列 DAG 実行（coordinator → workers → reviewer） |
 | `omk hud` | リアルタイムダッシュボード：システム使用量、Kimi クォータ、プロジェクト状態、実行追跡 |
+| `omk lsp [server]` | 組み込み LSP ランチャー；デフォルトサーバーは TypeScript |
+| `omk star` | GitHub star ヘルパー；手動再試行と状態確認 |
 | `omk design init` | frontmatter 付き DESIGN.md を作成 |
 | `omk design list` | ローカル/リモート DESIGN.md を一覧表示 |
 | `omk design apply <name>` | DESIGN.md をコードに変換適用 |
 | `omk google stitch-install` | Google Stitch スキルをインストール |
-| `omk sync` | Kimi アセットを同期 |
+| `omk sync` | Kimi アセットを同期（hooks、MCP、skills、ローカルグラフメモリ） |
+| `omk sync --dry-run` | 変更を適用せずプレビュー |
+| `omk sync --diff` | 変更内容の diff を表示 |
+| `omk sync --rollback` | manifest から前回の同期をロールバック |
+
+#### Alpha
+
+| Command | Description |
+|---------|-------------|
+| `omk run <flow> <goal>` (alpha) | フローベースのタスク実行 |
+| `omk parallel <goal>` (alpha) | 並列 DAG 実行（coordinator → workers → reviewer） |
+| `omk review` (alpha) | 現在の変更のコードレビュー + セキュリティレビュー |
+| `omk review --ci` (alpha) | CI モード：ローカル検証のみ、Kimi API 呼び出しなし |
+| `omk review --soft` (alpha) | ソフトモード：レビュー失敗時も exit 0 を維持 |
+| `omk verify` (alpha) | 完了済み実行のエビデンスゲート検証 |
+| `omk summary` (alpha) | 実行サマリーとレポート生成 |
+| `omk goal` (alpha) | Codex スタイルのゴール管理 |
 
 #### Experimental
 
@@ -794,43 +1001,46 @@ Team Runtime 開始中...
 
 ```mermaid
 graph TD
-    A["👤 User / omk CLI"] --> B["🎮 Command Router"]
-    B --> C1["omk init / doctor"]
-    B --> C2["omk plan / run / parallel"]
-    B --> C3["omk hud / team / design"]
-    B --> C4["omk chat / lsp / snip"]
+    User["👤 User / omk CLI"] --> Router["🎮 Command Router"]
 
-    C2 --> D["⚙️ Orchestration Engine"]
-    C3 --> H["📊 HUD & Live UI"]
+    Router --> Stable["🟢 init / doctor / sync"]
+    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary"]
+    Router --> Hud["📺 omk hud / cockpit"]
+    Router --> Chat["💬 omk chat / lsp / design / star"]
 
-    D --> D1["DAG Scheduler"]
-    D --> D2["Task Graph"]
-    D --> D3["Executor + ETA"]
-    D --> D4["Ensemble (Role-aware Quorum)"]
-    D --> D5["Routing + State Persister"]
+    Alpha --> Orchestrator["⚡ Parallel Orchestrator"]
+    Orchestrator --> Coordinator["🎛️ coordinator agent"]
+    Orchestrator --> Workers["👷 worker agents\n(coder / explorer / tester)"]
+    Orchestrator --> Reviewer["🔍 reviewer + quorum aggregation"]
 
-    H --> H1["Parallel Live Renderer"]
-    H --> H2["System / Kimi Gauges"]
-    H --> H3["Banner + Theme + i18n"]
+    Orchestrator --> DAG["📊 DAG Scheduler + Task Graph"]
+    DAG --> Executor["🚀 Executor + ETA Estimator"]
+    DAG --> Evidence["🧪 Evidence Gate"]
+    DAG --> Ensemble["🎭 Role-aware Ensemble"]
 
-    D --> K["🤖 Kimi Native Layer"]
-    K --> K1["Wire Client"]
-    K --> K2["Kimi Runner + Bug Filter"]
-    K --> K3["Usage / OAuth / Status Line"]
+    Executor --> KimiLayer["🤖 Kimi Native Layer"]
+    KimiLayer --> Wire["📡 Wire Client"]
+    KimiLayer --> Runner["🏃 Kimi Runner + Bug Filter"]
+    KimiLayer --> Cockpit["🖥️ Chat Cockpit / Banner"]
+    KimiLayer --> StatusLine["📈 Usage / OAuth / Status Line"]
 
-    D --> M["🧠 Memory & Context"]
-    M --> M1["Local Graph Memory (graph-state.json)"]
-    M --> M2["Neo4j Memory"]
-    M --> M3["Snippets + Checkpoints"]
+    Executor --> Memory["🧠 Memory & Context"]
+    Memory --> LocalGraph["🗂️ Local Graph Memory"]
+    Memory --> Neo4j["🌐 Neo4j (optional)"]
+    Memory --> State["💾 Run State (.omk/runs/)"]
+    Memory --> Snippets["📎 Snippets + D-Mail Checkpoints"]
 
-    D --> S["🛡️ Safety & Quality"]
-    S --> S1["Guard Hooks"]
-    S --> S2["Quality Gates"]
-    S --> S3["Secret Scan"]
+    Orchestrator --> LiveUI["📺 Live HUD / Parallel Renderer"]
 
-    K --> E["🔌 Extensions"]
-    E --> E1["MCP Servers"]
-    E --> E2["LSP TypeScript"]
+    KimiLayer --> Extensions["🔌 Extensions"]
+    Extensions --> MCP["🔧 MCP Servers"]
+    Extensions --> LSP["🔨 LSP TypeScript"]
+    Extensions --> Skills["🎯 Project + Global Skills"]
+
+    Orchestrator --> Safety["🛡️ Safety & Quality"]
+    Safety --> Guard["🚧 Guard Hooks"]
+    Safety --> QG["✅ Quality Gates"]
+    Safety --> Secret["🔒 Secret Scan"]
 ```
 
 ### 🛡️ セーフティ
@@ -849,6 +1059,27 @@ graph TD
 ---
 
 <h2 id="customization">Customization</h2>
+
+### ⭐ First-run GitHub Star Prompt
+
+After your first successful interactive OMK CLI command (`init`, `doctor`, `hud`, `plan`, `parallel` (alpha), `run` (alpha)), OMK may ask: **"Support oh-my-kimichan on GitHub?"**
+
+- Only appears in **interactive TTY sessions**; never in CI, non-TTY, `chat`, `lsp`, `--help`, or `--version`.
+- **Yes** → explicitly requests a star via authenticated `gh` CLI.
+- **No** → records preference and never asks again.
+- **Disable entirely:** `OMK_STAR_PROMPT=0`.
+- **Manual retry:** `omk star`. Check state: `omk star --status`.
+- No GitHub tokens are stored. Browser automation is not used.
+
+### 📊 Command Maturity
+
+OMK uses a three-tier maturity model defined in [`MATURITY.md`](./MATURITY.md):
+
+- **Stable** — `init`, `doctor`, `chat`, `hud`, `lsp`
+- **Alpha** — `parallel`, `run`, `review --ci`, `summary`, `verify`, `goal`, `sync`
+- **Experimental** — `team`, `merge`, `specify`, `dag from-spec`, `skill`, `agent`, workflow presets (`feature` / `bugfix` / `refactor`)
+
+`--json` output is supported on `doctor` and `verify` (alpha) for CI consumption.
 
 ### 🎨 Custom Welcome Banner Image
 

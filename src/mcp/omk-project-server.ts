@@ -9,6 +9,11 @@ import { runQualityGate, type QualityGateResults } from "./quality-gate.js";
 import { saveCheckpoint, listCheckpoints, restoreCheckpoint } from "../util/checkpoint.js";
 import { getOmkVersionSync } from "../util/version.js";
 import { saveSnippet, getSnippet, deleteSnippet, searchSnippets } from "../util/snippet.js";
+import { normalizeGoal } from "../goal/intake.js";
+import { createGoalPersister } from "../goal/persistence.js";
+import { checkGoalEvidence, checkGoalConstraints } from "../goal/evidence.js";
+import { scoreGoal } from "../goal/scoring.js";
+import { createStatePersister } from "../orchestration/state-persister.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -36,6 +41,19 @@ interface Tool {
   };
 }
 
+interface Resource {
+  uri: string;
+  name: string;
+  description: string;
+  mimeType?: string;
+}
+
+interface Prompt {
+  name: string;
+  description: string;
+  arguments?: Array<{ name: string; description: string; required?: boolean }>;
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────
 
 const PROJECT_ROOT = process.env.OMK_PROJECT_ROOT || process.cwd();
@@ -44,6 +62,7 @@ const OMK_MEMORY_DIR = join(OMK_DIR, "memory");
 const OMK_AGENTS_DIR = join(OMK_DIR, "agents", "roles");
 const OMK_RUNS_DIR = join(OMK_DIR, "runs");
 const OMK_CONFIG_PATH = join(OMK_DIR, "config.toml");
+const OMK_GOALS_DIR = join(OMK_DIR, "goals");
 
 const PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "omk-project";
@@ -52,6 +71,8 @@ const MEMORY_STORE = new MemoryStore(OMK_MEMORY_DIR, {
   projectRoot: PROJECT_ROOT,
   source: "omk-project-mcp",
 });
+const GOAL_PERSISTER = createGoalPersister(OMK_GOALS_DIR);
+const STATE_PERSISTER = createStatePersister(OMK_RUNS_DIR);
 
 // ─── Security helpers ───────────────────────────────────────────────────
 
@@ -99,56 +120,310 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-// ─── Tool handlers ──────────────────────────────────────────────────────
+function sanitizeGoalId(goalId: string): string {
+  const sanitized = goalId.replace(/[^a-zA-Z0-9_.-]/g, "");
+  if (sanitized !== goalId || sanitized.length === 0 || sanitized.length > 128) {
+    throw new Error(`Invalid goalId: ${goalId}`);
+  }
+  return sanitized;
+}
 
-async function handleReadMemory(args: { path: string }): Promise<{ content: string }> {
+function validateMemoryWrite(content: string): void {
+  if (!content || content.trim().length === 0) {
+    throw new Error("Memory write rejected: content is empty");
+  }
+  const trimmed = content.trim();
+  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    try {
+      JSON.parse(trimmed);
+    } catch {
+      throw new Error("Memory write rejected: content looks like JSON but is not valid");
+    }
+  }
+}
+
+// ─── Resource handlers ──────────────────────────────────────────────────
+
+async function handleReadGoalResource(goalId: string): Promise<{ content: string }> {
+  const goal = await GOAL_PERSISTER.load(sanitizeGoalId(goalId));
+  if (!goal) throw new Error(`Goal not found: ${goalId}`);
+  return { content: JSON.stringify(goal, null, 2) };
+}
+
+async function handleReadRunResource(runId: string): Promise<{ content: string }> {
+  const state = await STATE_PERSISTER.load(runId);
+  if (!state) throw new Error(`Run state not found: ${runId}`);
+  return { content: JSON.stringify(state, null, 2) };
+}
+
+async function handleReadOntologyResource(): Promise<{ content: string }> {
+  const ontology = await MEMORY_STORE.ontology();
+  if (!ontology) {
+    const status = await MEMORY_STORE.status();
+    return { content: JSON.stringify({ backend: status.backend, note: "Ontology is available when backend=local_graph" }, null, 2) };
+  }
+  return { content: JSON.stringify(ontology, null, 2) };
+}
+
+// ─── Prompt handlers ────────────────────────────────────────────────────
+
+function handleGetGoalIntakePrompt(args?: Record<string, string>): {
+  description: string;
+  messages: Array<{ role: string; content: { type: string; text: string } }>;
+} {
+  const rawGoal = args?.rawGoal ?? "<paste the raw user goal here>";
+  return {
+    description: "Normalize a raw goal into a structured GoalSpec",
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `You are a goal-intake agent. Normalize the following raw goal into a structured GoalSpec (JSON).
+
+Raw goal:
+"""
+${rawGoal}
+"""
+
+Output a JSON object with these fields:
+- title: concise title (max 120 chars)
+- objective: one-paragraph objective
+- successCriteria: array of { id, description, requirement: "required"|"optional", weight, inferred: false }
+- constraints: array of { id, description }
+- nonGoals: array of strings
+- expectedArtifacts: array of { name, path?, gate? }
+- riskLevel: "low" | "medium" | "high"
+
+Only return valid JSON.`,
+        },
+      },
+    ],
+  };
+}
+
+function handleGetEvidenceReviewPrompt(args?: Record<string, string>): {
+  description: string;
+  messages: Array<{ role: string; content: { type: string; text: string } }>;
+} {
+  const goalId = args?.goalId ?? "<goalId>";
+  return {
+    description: "Review evidence against success criteria for a goal",
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `You are an evidence-review agent. Review the collected evidence for goal ${goalId}.
+
+For each success criterion:
+1. State whether evidence exists and is sufficient.
+2. Identify gaps or risks.
+3. Recommend next steps (add evidence, re-run tests, or mark blocked).
+
+Use the omk_goal_show and omk_evidence_check tools to fetch current state before writing your review.`,
+        },
+      },
+    ],
+  };
+}
+
+function handleGetQualityGatePrompt(args?: Record<string, string>): {
+  description: string;
+  messages: Array<{ role: string; content: { type: string; text: string } }>;
+} {
+  const scope = args?.scope ?? "all";
+  return {
+    description: "Run lint, typecheck, test, and build quality gates",
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `You are a quality-gate agent. Run the quality gates for scope: ${scope}.
+
+Steps:
+1. Call omk_quality_gate to execute lint, typecheck, test, and build.
+2. For any failure, read the saved log and propose a fix.
+3. Do not proceed with downstream tasks until required gates pass.
+4. Summarize results in a concise pass/fail table.`,
+        },
+      },
+    ],
+  };
+}
+
+// ─── Tool handlers (Goal) ───────────────────────────────────────────────
+
+async function handleGoalCreate(args: {
+  rawPrompt: string;
+  title?: string;
+  objective?: string;
+  successCriteria?: Array<{
+    id: string;
+    description: string;
+    requirement: "required" | "optional";
+    weight: number;
+  }>;
+  constraints?: string[];
+  nonGoals?: string[];
+  expectedArtifacts?: Array<{ name: string; path?: string }>;
+  riskLevel?: "low" | "medium" | "high";
+}): Promise<{ goalId: string; spec: unknown }> {
+  const spec = normalizeGoal({
+    rawPrompt: args.rawPrompt,
+    title: args.title,
+    objective: args.objective,
+    successCriteria: args.successCriteria?.map((c) => ({ ...c, inferred: false })),
+    constraints: args.constraints,
+    nonGoals: args.nonGoals,
+    expectedArtifacts: args.expectedArtifacts,
+    riskLevel: args.riskLevel,
+  });
+  await GOAL_PERSISTER.save(spec);
+  return { goalId: spec.goalId, spec };
+}
+
+async function handleGoalShow(args: { goalId: string }): Promise<{ spec: unknown }> {
+  const spec = await GOAL_PERSISTER.load(sanitizeGoalId(args.goalId));
+  if (!spec) throw new Error(`Goal not found: ${args.goalId}`);
+  return { spec };
+}
+
+async function handleGoalList(): Promise<{ goals: string[] }> {
+  const goals = await GOAL_PERSISTER.list();
+  return { goals };
+}
+
+async function handleGoalVerify(args: { goalId: string; runId?: string }): Promise<{
+  goalId: string;
+  evidence: unknown[];
+  score: unknown;
+  constraints: { passed: boolean; violations: string[] };
+}> {
+  const goal = await GOAL_PERSISTER.load(sanitizeGoalId(args.goalId));
+  if (!goal) throw new Error(`Goal not found: ${args.goalId}`);
+
+  let evidence: import("../contracts/goal.js").GoalEvidence[] = [];
+  if (args.runId) {
+    const runState = await STATE_PERSISTER.load(args.runId);
+    if (!runState) throw new Error(`Run state not found: ${args.runId}`);
+    evidence = await checkGoalEvidence(goal, { root: PROJECT_ROOT, runState });
+    await GOAL_PERSISTER.saveEvidence(goal.goalId, evidence);
+  } else {
+    evidence = await GOAL_PERSISTER.loadEvidence(goal.goalId);
+  }
+
+  const constraints = checkGoalConstraints(goal);
+  const score = scoreGoal(goal, evidence);
+  return { goalId: goal.goalId, evidence, score, constraints };
+}
+
+async function handleGoalClose(args: { goalId: string }): Promise<{ success: boolean; goalId: string }> {
+  const goal = await GOAL_PERSISTER.load(sanitizeGoalId(args.goalId));
+  if (!goal) throw new Error(`Goal not found: ${args.goalId}`);
+  goal.status = "closed";
+  goal.updatedAt = new Date().toISOString();
+  await GOAL_PERSISTER.save(goal);
+  return { success: true, goalId: goal.goalId };
+}
+
+// ─── Tool handlers (Evidence) ───────────────────────────────────────────
+
+async function handleEvidenceAdd(args: {
+  goalId: string;
+  criterionId: string;
+  passed: boolean;
+  message?: string;
+  ref?: string;
+}): Promise<{ success: boolean; goalId: string; criterionId: string }> {
+  const goalId = sanitizeGoalId(args.goalId);
+  const goal = await GOAL_PERSISTER.load(goalId);
+  if (!goal) throw new Error(`Goal not found: ${args.goalId}`);
+
+  const evidence = await GOAL_PERSISTER.loadEvidence(goalId);
+  evidence.push({
+    criterionId: args.criterionId,
+    passed: args.passed,
+    message: args.message,
+    ref: args.ref,
+    checkedAt: new Date().toISOString(),
+  });
+  await GOAL_PERSISTER.saveEvidence(goalId, evidence);
+  return { success: true, goalId, criterionId: args.criterionId };
+}
+
+async function handleEvidenceCheck(args: {
+  goalId: string;
+  runId?: string;
+}): Promise<{
+  goalId: string;
+  evidence: unknown[];
+  score: unknown;
+  constraints: { passed: boolean; violations: string[] };
+}> {
+  const goal = await GOAL_PERSISTER.load(sanitizeGoalId(args.goalId));
+  if (!goal) throw new Error(`Goal not found: ${args.goalId}`);
+
+  let evidence: import("../contracts/goal.js").GoalEvidence[] = [];
+  if (args.runId) {
+    const runState = await STATE_PERSISTER.load(args.runId);
+    if (!runState) throw new Error(`Run state not found: ${args.runId}`);
+    evidence = await checkGoalEvidence(goal, { root: PROJECT_ROOT, runState });
+  } else {
+    evidence = await checkGoalEvidence(goal, {
+      root: PROJECT_ROOT,
+      runState: {
+        schemaVersion: 1,
+        runId: "none",
+        nodes: [],
+        startedAt: new Date().toISOString(),
+      },
+    });
+  }
+  await GOAL_PERSISTER.saveEvidence(goal.goalId, evidence);
+  const constraints = checkGoalConstraints(goal);
+  const score = scoreGoal(goal, evidence);
+  return { goalId: goal.goalId, evidence, score, constraints };
+}
+
+// ─── Tool handlers (Run) ────────────────────────────────────────────────
+
+async function handleRunState(args: { runId: string }): Promise<{ state: unknown }> {
+  const state = await STATE_PERSISTER.load(args.runId);
+  if (!state) throw new Error(`Run state not found: ${args.runId}`);
+  return { state };
+}
+
+// ─── Tool handlers (Quality Gate) ───────────────────────────────────────
+
+async function handleQualityGate(): Promise<QualityGateResults> {
+  const config = await readFile(OMK_CONFIG_PATH, "utf-8").catch(() => "");
+  return runQualityGate(PROJECT_ROOT, config);
+}
+
+// ─── Tool handlers (Memory) ─────────────────────────────────────────────
+
+async function handleMemoryRead(args: { path: string }): Promise<{ content: string }> {
   await safePath(args.path, OMK_MEMORY_DIR);
   const content = await MEMORY_STORE.read(args.path);
   return { content };
 }
 
-async function handleWriteMemory(args: { path: string; content: string }): Promise<{ success: boolean }> {
+async function handleMemoryWrite(args: { path: string; content: string }): Promise<{ success: boolean }> {
   await safePath(args.path, OMK_MEMORY_DIR);
+  validateMemoryWrite(args.content);
   await MEMORY_STORE.write(args.path, args.content);
   return { success: true };
 }
 
-async function handleReadRunMemory(args: { runId: string; path: string }): Promise<{ content: string }> {
-  const content = await MEMORY_STORE.readRunMemory(args.runId, args.path);
-  return { content };
-}
-
-async function handleWriteRunMemory(args: { runId: string; path: string; content: string }): Promise<{ success: boolean }> {
-  await MEMORY_STORE.writeRunMemory(args.runId, args.path, args.content);
-  return { success: true };
-}
-
-async function handleSearchMemory(args: { query?: string; limit?: number }): Promise<{
-  results: Array<{ path: string; content: string; sessionId: string; updatedAt: string; source: string }>;
-}> {
-  const results = await MEMORY_STORE.search(args.query ?? "", args.limit);
-  return { results };
-}
-
-async function handleMemoryStatus(): Promise<unknown> {
-  return MEMORY_STORE.status();
-}
-
-async function handleMemoryOntology(): Promise<unknown> {
-  const ontology = await MEMORY_STORE.ontology();
-  if (!ontology) throw new Error("Memory ontology is available when backend=local_graph");
-  return { ontology };
-}
-
-async function handleMemoryMindmap(args: { query?: string; limit?: number }): Promise<unknown> {
-  const mindmap = await MEMORY_STORE.mindmap(args.query ?? "", args.limit);
-  if (!mindmap) throw new Error("Memory mindmap is available when backend=local_graph");
-  return { mindmap };
-}
+// ─── Tool handlers (Graph) ──────────────────────────────────────────────
 
 async function handleGraphQuery(args: { query: string }): Promise<unknown> {
   return MEMORY_STORE.graphQuery(args.query);
 }
+
+// ─── Legacy tool handlers (kept for internal use, not exported) ─────────
 
 async function handleReadConfig(): Promise<{ content: string }> {
   const content = await readFile(OMK_CONFIG_PATH, "utf-8").catch(() => "");
@@ -191,8 +466,6 @@ async function handleListRuns(): Promise<{ runs: Array<{ id: string; createdAt: 
 
 function parseRunDate(runId: string): string {
   try {
-    const iso = runId.replace(/-/g, ":").replace(/T/g, "-").replace(/:/g, ":");
-    // runId format: 2025-04-30T12-34-56-789Z
     const parts = runId.split("T");
     if (parts.length === 2) {
       const date = parts[0];
@@ -262,8 +535,7 @@ async function handleGetQualitySettings(): Promise<{
 
 async function handleGetApprovalPolicy(): Promise<{ policy: string }> {
   const config = await readFile(OMK_CONFIG_PATH, "utf-8").catch(() => "");
-  const yoloMode = /^\s*yolo_mode\s*=\s*true\b/m.test(config);
-  const policy = config.match(/^approval_policy\s*=\s*"([^"]+)"/m)?.[1] ?? (yoloMode ? "yolo" : "yolo");
+  const policy = config.match(/^approval_policy\s*=\s*"([^"]+)"/m)?.[1] ?? "auto";
   return { policy };
 }
 
@@ -286,9 +558,11 @@ async function handleListWorktrees(): Promise<{ worktrees: string[] }> {
   return { worktrees: result };
 }
 
-async function handleRunQualityGate(): Promise<QualityGateResults> {
+async function handleRunQualityGatePrint(): Promise<{ text: string }> {
   const config = await readFile(OMK_CONFIG_PATH, "utf-8").catch(() => "");
-  return runQualityGate(PROJECT_ROOT, config);
+  const results = await runQualityGate(PROJECT_ROOT, config);
+  const { printQualityGateResults } = await import("./quality-gate.js");
+  return { text: printQualityGateResults(results, true) };
 }
 
 async function handleSaveCheckpoint(args: { runId: string; label: string; metadata?: Record<string, unknown> }): Promise<{ checkpointId: string; path: string }> {
@@ -304,231 +578,260 @@ async function handleRestoreCheckpoint(args: { checkpointId: string; runId: stri
   return restoreCheckpoint(args.checkpointId, args.runId);
 }
 
+// ─── Resource registry ──────────────────────────────────────────────────
+
+const RESOURCES: Resource[] = [
+  {
+    uri: "omk://goal/{goalId}",
+    name: "GoalSpec",
+    description: "Structured goal specification JSON by goal ID",
+    mimeType: "application/json",
+  },
+  {
+    uri: "omk://run/{runId}",
+    name: "RunState",
+    description: "Run state JSON by run ID",
+    mimeType: "application/json",
+  },
+  {
+    uri: "omk://ontology/project",
+    name: "ProjectOntology",
+    description: "Project ontology graph summary from the memory backend",
+    mimeType: "application/json",
+  },
+];
+
+// ─── Prompt registry ────────────────────────────────────────────────────
+
+const PROMPTS: Prompt[] = [
+  {
+    name: "goal-intake",
+    description: "Prompt template for normalizing a raw goal into GoalSpec",
+    arguments: [{ name: "rawGoal", description: "The raw user goal text", required: false }],
+  },
+  {
+    name: "evidence-review",
+    description: "Prompt template for reviewing evidence against criteria",
+    arguments: [{ name: "goalId", description: "Goal ID to review", required: false }],
+  },
+  {
+    name: "quality-gate",
+    description: "Prompt template for running lint/test/build/audit",
+    arguments: [{ name: "scope", description: "Scope of gates to run (default: all)", required: false }],
+  },
+];
+
 // ─── Tool registry ──────────────────────────────────────────────────────
 
 const TOOLS: Tool[] = [
+  // ── Goal lifecycle ──
   {
-    name: "omk_read_memory",
-    description: "Read project memory. Uses project-local graph memory by default and falls back to .omk/memory/ only when allowed.",
-    inputSchema: { type: "object", properties: { path: { type: "string", description: "Relative path under .omk/memory/" } }, required: ["path"] },
-  },
-  {
-    name: "omk_write_memory",
-    description: "Write project memory. Stores an ontology graph by default and mirrors to .omk/memory/ when enabled.",
-    inputSchema: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] },
-  },
-  {
-    name: "omk_read_run_memory",
-    description: "Read run/session memory for a run ID. Uses the selected graph memory backend when configured.",
+    name: "omk_goal_create",
+    description: "Create a GoalSpec from a raw prompt. Infers title, objective, criteria, and risk level.",
     inputSchema: {
       type: "object",
-      properties: { runId: { type: "string" }, path: { type: "string" } },
-      required: ["runId", "path"],
+      properties: {
+        rawPrompt: { type: "string", description: "Raw user goal text" },
+        title: { type: "string", description: "Optional explicit title" },
+        objective: { type: "string", description: "Optional explicit objective" },
+        successCriteria: {
+          type: "array",
+          description: "Optional explicit success criteria",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              description: { type: "string" },
+              requirement: { type: "string", enum: ["required", "optional"] },
+              weight: { type: "number" },
+            },
+            required: ["id", "description", "requirement", "weight"],
+          },
+        },
+        constraints: { type: "array", description: "Optional constraint descriptions", items: { type: "string" } },
+        nonGoals: { type: "array", description: "Explicit out-of-scope items", items: { type: "string" } },
+        expectedArtifacts: {
+          type: "array",
+          description: "Expected deliverables",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              path: { type: "string" },
+            },
+            required: ["name"],
+          },
+        },
+        riskLevel: { type: "string", enum: ["low", "medium", "high"], description: "Optional risk override" },
+      },
+      required: ["rawPrompt"],
     },
   },
   {
-    name: "omk_write_run_memory",
-    description: "Write run/session memory for a run ID. Uses the selected graph memory backend when configured.",
+    name: "omk_goal_show",
+    description: "Read a GoalSpec by ID",
     inputSchema: {
       type: "object",
-      properties: { runId: { type: "string" }, path: { type: "string" }, content: { type: "string" } },
-      required: ["runId", "path", "content"],
+      properties: {
+        goalId: { type: "string", description: "Goal identifier" },
+      },
+      required: ["goalId"],
     },
   },
   {
-    name: "omk_search_memory",
-    description: "Search graph-backed project memories by path/content.",
-    inputSchema: {
-      type: "object",
-      properties: { query: { type: "string" }, limit: { type: "number" } },
-    },
-  },
-  {
-    name: "omk_memory_status",
-    description: "Show sanitized memory backend status, local graph state, and optional Neo4j health.",
+    name: "omk_goal_list",
+    description: "List all goal IDs",
     inputSchema: { type: "object", properties: {} },
   },
   {
-    name: "omk_memory_ontology",
-    description: "Return the project-local ontology used to split memory into mind-map nodes.",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "omk_memory_mindmap",
-    description: "Return an ontology-based mind map for project/session memory.",
+    name: "omk_goal_verify",
+    description: "Verify goal evidence and compute a pass/fail score",
     inputSchema: {
       type: "object",
-      properties: { query: { type: "string" }, limit: { type: "number" } },
+      properties: {
+        goalId: { type: "string", description: "Goal identifier" },
+        runId: { type: "string", description: "Optional run ID to pull node-level evidence from" },
+      },
+      required: ["goalId"],
     },
   },
+  {
+    name: "omk_goal_close",
+    description: "Close a goal by ID",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goalId: { type: "string", description: "Goal identifier" },
+      },
+      required: ["goalId"],
+    },
+  },
+  // ── Evidence ──
+  {
+    name: "omk_evidence_add",
+    description: "Add evidence to a success criterion",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goalId: { type: "string", description: "Goal identifier" },
+        criterionId: { type: "string", description: "Criterion identifier" },
+        passed: { type: "boolean", description: "Whether the criterion is satisfied" },
+        message: { type: "string", description: "Human-readable evidence summary" },
+        ref: { type: "string", description: "Reference (URL, commit, file path)" },
+      },
+      required: ["goalId", "criterionId", "passed"],
+    },
+  },
+  {
+    name: "omk_evidence_check",
+    description: "Check evidence gates for a goal (artifact gates + criterion stubs)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goalId: { type: "string", description: "Goal identifier" },
+        runId: { type: "string", description: "Optional run ID to pull node-level evidence from" },
+      },
+      required: ["goalId"],
+    },
+  },
+  // ── Run ──
+  {
+    name: "omk_run_state",
+    description: "Get run state by ID",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", description: "Run identifier" },
+      },
+      required: ["runId"],
+    },
+  },
+  // ── Quality gate ──
+  {
+    name: "omk_quality_gate",
+    description: "Run quality gates: lint, typecheck, test, and build",
+    inputSchema: { type: "object", properties: {} },
+  },
+  // ── Memory ──
+  {
+    name: "omk_memory_read",
+    description: "Read project memory/ontology from the graph or filesystem mirror",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Relative path under .omk/memory/" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "omk_memory_write",
+    description: "Write to project memory with validation (non-empty, JSON-checked)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Relative path under .omk/memory/" },
+        content: { type: "string", description: "Content to write" },
+      },
+      required: ["path", "content"],
+    },
+  },
+  // ── Graph ──
   {
     name: "omk_graph_query",
-    description: "Run GraphQL-lite queries over the project-local graph memory (ontology, memory, memories, mindmap, nodes).",
+    description:
+      "Run read-only queries over the graph memory backend. local_graph supports GraphQL-lite (ontology, memory, memories, mindmap, nodes). neo4j supports read-only Cypher queries.",
     inputSchema: {
       type: "object",
       properties: {
         query: {
           type: "string",
-          description: "Example: query { mindmap(query: \"decision\", limit: 20) { root nodes edges } }",
+          description:
+            'GraphQL-lite example: query { mindmap(query: "decision", limit: 20) { root nodes edges } }. Cypher example: MATCH (n:OmkTask {projectId: $projectId}) RETURN n LIMIT 10',
         },
       },
       required: ["query"],
-    },
-  },
-  {
-    name: "omk_read_config",
-    description: "Read .omk/config.toml",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "omk_write_config",
-    description: "Write .omk/config.toml (overwrite). Disabled by default; requires OMK_MCP_ALLOW_WRITE_CONFIG=1 in trusted local sessions.",
-    inputSchema: { type: "object", properties: { content: { type: "string" } }, required: ["content"] },
-  },
-  {
-    name: "omk_list_agents",
-    description: "List available agent roles (.omk/agents/roles/*.yaml)",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "omk_read_agent",
-    description: "Read an agent role YAML",
-    inputSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
-  },
-  {
-    name: "omk_list_runs",
-    description: "List past run IDs (.omk/runs/)",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "omk_read_run",
-    description: "Read goal.md and plan.md for a run",
-    inputSchema: { type: "object", properties: { runId: { type: "string" } }, required: ["runId"] },
-  },
-  {
-    name: "omk_get_project_info",
-    description: "Get project name, git branch, and status",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "omk_get_quality_settings",
-    description: "Get quality gate settings from config",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "omk_get_approval_policy",
-    description: "Get approval policy from config",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "omk_list_worktrees",
-    description: "List all worktrees under .omk/worktrees/",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "omk_run_quality_gate",
-    description: "Run lint, typecheck, test, and build quality gates",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "omk_save_checkpoint",
-    description: "Save a D-Mail checkpoint: captures git diff, todos, and run state to .omk/checkpoints/",
-    inputSchema: {
-      type: "object",
-      properties: {
-        runId: { type: "string", description: "Run ID to associate with this checkpoint" },
-        label: { type: "string", description: "Human-readable label for the checkpoint" },
-        metadata: { type: "object", description: "Optional extra metadata to store" },
-      },
-      required: ["runId", "label"],
-    },
-  },
-  {
-    name: "omk_list_checkpoints",
-    description: "List D-Mail checkpoints. Optionally filter by runId.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        runId: { type: "string", description: "Optional run ID filter" },
-      },
-    },
-  },
-  {
-    name: "omk_restore_checkpoint",
-    description: "Restore a D-Mail checkpoint: apply git patch and restore todos/state to the run directory.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        checkpointId: { type: "string" },
-        runId: { type: "string" },
-      },
-      required: ["checkpointId", "runId"],
-    },
-  },
-  {
-    name: "omk_save_snippet",
-    description: "Save a reusable code snippet to .omk/snippets/",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Snippet name (alphanumeric, -, _)" },
-        content: { type: "string", description: "Snippet body" },
-        tags: { type: "array", items: { type: "string" }, description: "Optional tags" },
-      },
-      required: ["name", "content"],
-    },
-  },
-  {
-    name: "omk_search_snippets",
-    description: "Search saved snippets by query (name, content, or tags). Empty query returns all.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Search query" },
-        limit: { type: "number", description: "Max results (default 20)" },
-      },
-    },
-  },
-  {
-    name: "omk_get_snippet",
-    description: "Retrieve a single snippet by name",
-    inputSchema: {
-      type: "object",
-      properties: { name: { type: "string" } },
-      required: ["name"],
-    },
-  },
-  {
-    name: "omk_delete_snippet",
-    description: "Delete a snippet by name",
-    inputSchema: {
-      type: "object",
-      properties: { name: { type: "string" } },
-      required: ["name"],
     },
   },
 ];
 
 async function handleToolCall(name: string, args: unknown): Promise<unknown> {
   switch (name) {
-    case "omk_read_memory":
-      return handleReadMemory(args as { path: string });
-    case "omk_write_memory":
-      return handleWriteMemory(args as { path: string; content: string });
-    case "omk_read_run_memory":
-      return handleReadRunMemory(args as { runId: string; path: string });
-    case "omk_write_run_memory":
-      return handleWriteRunMemory(args as { runId: string; path: string; content: string });
-    case "omk_search_memory":
-      return handleSearchMemory(args as { query?: string; limit?: number });
-    case "omk_memory_status":
-      return handleMemoryStatus();
-    case "omk_memory_ontology":
-      return handleMemoryOntology();
-    case "omk_memory_mindmap":
-      return handleMemoryMindmap(args as { query?: string; limit?: number });
+    // Goal lifecycle
+    case "omk_goal_create":
+      return handleGoalCreate(args as { rawPrompt: string; title?: string; objective?: string; successCriteria?: Array<{ id: string; description: string; requirement: "required" | "optional"; weight: number }>; constraints?: string[]; nonGoals?: string[]; expectedArtifacts?: Array<{ name: string; path?: string }>; riskLevel?: "low" | "medium" | "high" });
+    case "omk_goal_show":
+      return handleGoalShow(args as { goalId: string });
+    case "omk_goal_list":
+      return handleGoalList();
+    case "omk_goal_verify":
+      return handleGoalVerify(args as { goalId: string; runId?: string });
+    case "omk_goal_close":
+      return handleGoalClose(args as { goalId: string });
+    // Evidence
+    case "omk_evidence_add":
+      return handleEvidenceAdd(args as { goalId: string; criterionId: string; passed: boolean; message?: string; ref?: string });
+    case "omk_evidence_check":
+      return handleEvidenceCheck(args as { goalId: string; runId?: string });
+    // Run
+    case "omk_run_state":
+      return handleRunState(args as { runId: string });
+    // Quality gate
+    case "omk_quality_gate":
+      return handleQualityGate();
+    // Memory
+    case "omk_memory_read":
+      return handleMemoryRead(args as { path: string });
+    case "omk_memory_write":
+      return handleMemoryWrite(args as { path: string; content: string });
+    // Graph
     case "omk_graph_query":
       return handleGraphQuery(args as { query: string });
+    // Legacy aliases (still callable for backward compatibility)
+    case "omk_read_memory":
+      return handleMemoryRead(args as { path: string });
+    case "omk_write_memory":
+      return handleMemoryWrite(args as { path: string; content: string });
     case "omk_read_config":
       return handleReadConfig();
     case "omk_write_config":
@@ -550,7 +853,9 @@ async function handleToolCall(name: string, args: unknown): Promise<unknown> {
     case "omk_list_worktrees":
       return handleListWorktrees();
     case "omk_run_quality_gate":
-      return handleRunQualityGate();
+      return handleQualityGate();
+    case "omk_run_quality_gate_print":
+      return handleRunQualityGatePrint();
     case "omk_save_checkpoint":
       return handleSaveCheckpoint(args as { runId: string; label: string; metadata?: Record<string, unknown> });
     case "omk_list_checkpoints":
@@ -591,6 +896,8 @@ async function handleRequest(req: JsonRpcRequest): Promise<void> {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: {
           tools: {},
+          resources: { listChanged: false },
+          prompts: { listChanged: false },
         },
         serverInfo: {
           name: SERVER_NAME,
@@ -603,6 +910,85 @@ async function handleRequest(req: JsonRpcRequest): Promise<void> {
     case "notifications/initialized":
       // No response needed for notifications
       return;
+
+    case "resources/list": {
+      sendResult(req.id, { resources: RESOURCES });
+      return;
+    }
+
+    case "resources/read": {
+      const resourceParams = req.params as { uri?: string } | undefined;
+      const uri = resourceParams?.uri;
+      if (!uri || typeof uri !== "string") {
+        sendError(req.id, -32602, "Invalid params: missing 'uri'");
+        return;
+      }
+      try {
+        let result: { content: string };
+        if (uri.startsWith("omk://goal/")) {
+          const goalId = uri.slice("omk://goal/".length);
+          result = await handleReadGoalResource(goalId);
+        } else if (uri.startsWith("omk://run/")) {
+          const runId = uri.slice("omk://run/".length);
+          result = await handleReadRunResource(runId);
+        } else if (uri === "omk://ontology/project") {
+          result = await handleReadOntologyResource();
+        } else {
+          sendError(req.id, -32602, `Resource not found: ${uri}`);
+          return;
+        }
+        sendResult(req.id, {
+          contents: [
+            {
+              uri,
+              mimeType: "application/json",
+              text: result.content,
+            },
+          ],
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        sendError(req.id, -32603, `Resource read error: ${message}`);
+      }
+      return;
+    }
+
+    case "prompts/list": {
+      sendResult(req.id, { prompts: PROMPTS });
+      return;
+    }
+
+    case "prompts/get": {
+      const promptParams = req.params as { name?: string; arguments?: Record<string, string> } | undefined;
+      const promptName = promptParams?.name;
+      const promptArgs = promptParams?.arguments ?? {};
+      if (!promptName || typeof promptName !== "string") {
+        sendError(req.id, -32602, "Invalid params: missing 'name'");
+        return;
+      }
+      try {
+        let result: { description: string; messages: Array<{ role: string; content: { type: string; text: string } }> };
+        switch (promptName) {
+          case "goal-intake":
+            result = handleGetGoalIntakePrompt(promptArgs);
+            break;
+          case "evidence-review":
+            result = handleGetEvidenceReviewPrompt(promptArgs);
+            break;
+          case "quality-gate":
+            result = handleGetQualityGatePrompt(promptArgs);
+            break;
+          default:
+            sendError(req.id, -32602, `Prompt not found: ${promptName}`);
+            return;
+        }
+        sendResult(req.id, result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        sendError(req.id, -32603, `Prompt get error: ${message}`);
+      }
+      return;
+    }
 
     case "tools/list": {
       sendResult(req.id, { tools: TOOLS });

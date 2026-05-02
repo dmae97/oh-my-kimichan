@@ -26,6 +26,12 @@ function buildCustomHelp(): string {
     "\n    " + style.mintBold("omk lsp") + "       " + style.gray(t("cli.lspDesc")) +
     "\n    " + style.mintBold("omk design") + "    " + style.gray(t("cli.designDesc")) +
     "\n    " + style.mintBold("omk google") + "    " + style.gray(t("cli.googleDesc")) +
+    "\n    " + style.mintBold("omk specify") + "  " + style.gray(t("cli.specifyDesc")) +
+    "\n    " + style.mintBold("omk agent") + "     " + style.gray(t("cli.agentDesc")) +
+    "\n    " + style.mintBold("omk index") + "     " + style.gray(t("cli.indexDesc")) +
+    "\n    " + style.mintBold("omk skill") + "     " + style.gray(t("cli.skillDesc")) +
+    "\n    " + style.mintBold("omk summary") + "   " + style.gray(t("cli.summaryDesc")) +
+    "\n    " + style.mintBold("omk star") + "      " + style.gray(t("cmd.starDesc")) +
     "",
     "  " + style.purpleBold(t("cli.quickStart")) + style.gray(" ────────────────────────────────────────────────────────"),
     "",
@@ -38,19 +44,6 @@ function buildCustomHelp(): string {
   ].join("\n");
 }
 
-function shouldLoadStarPrompt(commandName: string): boolean {
-  const setting = process.env.OMK_STAR_PROMPT?.trim().toLowerCase();
-  if (["0", "false", "off", "no", "never"].includes(setting ?? "")) return false;
-  if (process.env.CI || process.env.GITHUB_ACTIONS) return false;
-  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
-  // Never block the interactive Kimi prompt with a pre-flight inquirer UI.
-  // Bare `omk` runs the root command action, whose command name is `omk`.
-  if (commandName === "chat" || commandName === "omk") return false;
-  if (commandName === "lsp") return false;
-  if (process.argv.some((arg) => ["--help", "-h", "--version", "-V"].includes(arg))) return false;
-  return true;
-}
-
 const program = new Command();
 
 program
@@ -59,11 +52,18 @@ program
   .usage("[options] [command]")
   .version(OMK_VERSION)
   .option("-r, --run-id <id>", t("cli.runIdOption"))
+  .option("--sudo", t("cli.sudoOption"))
   .addHelpText("before", buildCustomHelp)
   .addHelpText("afterAll", `\n  ${style.gray(OMK_VERSION_FOOTER)}\n`)
   .configureOutput({
     writeErr: (str) => process.stderr.write(style.red(str)),
     outputError: (str, write) => write(style.red(`✖ ${str}`)),
+  })
+  .hook("preAction", (thisCommand) => {
+    const opts = thisCommand.opts();
+    if (opts.sudo) {
+      process.env.OMK_SUDO = "1";
+    }
   })
   .allowUnknownOption(false)
   .argument("[command]", "subcommand to run")
@@ -115,6 +115,7 @@ program
             { name: t("cli.menuHud"), value: "2" },
             { name: t("cli.menuPlan"), value: "3" },
             { name: t("cli.menuParallel"), value: "4" },
+            { name: t("cli.menuPrevious"), value: "0" },
             { name: t("cli.menuHelp"), value: "5" },
             { name: t("cli.menuExit"), value: "q" },
           ],
@@ -122,7 +123,11 @@ program
         { signal: ac.signal }
       );
       clearTimeout(timeoutId);
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.name === "ExitPromptError") {
+        console.log("\n" + style.gray("Cancelled."));
+        process.exit(0);
+      }
       // Not a TTY, stdin pipe/EOF, timeout, etc.
       console.log(
         style.gray(t("cli.menuUnavailable"))
@@ -135,9 +140,12 @@ program
       case "1": {
         // Run omk chat subcommand (keeps omk path, not kimi CLI directly)
         const { spawnSync } = await import("child_process");
-        const chatArgs = [process.argv[1]!, "chat"];
+        const chatArgs = [process.argv[1]!, "chat", "--layout", "auto", "--brand", "kimichan"];
         if (globalOpts.runId) chatArgs.push("--run-id", globalOpts.runId);
-        spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
+        const result = spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
+        if (result.status !== 0) {
+          process.exit(result.status ?? 1);
+        }
         break;
       }
       case "2": {
@@ -148,17 +156,55 @@ program
       case "3": {
         const { planCommand } = await import("./commands/plan.js");
         const { input } = await import("@inquirer/prompts");
-        const goal = await input({ message: "Goal:" });
+        let goal: string;
+        try {
+          goal = await input({ message: "Goal:" });
+        } catch (err) {
+          if (err instanceof Error && err.name === "ExitPromptError") {
+            console.log(style.purple("🐾 See you, onii-chan~ 💜"));
+            process.exit(0);
+          }
+          throw err;
+        }
         await planCommand(goal, { runId: globalOpts.runId });
         break;
       }
       case "4": {
         const { spawnSync } = await import("child_process");
         const { input } = await import("@inquirer/prompts");
-        const goal = await input({ message: "Goal:" });
+        let goal: string;
+        try {
+          goal = await input({ message: "Goal:" });
+        } catch (err) {
+          if (err instanceof Error && err.name === "ExitPromptError") {
+            console.log(style.purple("🐾 See you, onii-chan~ 💜"));
+            process.exit(0);
+          }
+          throw err;
+        }
         const parallelArgs = [process.argv[1]!, "parallel", goal];
         if (globalOpts.runId) parallelArgs.push("--run-id", globalOpts.runId);
-        spawnSync(process.execPath, parallelArgs, { stdio: "inherit" });
+        const result = spawnSync(process.execPath, parallelArgs, { stdio: "inherit" });
+        if (result.status !== 0) {
+          process.exit(result.status ?? 1);
+        }
+        break;
+      }
+      case "0": {
+        const { selectLatestRunName, listRunCandidates } = await import("./commands/hud.js");
+        const { getOmkPath, pathExists } = await import("./util/fs.js");
+        const runsDir = getOmkPath("runs");
+        let prevRunId: string | null = globalOpts.runId ?? null;
+        if (!prevRunId && (await pathExists(runsDir))) {
+          const candidates = await listRunCandidates(runsDir);
+          prevRunId = selectLatestRunName(candidates);
+        }
+        if (prevRunId) {
+          const { hudCommand } = await import("./commands/hud.js");
+          await hudCommand({ runId: prevRunId, watch: true, refreshMs: 2000 });
+        } else {
+          console.log(style.gray("  No previous run found."));
+        }
         break;
       }
       case "5":
@@ -179,23 +225,41 @@ program
         const { spawnSync } = await import("child_process");
         const chatArgs = [process.argv[1]!, "chat"];
         if (globalOpts.runId) chatArgs.push("--run-id", globalOpts.runId);
-        spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
+        const result = spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
+        if (result.status !== 0) {
+          process.exit(result.status ?? 1);
+        }
       }
     }
   });
 
-program.hook("preAction", async (_thisCommand, actionCommand) => {
+program.hook("preAction", async (_thisCommand, _actionCommand) => {
   const globalOpts = program.opts();
   if (globalOpts.runId) {
     process.env.OMK_RUN_ID = globalOpts.runId;
   }
-  if (!shouldLoadStarPrompt(actionCommand.name())) return;
-  const { maybeAskForGitHubStar } = await import("./util/first-run-star.js");
-  await maybeAskForGitHubStar({
-    version: OMK_VERSION,
-    commandName: actionCommand.name(),
-  });
 });
+
+program.hook("postAction", async (_thisCommand, actionCommand) => {
+  try {
+    const { maybeAskForGitHubStarAfterCommand } = await import("./util/first-run-star.js");
+    await maybeAskForGitHubStarAfterCommand({
+      version: OMK_VERSION,
+      commandName: actionCommand.name(),
+    });
+  } catch {
+    // Swallow star prompt errors so original command success is preserved.
+  }
+});
+
+program
+  .command("star")
+  .description(t("cmd.starDesc"))
+  .option("--status", "Show local star prompt state")
+  .action(async (options) => {
+    const { starCommand } = await import("./commands/star.js");
+    await starCommand(options);
+  });
 
 program
   .command("init")
@@ -209,9 +273,68 @@ program
 program
   .command("doctor")
   .description(t("cmd.doctorDesc"))
-  .action(async () => {
+  .option("--json", t("cmd.doctorJsonOption"))
+  .option("--soft", "Soft mode: do not fail on missing tools")
+  .action(async (options) => {
     const { doctorCommand } = await import("./commands/doctor.js");
-    await doctorCommand();
+    await doctorCommand(options);
+  });
+
+program
+  .command("index")
+  .description(t("cmd.indexDesc"))
+  .option("--changed", t("cmd.indexChangedOption"))
+  .option("--symbols", t("cmd.indexSymbolsOption"))
+  .action(async (options) => {
+    const { indexCommand } = await import("./commands/index.js");
+    await indexCommand({ ...options, symbols: Boolean(options.symbols) });
+  });
+
+program
+  .command("index-show")
+  .description(t("cmd.indexShowDesc"))
+  .action(async () => {
+    const { indexShowCommand } = await import("./commands/index.js");
+    await indexShowCommand();
+  });
+
+const skill = program.command("skill").description(t("cmd.skillDesc"));
+skill
+  .command("pack")
+  .description(t("cmd.skillPackDesc"))
+  .action(async () => {
+    const { skillPackCommand } = await import("./commands/skill.js");
+    await skillPackCommand();
+  });
+skill
+  .command("install <pack>")
+  .description(t("cmd.skillInstallDesc"))
+  .action(async (pack) => {
+    const { skillInstallCommand } = await import("./commands/skill.js");
+    await skillInstallCommand(pack);
+  });
+skill
+  .command("sync")
+  .description(t("cmd.skillSyncDesc"))
+  .action(async () => {
+    const { skillSyncCommand } = await import("./commands/skill.js");
+    await skillSyncCommand();
+  });
+
+program
+  .command("summary")
+  .description(t("cmd.summaryDesc"))
+  .action(async () => {
+    const { summaryLatestCommand } = await import("./commands/summary.js");
+    await summaryLatestCommand();
+  });
+
+program
+  .command("summary-show [run-id]")
+  .description(t("cmd.summaryShowDesc"))
+  .action(async (runId) => {
+    const { summaryShowCommand } = await import("./commands/summary.js");
+    await summaryShowCommand(runId);
   });
 
 program
@@ -220,6 +343,8 @@ program
   .option("--agent-file <path>", t("cmd.chatAgentOption"))
   .option("--workers <n>", t("cmd.chatWorkersOption"), "auto")
   .option("--max-steps-per-turn <n>", t("cmd.chatMaxStepsOption"))
+  .option("--layout <auto|tmux|inline|plain>", t("cmd.chatLayoutOption"), "auto")
+  .option("--brand <kimichan|minimal|plain>", t("cmd.chatBrandOption"), "kimichan")
   .action(async (options) => {
     const globalOpts = program.opts();
     const { chatCommand } = await import("./commands/chat.js");
@@ -227,13 +352,71 @@ program
   });
 
 program
+  .command("cockpit")
+  .description(t("cmd.cockpitDesc"))
+  .option("--run-id <id>", t("cmd.cockpitRunIdOption"))
+  .option("-w, --watch", t("cmd.cockpitWatchOption"))
+  .option("--refresh <ms>", t("cmd.cockpitRefreshOption"), "1500")
+  .action(async (options) => {
+    const globalOpts = program.opts();
+    const { cockpitCommand } = await import("./commands/cockpit.js");
+    await cockpitCommand({ ...options, runId: globalOpts.runId ?? options.runId });
+  });
+
+program
   .command("plan <goal>")
   .description(t("cmd.planDesc"))
   .option("--thinking <mode>", "thinking mode", "enabled")
+  .option("--spec-kit", t("cmd.featureSpecKitOption"))
+  .option("--no-spec-kit", t("cmd.featureNoSpecKitOption"))
   .action(async (goal, options) => {
     const globalOpts = program.opts();
     const { planCommand } = await import("./commands/plan.js");
     await planCommand(goal, { ...options, runId: globalOpts.runId });
+  });
+
+program
+  .command("feature <goal>")
+  .description(t("cmd.featureDesc"))
+  .option("--spec-kit", t("cmd.featureSpecKitOption"))
+  .option("--no-spec-kit", t("cmd.featureNoSpecKitOption"))
+  .action(async (goal, options) => {
+    const globalOpts = program.opts();
+    const { featureCommand } = await import("./commands/workflow.js");
+    await featureCommand(goal, { ...options, runId: globalOpts.runId });
+  });
+
+program
+  .command("bugfix <goal>")
+  .description(t("cmd.bugfixDesc"))
+  .option("--spec-kit", t("cmd.bugfixSpecKitOption"))
+  .option("--no-spec-kit", t("cmd.bugfixNoSpecKitOption"))
+  .action(async (goal, options) => {
+    const globalOpts = program.opts();
+    const { bugfixCommand } = await import("./commands/workflow.js");
+    await bugfixCommand(goal, { ...options, runId: globalOpts.runId });
+  });
+
+program
+  .command("refactor <goal>")
+  .description(t("cmd.refactorDesc"))
+  .option("--spec-kit", t("cmd.refactorSpecKitOption"))
+  .option("--no-spec-kit", t("cmd.refactorNoSpecKitOption"))
+  .action(async (goal, options) => {
+    const globalOpts = program.opts();
+    const { refactorCommand } = await import("./commands/workflow.js");
+    await refactorCommand(goal, { ...options, runId: globalOpts.runId });
+  });
+
+program
+  .command("review")
+  .description(t("cmd.reviewDesc"))
+  .option("--ci", t("cmd.reviewCiOption"))
+  .option("--soft", t("cmd.reviewSoftOption"))
+  .action(async (options) => {
+    const globalOpts = program.opts();
+    const { reviewCommand } = await import("./commands/workflow.js");
+    await reviewCommand({ ...options, runId: globalOpts.runId });
   });
 
 program
@@ -257,12 +440,18 @@ program
   });
 
 program
-  .command("parallel <goal>")
+  .command("parallel [goal]")
   .description(t("cmd.parallelDesc"))
   .option("--workers <n>", t("cmd.parallelWorkersOption"), "auto")
   .option("--approval-policy <policy>", t("cmd.parallelApprovalOption"), "interactive")
+  .option("--watch", t("cmd.parallelWatchOption"))
   .option("--no-watch", t("cmd.parallelNoWatchOption"))
+  .option("--view <mode>", "Display mode: cockpit | table | compact", "cockpit")
+  .option("--alternate-screen", "Enter alternate screen buffer for full-screen UI")
+  .option("--no-pause", "Do not wait for Enter at the end")
+  .option("--compact", "Use compact single-line renderer")
   .option("--chat", t("cmd.parallelChatOption"))
+  .option("--from-spec <dir>", "Run spec-kit tasks.md as a parallel DAG")
   .action(async (goal, options) => {
     const globalOpts = program.opts();
     const { parallelCommand } = await import("./commands/parallel.js");
@@ -270,6 +459,11 @@ program
       ...options,
       runId: globalOpts.runId,
       watch: options.watch,
+      noWatch: options.watch === false,
+      view: options.view,
+      alternateScreen: options.alternateScreen,
+      noPause: options.pause === false,
+      compact: options.compact,
     });
   });
 
@@ -278,32 +472,53 @@ program
   .description(t("cmd.hudDesc"))
   .option("-w, --watch", t("cmd.hudWatchOption"))
   .option("--refresh <ms>", t("cmd.hudRefreshOption"), "2000")
+  .option("--compact", "show compact dashboard")
+  .option("--section <section>", "show only one section (run|project|resources)")
+  .option("--no-clear", "do not clear screen between refreshes")
+  .option("--alternate-screen", "use alternate screen buffer")
   .action(async (options) => {
     const globalOpts = program.opts();
     const { hudCommand } = await import("./commands/hud.js");
+
+    const validSections = ["run", "project", "resources"];
+    if (options.section && !validSections.includes(options.section)) {
+      console.error(`Invalid section: ${options.section}. Valid values: ${validSections.join(", ")}`);
+      process.exit(1);
+    }
+
     await hudCommand({
       runId: globalOpts.runId,
       watch: Boolean(options.watch),
       refreshMs: Number.parseInt(options.refresh, 10),
+      compact: options.compact,
+      section: options.section,
+      noClear: options.noClear,
+      alternateScreen: options.alternateScreen,
     });
   });
 
 program
-  .command("merge")
+  .command("merge [run-id]")
   .description(t("cmd.mergeDesc"))
   .option("--run <id>", "run ID", "latest")
-  .action(async (options) => {
+  .option("--strategy <strategy>", "merge strategy (first | best)", "first")
+  .option("--dry-run", "preview merge without applying")
+  .action(async (runIdArg, options) => {
     const globalOpts = program.opts();
     const { mergeCommand } = await import("./commands/merge.js");
-    await mergeCommand({ ...options, runId: globalOpts.runId });
+    await mergeCommand({ ...options, runId: globalOpts.runId, run: runIdArg ?? options.run });
   });
 
 program
   .command("sync")
   .description(t("cmd.syncDesc"))
-  .action(async () => {
+  .option("--global", t("cmd.syncGlobalOption"))
+  .option("--dry-run", t("cmd.syncDryRunOption"))
+  .option("--diff", t("cmd.syncDiffOption"))
+  .option("--rollback", t("cmd.syncRollbackOption"))
+  .action(async (options) => {
     const { syncCommand } = await import("./commands/sync.js");
-    await syncCommand();
+    await syncCommand(options);
   });
 
 program
@@ -415,7 +630,278 @@ snip
     await snipDeleteCommand(name);
   });
 
+const specify = program.command("specify").description(t("cli.specifyDesc"));
+specify
+  .command("init")
+  .description("Initialize spec-driven development (spec-kit)")
+  .option("--preset <name>", "Preset to apply")
+  .action(async (options) => {
+    const { specifyInitCommand } = await import("./commands/specify.js");
+    await specifyInitCommand(options);
+  });
+const specifyWf = specify.command("workflow").description("Manage spec-kit workflows");
+specifyWf
+  .command("run <workflow-id>")
+  .description("Run a spec-kit workflow (e.g. speckit)")
+  .option("-i, --input <pairs...>", "Input key=value pairs")
+  .action(async (workflowId, options) => {
+    const { specifyWorkflowRunCommand } = await import("./commands/specify.js");
+    const inputs: Record<string, string> = {};
+    if (options.input) {
+      for (const pair of Array.isArray(options.input) ? options.input : [options.input]) {
+        const [k, v] = pair.split("=");
+        if (k) inputs[k] = v ?? "";
+      }
+    }
+    await specifyWorkflowRunCommand(workflowId, inputs);
+  });
+specifyWf
+  .command("list")
+  .description("List installed workflows")
+  .action(async () => {
+    const { specifyWorkflowListCommand } = await import("./commands/specify.js");
+    await specifyWorkflowListCommand();
+  });
+const specifyExt = specify.command("extension").description("Manage spec-kit extensions");
+specifyExt
+  .command("add <name>")
+  .description("Add an extension")
+  .action(async (name) => {
+    const { specifyExtensionAddCommand } = await import("./commands/specify.js");
+    await specifyExtensionAddCommand(name);
+  });
+specifyExt
+  .command("list")
+  .description("List installed extensions")
+  .action(async () => {
+    const { specifyExtensionListCommand } = await import("./commands/specify.js");
+    await specifyExtensionListCommand();
+  });
+specify
+  .command("version")
+  .description("Show spec-kit version")
+  .action(async () => {
+    const { specifyVersionCommand } = await import("./commands/specify.js");
+    await specifyVersionCommand();
+  });
+
+const spec = program.command("spec").description(t("cmd.specDesc"));
+spec
+  .command("init")
+  .description(t("cmd.specInitDesc"))
+  .option("-f, --force", t("cmd.specInitForceOption"))
+  .action(async (options) => {
+    const { specInitCommand } = await import("./commands/spec.js");
+    await specInitCommand(options);
+  });
+spec
+  .command("status")
+  .description(t("cmd.specStatusDesc"))
+  .action(async () => {
+    const { specStatusCommand } = await import("./commands/spec.js");
+    await specStatusCommand();
+  });
+spec
+  .command("check")
+  .description(t("cmd.specCheckDesc"))
+  .action(async () => {
+    const { specCheckCommand } = await import("./commands/spec.js");
+    await specCheckCommand();
+  });
+const specPreset = spec.command("preset").description("Manage spec-kit presets");
+specPreset
+  .command("install <name>")
+  .description("Install a spec-kit preset (built-in: omk)")
+  .action(async (name) => {
+    const { specPresetInstallCommand } = await import("./commands/spec.js");
+    await specPresetInstallCommand(name);
+  });
+
+const agent = program.command("agent").description(t("cmd.agentDesc"));
+agent
+  .command("list")
+  .description(t("cmd.agentListDesc"))
+  .action(async () => {
+    const { agentListCommand } = await import("./commands/agent.js");
+    await agentListCommand();
+  });
+agent
+  .command("show <name>")
+  .description(t("cmd.agentShowDesc"))
+  .action(async (name) => {
+    const { agentShowCommand } = await import("./commands/agent.js");
+    await agentShowCommand(name);
+  });
+agent
+  .command("create <name>")
+  .description(t("cmd.agentCreateDesc"))
+  .option("--from <template>", t("cmd.agentCreateFromOption"))
+  .action(async (name, options) => {
+    const { agentCreateCommand } = await import("./commands/agent.js");
+    await agentCreateCommand(name, options);
+  });
+agent
+  .command("doctor")
+  .description(t("cmd.agentDoctorDesc"))
+  .action(async () => {
+    const { agentDoctorCommand } = await import("./commands/agent.js");
+    await agentDoctorCommand();
+  });
+
+program
+  .command("verify")
+  .description(t("cmd.verifyDesc"))
+  .option("--run <id>", t("cmd.verifyRunOption"))
+  .option("--json", t("cmd.verifyJsonOption"))
+  .action(async (options) => {
+    const globalOpts = program.opts();
+    const { verifyCommand } = await import("./commands/verify.js");
+    await verifyCommand({ ...options, runId: globalOpts.runId });
+  });
+
+const goal = program.command("goal").description(t("cmd.goalDesc"));
+goal
+  .command("create <rawPrompt>")
+  .description(t("cmd.goalCreateDesc"))
+  .option("--json", t("cmd.goalJsonOption"))
+  .option("--title <title>", t("cmd.goalTitleOption"))
+  .option("--objective <text>", t("cmd.goalObjectiveOption"))
+  .option("--risk <level>", t("cmd.goalRiskOption"))
+  .action(async (rawPrompt, options) => {
+    const { goalCreateCommand } = await import("./commands/goal.js");
+    await goalCreateCommand(rawPrompt, options);
+  });
+goal
+  .command("list")
+  .description(t("cmd.goalListDesc"))
+  .option("--json", t("cmd.goalJsonOption"))
+  .action(async (options) => {
+    const { goalListCommand } = await import("./commands/goal.js");
+    await goalListCommand(options);
+  });
+goal
+  .command("show <goal-id>")
+  .description(t("cmd.goalShowDesc"))
+  .option("--json", t("cmd.goalJsonOption"))
+  .action(async (goalId, options) => {
+    const { goalShowCommand } = await import("./commands/goal.js");
+    await goalShowCommand(goalId, options);
+  });
+goal
+  .command("plan <goal-id>")
+  .description(t("cmd.goalPlanDesc"))
+  .action(async (goalId) => {
+    const { goalPlanCommand } = await import("./commands/goal.js");
+    await goalPlanCommand(goalId);
+  });
+goal
+  .command("run <goal-id>")
+  .description(t("cmd.goalRunDesc"))
+  .option("--workers <n>", t("cmd.goalWorkersOption"), "auto")
+  .option("--run-id <id>", t("cmd.goalRunIdOption"))
+  .action(async (goalId, options) => {
+    const { goalRunCommand } = await import("./commands/goal.js");
+    await goalRunCommand(goalId, options);
+  });
+goal
+  .command("verify <goal-id>")
+  .description(t("cmd.goalVerifyDesc"))
+  .option("--json", t("cmd.goalJsonOption"))
+  .action(async (goalId, options) => {
+    const { goalVerifyCommand } = await import("./commands/goal.js");
+    await goalVerifyCommand(goalId, options);
+  });
+goal
+  .command("close <goal-id>")
+  .description(t("cmd.goalCloseDesc"))
+  .option("--force", t("cmd.goalForceOption"))
+  .option("--reason <text>", t("cmd.goalReasonOption"))
+  .action(async (goalId, options) => {
+    const { goalCloseCommand } = await import("./commands/goal.js");
+    await goalCloseCommand(goalId, options);
+  });
+goal
+  .command("block <goal-id>")
+  .description(t("cmd.goalBlockDesc"))
+  .requiredOption("--reason <text>", t("cmd.goalReasonOption"))
+  .action(async (goalId, options) => {
+    const { goalBlockCommand } = await import("./commands/goal.js");
+    await goalBlockCommand(goalId, options);
+  });
+
+const mcp = program.command("mcp").description(t("cli.mcpDesc"));
+mcp
+  .command("list")
+  .description(t("cmd.mcpListDesc"))
+  .action(async () => {
+    const { mcpListCommand } = await import("./commands/mcp.js");
+    await mcpListCommand();
+  });
+mcp
+  .command("doctor")
+  .description(t("cmd.mcpDoctorDesc"))
+  .action(async () => {
+    const { mcpDoctorCommand } = await import("./commands/mcp.js");
+    await mcpDoctorCommand();
+  });
+mcp
+  .command("test <server>")
+  .description(t("cmd.mcpTestDesc"))
+  .action(async (server) => {
+    const { mcpTestCommand } = await import("./commands/mcp.js");
+    await mcpTestCommand(server);
+  });
+
+const dag = program.command("dag").description(t("cli.dagDesc"));
+dag
+  .command("from-spec [spec-dir]")
+  .description("Convert spec-kit tasks.md to OMK DAG JSON")
+  .option("-o, --output <path>", "Output JSON file path")
+  .option("-p, --parallel", "Enable intra-phase parallelism")
+  .option("-r, --run <id>", "Use spec from run ID (latest)")
+  .action(async (specDir, options) => {
+    const { dagFromSpecCommand } = await import("./commands/dag-from-spec.js");
+    const root = (await import("./util/fs.js")).getProjectRoot();
+    const dir = specDir ?? `${root}/specs`;
+    await dagFromSpecCommand(dir, {
+      output: options.output,
+      parallel: Boolean(options.parallel),
+      run: options.run,
+    });
+  });
+dag
+  .command("validate [file]")
+  .description(t("cmd.dagValidateDesc"))
+  .action(async (filePath) => {
+    const { dagValidateCommand } = await import("./commands/dag.js");
+    try {
+      await dagValidateCommand(filePath);
+    } catch {
+      process.exit(1);
+    }
+  });
+dag
+  .command("show <run-id>")
+  .description(t("cmd.dagShowDesc"))
+  .action(async (runId) => {
+    const { dagShowCommand } = await import("./commands/dag.js");
+    await dagShowCommand(runId);
+  });
+dag
+  .command("replay <run-id> [target] [subtarget]")
+  .description(t("cmd.dagReplayDesc"))
+  .option("--node <id>", t("cmd.dagReplayNodeOption"))
+  .option("--from-failure", t("cmd.dagReplayFromFailureOption"))
+  .option("--dry-run", t("cmd.dagReplayDryRunOption"))
+  .action(async (runId, target, subtarget, options) => {
+    const { dagReplayCommand } = await import("./commands/dag.js");
+    await dagReplayCommand(runId, target, subtarget, options);
+  });
+
 program.parseAsync(process.argv).catch((err) => {
+  if (err instanceof Error && err.name === "ExitPromptError") {
+    process.exit(0);
+  }
   console.error("Unexpected error:", err);
   process.exit(1);
 });

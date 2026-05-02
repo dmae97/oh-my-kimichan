@@ -5,6 +5,7 @@ node_modules/
 
 # Build outputs
 dist/
+dist.old/
 *.tsbuildinfo
 .eslintcache
 
@@ -16,23 +17,11 @@ yarn-error.log*
 lerna-debug.log*
 
 # OMK runtime / local data (NEVER commit)
-.omk/worktrees/
-.omk/runs/
-.omk/memory/
-.omk/state/
-.omk/logs/
-.omk/cache/
-.omk/tmp/
-.omk/checkpoints/
-.omk/snippets/
-.omk/notepad.md
-.omk/project-memory.json
-# Local agent overrides (templates live in templates/)
-.omk/agents/
-.omk/config.toml
-.omk/kimi.config.toml
-.omk/mcp.json
-.omk/lsp.json
+.omk/
+
+# Local spec outputs
+.specify/
+specs/
 
 # Kimi / Agent local user settings
 .kimi/

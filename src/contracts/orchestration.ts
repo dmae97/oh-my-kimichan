@@ -43,7 +43,14 @@ export interface RunProgressEstimate {
 }
 
 export interface RunState {
+  schemaVersion: 1;
   runId: string;
+  goalId?: string;
+  goalSnapshot?: {
+    title: string;
+    objective: string;
+    successCriteria: Array<{ id: string; description: string; requirement: string }>;
+  };
   nodes: DagNode[];
   startedAt: string;
   completedAt?: string;
@@ -59,6 +66,8 @@ export interface TaskRunner {
   run(node: DagNode, env: Record<string, string>): Promise<TaskResult>;
   /** Optional live-thinking callback so the executor can surface runner progress. */
   onThinking?: (thinking: string) => void;
+  /** Create a new runner with an isolated onThinking callback (parallel-safe). */
+  fork?: (onThinking?: (thinking: string) => void) => TaskRunner;
 }
 
 export interface DagExecutor {

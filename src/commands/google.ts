@@ -1,5 +1,5 @@
 import { runShell } from "../util/shell.js";
-import { style, header, status } from "../util/theme.js";
+import { header, status } from "../util/theme.js";
 import { t } from "../util/i18n.js";
 
 export async function stitchInstallCommand(): Promise<void> {

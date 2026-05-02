@@ -1,9 +1,8 @@
-import { mkdir, writeFile, readFile, symlink, access, constants, copyFile, readdir } from "fs/promises";
-import { join, relative, dirname } from "path";
+import { mkdir, writeFile, readFile, copyFile, readdir } from "fs/promises";
+import { join, dirname } from "path";
 import { fileURLToPath } from "node:url";
-import { getProjectRoot, pathExists, syncAllKimiGlobals } from "../util/fs.js";
-import { isGitRepo } from "../util/git.js";
-import { runShell } from "../util/shell.js";
+import { getProjectRoot, pathExists } from "../util/fs.js";
+
 import { style, header, status } from "../util/theme.js";
 import { defaultLspConfigJson } from "../lsp/default-config.js";
 import { t } from "../util/i18n.js";
@@ -502,14 +501,14 @@ description = ""
 [orchestration]
 default_workers = 2
 max_retries = 3
-approval_policy = "yolo"         # open-source default: autonomous local work
-yolo_mode = true                 # safe guards still block secrets/destructive shell hooks
+approval_policy = "auto"         # safe default: safe tools auto, destructive ask
+yolo_mode = false                # safe guards still block secrets/destructive shell hooks
 
 [runtime]
 # auto chooses lite on <=18GB RAM hosts to make 16GB laptops usable.
 resource_profile = "auto"        # auto | lite | standard
-mcp_scope = "all"                # force .omk + .kimi + ~/.kimi MCP discovery
-skills_scope = "all"             # force project .kimi + ~/.kimi skills discovery
+mcp_scope = "project"            # limit MCP discovery to project scope
+skills_scope = "project"         # limit skills discovery to project scope
 max_workers = 1                  # can override with OMK_MAX_WORKERS
 max_output_mb = 4                # cap buffered shell/quality output
 wire_output_mb = 1               # cap per-task retained wire output
@@ -571,13 +570,9 @@ coding_thinking = "enabled"
 const MEMORY_FILES: Record<string, string> = {
   "project.md": "# Project Memory\n\nThe project-local ontology graph (.omk/memory/graph-state.json) is the source of truth; this file is a human-readable mirror.\n",
   "decisions.md": "# Decisions\n\nRecord important architecture/design decisions. Also decomposed into Decision nodes in the local graph memory.\n",
-  "commands.md": "# Frequently Used Commands\n\nCommand mirror maintained alongside the local graph memory.\n\n\`\`\`bash\n# example\n\`\`\`\n",
+  "commands.md": "# Frequently Used Commands\n\nCommand mirror maintained alongside the local graph memory.\n\n```bash\n# example\n```\n",
   "risks.md": "# Known Risks\n\n- \n",
 };
-
-async function ensureExecutable(path: string): Promise<void> {
-  await runShell("chmod", ["+x", path], { timeout: 5000 });
-}
 
 export async function initCommand(options: { profile: string }): Promise<void> {
   const root = getProjectRoot();
@@ -668,8 +663,7 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   await Promise.all(
     Object.entries(HOOK_SCRIPTS).map(async ([name, content]) => {
       const hookPath = join(root, ".omk/hooks", name);
-      await writeFile(hookPath, content);
-      await ensureExecutable(hookPath);
+      await writeFile(hookPath, content, { mode: 0o755 });
     })
   );
 
@@ -710,6 +704,14 @@ export async function initCommand(options: { profile: string }): Promise<void> {
     await copyTemplateDir(snippetsSrc, snippetsDest);
   }
 
+  // 9.6. Copy spec-kit OMK preset template
+  const presetSrc = join(packageRoot, "templates", "spec-kit-omk-preset");
+  const presetDest = join(root, ".omk", "templates", "spec-kit-omk-preset");
+  if (await pathExists(presetSrc)) {
+    console.log(style.purple("   📦 Copying spec-kit OMK preset..."));
+    await copyTemplateDir(presetSrc, presetDest);
+  }
+
   // 10. Write project docs (skip if already exist)
   const docs: Record<string, string> = {
     "DESIGN.md": DESIGN_MD,
@@ -740,6 +742,7 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   console.log("- .kimi/skills/");
   console.log("- .agents/skills/");
   console.log("- .omk/memory/");
+  console.log("- .omk/templates/spec-kit-omk-preset/");
   console.log();
   console.log("Default behavior:");
   console.log("- AGENTS.md is loaded into Kimi root prompt.");
@@ -748,13 +751,9 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   console.log("- Skills are auto-discovered.");
   console.log("- MCP tools are used when configured.");
 
-  // Always sync hooks + MCP + skills + local graph memory policy globally to ~/.kimi/
-  try {
-    await syncAllKimiGlobals();
-    console.log(status.ok("~/.kimi/ global sync complete (hooks + MCP + skills + local graph memory)"));
-  } catch (err) {
-    console.warn("⚠️  global sync failed:", (err as Error).message);
-  }
+  // Global ~/.kimi/ sync is opt-in only for open-source safety.
+  // Users can run `omk sync --global` explicitly after init if they want global config.
+  console.log(style.gray("  Global config sync skipped. Run `omk sync --global` to write to ~/.kimi/"));
 
   // ── Shell integration & PATH check ──
   const pathCheck = await checkOmkInPath();
@@ -782,7 +781,7 @@ async function checkOmkInPath(): Promise<{ inPath: boolean }> {
   }
 }
 
-async function maybeInstallShellCompletion(root: string): Promise<void> {
+async function maybeInstallShellCompletion(_root: string): Promise<void> {
   const bashrc = join(process.env.HOME || process.env.USERPROFILE || "", ".bashrc");
   const zshrc = join(process.env.HOME || process.env.USERPROFILE || "", ".zshrc");
 

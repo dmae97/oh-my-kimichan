@@ -61,7 +61,7 @@ export class TaskDagGraph {
   runnableNodes(): DagNode[] {
     return this.topologicalOrder()
       .filter((node) => (
-        node.status === "pending" && this.predecessors(node.id).every((dep) => dep.status === "done")
+        node.status === "pending" && this.predecessors(node.id).every((dep) => dep.status === "done" || dep.status === "skipped")
       ))
       .sort((a, b) => this.compareRunnable(a.id, b.id));
   }
@@ -188,4 +188,8 @@ export function getTaskDagGraph(dag: Dag): TaskDagGraph {
     GRAPH_CACHE.set(dag, graph);
   }
   return graph;
+}
+
+export function invalidateTaskDagGraph(dag: Dag): void {
+  GRAPH_CACHE.delete(dag);
 }

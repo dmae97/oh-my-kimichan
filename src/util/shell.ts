@@ -22,6 +22,7 @@ export interface StreamingShellOptions {
   input?: string;
   onStdout?: (line: string) => void;
   onStderr?: (line: string) => void;
+  sudo?: boolean;
 }
 
 function isExecaError(err: unknown): err is ExecaError {
@@ -32,17 +33,28 @@ function isExecaError(err: unknown): err is ExecaError {
   );
 }
 
+function applySudo(
+  command: string,
+  args: string[],
+  sudo?: boolean
+): [string, string[]] {
+  const useSudo = sudo ?? process.env.OMK_SUDO === "1";
+  if (!useSudo) return [command, args];
+  return ["sudo", [command, ...args]];
+}
+
 export async function runShell(
   command: string,
   args: string[] = [],
-  options: { cwd?: string; env?: Record<string, string>; timeout?: number; maxBuffer?: number; stdio?: "pipe" | "inherit"; logPath?: string; input?: string } = {}
+  options: StreamingShellOptions = {}
 ): Promise<ShellResult> {
   const resources = await getOmkResourceSettings();
-  const { cwd, env, timeout = 30000, maxBuffer = resources.shellMaxBufferBytes, stdio = "pipe", logPath, input } = options;
+  const { cwd, env, timeout = 30000, maxBuffer = resources.shellMaxBufferBytes, stdio = "pipe", logPath, input, sudo } = options;
+  const [cmd, cmdArgs] = applySudo(command, args, sudo);
   let logStream: ReturnType<typeof createWriteStream> | undefined;
 
   try {
-    const subprocess = execa(command, args, {
+    const subprocess = execa(cmd, cmdArgs, {
       cwd,
       env: env ? { ...process.env, ...env } : process.env,
       timeout,
@@ -94,13 +106,14 @@ export async function runShellStreaming(
   options: StreamingShellOptions = {}
 ): Promise<ShellResult> {
   const resources = await getOmkResourceSettings();
-  const { cwd, env, timeout = 30000, maxBuffer = resources.shellMaxBufferBytes, stdio = "pipe", logPath, input, onStdout, onStderr } = options;
+  const { cwd, env, timeout = 30000, maxBuffer = resources.shellMaxBufferBytes, stdio = "pipe", logPath, input, onStdout, onStderr, sudo } = options;
+  const [cmd, cmdArgs] = applySudo(command, args, sudo);
   let logStream: ReturnType<typeof createWriteStream> | undefined;
   const stdoutBuffer = new CappedOutputBuffer(maxBuffer, "stdout");
   const stderrBuffer = new CappedOutputBuffer(maxBuffer, "stderr");
 
   try {
-    const subprocess = execa(command, args, {
+    const subprocess = execa(cmd, cmdArgs, {
       cwd,
       env: env ? { ...process.env, ...env } : process.env,
       timeout,
@@ -156,9 +169,16 @@ export async function runShellStreaming(
   }
 }
 
+export async function which(command: string): Promise<ShellResult> {
+  return runShell("which", [command], { timeout: 5000 });
+}
+
 export async function checkCommand(command: string): Promise<boolean> {
   try {
-    const result = await runShell("which", [command], { timeout: 5000 });
+    const isWindows = process.platform === "win32";
+    const result = isWindows
+      ? await runShell("where.exe", [command], { timeout: 5000 })
+      : await runShell("sh", ["-c", 'command -v "$1"', "sh", command], { timeout: 5000 });
     return !result.failed && result.stdout.trim().length > 0;
   } catch {
     return false;

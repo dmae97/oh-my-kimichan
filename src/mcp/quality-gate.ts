@@ -1,17 +1,22 @@
 import { execFileSync } from "child_process";
 import { existsSync } from "fs";
-import { readFile } from "fs/promises";
+import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 
 export type QualityGateName = "lint" | "typecheck" | "test" | "build";
 export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
+export type QualityGateStatus = "passed" | "failed" | "skipped" | "blocked" | "missing" | "timeout" | "error";
+export type QualityGateFailureType = "exit-code" | "timeout" | "mcp-error" | null;
 
 export interface QualityGateResult {
   command: string;
   exitCode: number;
   stdout: string;
   stderr: string;
+  status: QualityGateStatus;
+  failureType: QualityGateFailureType;
+  logPath?: string;
 }
 
 export interface QualityGateResults {
@@ -45,11 +50,26 @@ const AUTO_SCRIPT_CANDIDATES: Record<QualityGateName, string[]> = {
   build: ["build"],
 };
 
+const DEBUG = !!process.env.OMK_DEBUG;
+
+function debugLog(...args: unknown[]): void {
+  if (DEBUG) {
+    console.error("[quality-gate]", ...args);
+  }
+}
+
 export function detectPackageManager(projectRoot: string): PackageManager {
   if (existsSync(join(projectRoot, "pnpm-lock.yaml"))) return "pnpm";
   if (existsSync(join(projectRoot, "yarn.lock"))) return "yarn";
   if (existsSync(join(projectRoot, "bun.lockb")) || existsSync(join(projectRoot, "bun.lock"))) return "bun";
   return "npm";
+}
+
+export function resolvePackageManagerExecutable(pm: PackageManager): string {
+  if (process.platform === "win32") {
+    return `${pm}.cmd`;
+  }
+  return pm;
 }
 
 export async function readPackageScripts(projectRoot: string): Promise<Set<string> | undefined> {
@@ -69,8 +89,6 @@ export async function readPackageScripts(projectRoot: string): Promise<Set<strin
 }
 
 export function getQualitySetting(config: string, key: QualityGateName): string {
-  // Match both top-level and [quality] section entries. This parser intentionally
-  // accepts only the simple string settings that OMK templates generate.
   const regex = new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, "m");
   return config.match(regex)?.[1]?.trim() ?? "auto";
 }
@@ -120,17 +138,16 @@ export async function runQualityGate(projectRoot: string, config: string): Promi
   const packageManager = detectPackageManager(projectRoot);
   const availableScripts = await readPackageScripts(projectRoot);
 
-  const runGate = (gate: QualityGateName): QualityGateResult => {
+  // Run gates sequentially to avoid dist race conditions
+  const results: QualityGateResult[] = [];
+  for (const gate of QUALITY_KEYS) {
     const command = resolveQualityCommand(getQualitySetting(config, gate), gate, packageManager, availableScripts);
-    return runResolvedQualityCommand(command, projectRoot, resources.shellMaxBufferBytes);
-  };
+    results.push(await runResolvedQualityCommand(gate, command, projectRoot, resources.shellMaxBufferBytes));
+  }
 
-  return {
-    lint: runGate("lint"),
-    typecheck: runGate("typecheck"),
-    test: runGate("test"),
-    build: runGate("build"),
-  };
+  const [lint, typecheck, test, build] = results;
+
+  return { lint, typecheck, test, build };
 }
 
 function parseQualitySetting(setting: string): ParsedQualitySetting | null {
@@ -158,47 +175,148 @@ function formatPackageScriptCommand(packageManager: PackageManager, scriptName: 
   return `${packageManager} run ${scriptName}`;
 }
 
-function runResolvedQualityCommand(command: ResolvedQualityCommand, projectRoot: string, maxBuffer: number): QualityGateResult {
+async function runResolvedQualityCommand(
+  gateName: QualityGateName,
+  command: ResolvedQualityCommand,
+  projectRoot: string,
+  maxBuffer: number
+): Promise<QualityGateResult> {
   if (command.skipped) {
-    return { command: "", exitCode: 0, stdout: "", stderr: "skipped (off)" };
+    return {
+      command: "",
+      exitCode: 0,
+      stdout: "",
+      stderr: "skipped (off)",
+      status: "skipped",
+      failureType: null,
+    };
   }
   if (command.blocked) {
-    return {
+    const result: QualityGateResult = {
       command: command.command,
       exitCode: 126,
       stdout: "",
       stderr: "blocked unsafe quality command; use auto, off, a package script name, or '<package-manager> run <script>'",
+      status: "blocked",
+      failureType: "mcp-error",
     };
+    await saveQualityGateLog(projectRoot, gateName, result);
+    return result;
   }
   if (command.missing || !command.executable || !command.args) {
-    return {
+    const result: QualityGateResult = {
       command: command.command,
       exitCode: 127,
       stdout: "",
       stderr: "package.json script not found",
+      status: "missing",
+      failureType: "mcp-error",
     };
+    await saveQualityGateLog(projectRoot, gateName, result);
+    return result;
   }
 
   try {
-    const stdout = execFileSync(command.executable, command.args, {
+    debugLog(`Running ${gateName}: ${command.command}`);
+    const stdout = execFileSync(resolvePackageManagerExecutable(command.executable), command.args, {
       cwd: projectRoot,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 120000,
       maxBuffer,
+      shell: process.platform === "win32",
     });
-    return { command: command.command, exitCode: 0, stdout: stdout ?? "", stderr: "" };
+
+    const stdoutStr = stdout ?? "";
+
+    const result: QualityGateResult = {
+      command: command.command,
+      exitCode: 0,
+      stdout: stdoutStr,
+      stderr: "",
+      status: "passed",
+      failureType: null,
+    };
+    await saveQualityGateLog(projectRoot, gateName, result);
+    return result;
   } catch (err: unknown) {
-    const e = err as { stdout?: string | Buffer; stderr?: string | Buffer; status?: number; signal?: string };
-    const stderr = String(e.stderr ?? "");
+    const e = err as { stdout?: string | Buffer; stderr?: string | Buffer; status?: number; signal?: string; code?: string };
+    const stdoutStr = String(e.stdout ?? "");
+    const stderrStr = String(e.stderr ?? "");
     const signal = e.signal ? `\nterminated by signal: ${e.signal}` : "";
-    return {
+
+    let status: QualityGateStatus = "failed";
+    let failureType: QualityGateFailureType = "exit-code";
+
+    if (e.code === "ETIMEDOUT" || signal.includes("terminated by signal")) {
+      status = "timeout";
+      failureType = "timeout";
+    } else if (e.status !== 0 && e.status !== undefined) {
+      failureType = "exit-code";
+    }
+
+    debugLog(`${gateName} ${status}: ${failureType}`);
+
+    const result: QualityGateResult = {
       command: command.command,
       exitCode: e.status ?? 1,
-      stdout: String(e.stdout ?? ""),
-      stderr: `${stderr}${signal}`,
+      stdout: stdoutStr,
+      stderr: `${stderrStr}${signal}`,
+      status,
+      failureType,
     };
+    await saveQualityGateLog(projectRoot, gateName, result);
+    return result;
   }
+}
+
+async function saveQualityGateLog(projectRoot: string, gateName: QualityGateName, result: QualityGateResult): Promise<void> {
+  try {
+    const logsDir = join(projectRoot, ".omk", "logs", "quality-gate");
+    await mkdir(logsDir, { recursive: true });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const fileName = `${gateName}-${timestamp}.log`;
+    const logPath = join(logsDir, fileName);
+
+    const logContent = [
+      `gate: ${gateName}`,
+      `command: ${result.command || "(none)"}`,
+      `status: ${result.status}`,
+      `failureType: ${result.failureType ?? "none"}`,
+      `exitCode: ${result.exitCode}`,
+      `--- stdout ---`,
+      result.stdout || "(empty)",
+      `--- stderr ---`,
+      result.stderr || "(empty)",
+    ].join("\n");
+
+    await writeFile(logPath, logContent, "utf-8");
+    result.logPath = logPath;
+  } catch (err) {
+    debugLog("Failed to save quality gate log:", err);
+  }
+}
+
+export function printQualityGateResults(results: QualityGateResults, printMode = false): string {
+  const lines: string[] = [];
+  if (printMode) {
+    lines.push("{\"qualityGates\":");
+  }
+
+  const entries = QUALITY_KEYS.map((key) => {
+    const r = results[key];
+    const icon = r.status === "passed" ? "✓" : r.status === "skipped" ? "○" : "✗";
+    const failureDetail = r.failureType ? ` (${r.failureType})` : "";
+    return `  ${icon} ${key}: ${r.status}${failureDetail}${r.logPath ? ` [log: ${r.logPath}]` : ""}`;
+  });
+
+  lines.push(...entries);
+
+  if (printMode) {
+    lines.push("}");
+  }
+
+  return lines.join("\n");
 }
 
 export function getQualityKeys(): QualityGateName[] {

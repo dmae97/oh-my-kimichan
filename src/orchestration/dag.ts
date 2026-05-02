@@ -1,9 +1,9 @@
 import { TaskDagGraph } from "./task-graph.js";
 import { mergeDagNodeRouting, selectTaskRouting } from "./routing.js";
 
-export type TaskStatus = "pending" | "running" | "done" | "failed" | "blocked";
+export type TaskStatus = "pending" | "running" | "done" | "failed" | "blocked" | "skipped";
 export type DagContextBudget = "tiny" | "small" | "normal";
-export type DagOutputGate = "file-exists" | "test-pass" | "review-pass" | "summary" | "none";
+export type DagOutputGate = "file-exists" | "test-pass" | "review-pass" | "command-pass" | "summary" | "none";
 
 export interface DagNodeInput {
   name: string;
@@ -34,6 +34,7 @@ export interface DagNodeFailurePolicy {
   retryable?: boolean;
   blockDependents?: boolean;
   fallbackRole?: string;
+  skipOnFailure?: boolean;
 }
 
 export interface DagNodeEvidence {
@@ -60,6 +61,7 @@ export interface DagNode {
   worktree?: string;
   retries: number;
   maxRetries: number;
+  timeoutMs?: number;
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;
@@ -91,6 +93,7 @@ export function createDag(def: { nodes: DagNodeDefinition[] }): Dag {
       failurePolicy: {
         retryable: true,
         blockDependents: true,
+        skipOnFailure: false,
         ...(n.failurePolicy ?? {}),
       },
       status: "pending" as const,
@@ -126,11 +129,37 @@ export function updateNodeStatus(dag: Dag, id: string, status: TaskStatus): void
 }
 
 export function isDagComplete(dag: Dag): boolean {
-  return dag.nodes.every((n) => n.status === "done");
+  return dag.nodes.every((n) => n.status === "done" || n.status === "skipped");
 }
 
 export function isDagFailed(dag: Dag): boolean {
   return dag.nodes.some((n) => n.status === "blocked" || (n.status === "failed" && n.retries >= n.maxRetries));
+}
+
+export function skipNode(dag: Dag, id: string): void {
+  const node = getNodeById(dag, id);
+  if (!node || node.status === "done" || node.status === "running") return;
+  node.status = "skipped";
+  node.blockedReason = `skipped because ${id} was skipped or failed with skipOnFailure`;
+  const queue = dag.nodes.filter((n) => n.dependsOn.includes(id)).map((n) => n.id);
+  const seen = new Set<string>();
+  while (queue.length > 0) {
+    const childId = queue.shift()!;
+    if (seen.has(childId)) continue;
+    seen.add(childId);
+    const child = dag.nodes.find((n) => n.id === childId);
+    if (!child || child.status === "done" || child.status === "running" || child.status === "skipped") continue;
+    const hasOtherPendingDeps = child.dependsOn.some((depId) => {
+      const dep = dag.nodes.find((n) => n.id === depId);
+      return dep && dep.status !== "done" && dep.status !== "skipped";
+    });
+    if (hasOtherPendingDeps) continue;
+    child.status = "skipped";
+    child.blockedReason = `dependency skipped: ${id}`;
+    for (const next of dag.nodes) {
+      if (next.dependsOn.includes(childId)) queue.push(next.id);
+    }
+  }
 }
 
 function validateNodeDefinition(node: DagNodeDefinition): void {

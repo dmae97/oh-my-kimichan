@@ -1,5 +1,4 @@
 function stripAnsi(str: string): string {
-  // eslint-disable-next-line no-control-regex
   if (!str.includes("\x1b")) return str;
   return str.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
 }

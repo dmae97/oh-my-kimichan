@@ -4,12 +4,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createDag } from "../dist/orchestration/dag.js";
+import { createDag, skipNode } from "../dist/orchestration/dag.js";
 import { createScheduler } from "../dist/orchestration/scheduler.js";
 import { createEnsembleTaskRunner } from "../dist/orchestration/ensemble.js";
 import { createExecutor } from "../dist/orchestration/executor.js";
 import { estimateRunProgress } from "../dist/orchestration/eta.js";
-import { createRoutedRunState, refreshRunStateEstimate, routeRunState } from "../dist/orchestration/run-state.js";
+import { createRoutedRunState, refreshRunStateEstimate, routeRunState, createExecutableDagFromState } from "../dist/orchestration/run-state.js";
 import { discoverRoutingInventory, resetRoutingInventoryCache } from "../dist/orchestration/routing.js";
 import { collectMcpConfigs } from "../dist/util/fs.js";
 
@@ -550,4 +550,257 @@ test("state persister writes atomically via temp file", async () => {
   assert.ok(!entries.some((e) => e.endsWith(".tmp")), "temp file should be cleaned up after successful rename");
 
   await rm(tmpDir, { recursive: true, force: true });
+});
+
+
+test("skipNode propagates skip to dependents", () => {
+  const dag = createDag({
+    nodes: [
+      { id: "plan", name: "Plan", role: "planner", dependsOn: [], maxRetries: 1 },
+      { id: "code", name: "Code", role: "coder", dependsOn: ["plan"], maxRetries: 1 },
+      { id: "review", name: "Review", role: "reviewer", dependsOn: ["code"], maxRetries: 1 },
+    ],
+  });
+
+  skipNode(dag, "plan");
+
+  assert.equal(dag.nodes.find((n) => n.id === "plan")?.status, "skipped");
+  assert.equal(dag.nodes.find((n) => n.id === "code")?.status, "skipped");
+  assert.equal(dag.nodes.find((n) => n.id === "review")?.status, "skipped");
+});
+
+test("scheduler skipOnFailure skips dependents instead of blocking", () => {
+  const dag = createDag({
+    nodes: [
+      { id: "plan", name: "Plan", role: "planner", dependsOn: [], maxRetries: 1, failurePolicy: { skipOnFailure: true } },
+      { id: "code", name: "Code", role: "coder", dependsOn: ["plan"], maxRetries: 1 },
+    ],
+  });
+  const scheduler = createScheduler();
+
+  scheduler.updateNodeStatus(dag, "plan", "failed");
+
+  assert.equal(dag.nodes.find((n) => n.id === "plan")?.status, "skipped");
+  assert.equal(dag.nodes.find((n) => n.id === "code")?.status, "skipped");
+  assert.equal(scheduler.isFailed(dag), false);
+  assert.equal(scheduler.isComplete(dag), true);
+});
+
+test("executor runs fallback node when terminal failure has fallbackRole", async () => {
+  const executor = createExecutor({ ensemble: false });
+  const dag = createDag({
+    nodes: [
+      { id: "plan", name: "Plan", role: "planner", dependsOn: [], maxRetries: 1, failurePolicy: { fallbackRole: "coder" } },
+      { id: "code", name: "Code", role: "coder", dependsOn: ["plan"], maxRetries: 1 },
+    ],
+  });
+  const runner = {
+    async run(node, _env) {
+      if (node.role === "planner") {
+        return { success: false, stdout: "", stderr: "plan failed" };
+      }
+      return { success: true, stdout: "fallback ok", stderr: "" };
+    },
+  };
+
+  const result = await executor.execute(dag, runner, {
+    runId: "fallback-test",
+    workers: 1,
+    approvalPolicy: "yolo",
+  });
+
+  const fallbackNode = result.state.nodes.find((n) => n.id === "plan--fallback");
+  assert.ok(fallbackNode, "fallback node should exist");
+  assert.equal(fallbackNode.status, "done");
+  assert.equal(result.state.nodes.find((n) => n.id === "code")?.status, "done");
+  assert.equal(result.success, true);
+});
+
+test("executor respects AbortSignal and cancels pending nodes", async () => {
+  const ac = new AbortController();
+  const executor = createExecutor({ ensemble: false, signal: ac.signal });
+  const dag = createDag({
+    nodes: [
+      { id: "a", name: "A", role: "coder", dependsOn: [], maxRetries: 1 },
+      { id: "b", name: "B", role: "coder", dependsOn: ["a"], maxRetries: 1 },
+    ],
+  });
+  const runner = {
+    async run(node, _env) {
+      if (node.id === "a") {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return { success: true, stdout: "", stderr: "" };
+      }
+      return { success: true, stdout: "", stderr: "" };
+    },
+  };
+
+  setTimeout(() => ac.abort(), 10);
+
+  const result = await executor.execute(dag, runner, {
+    runId: "cancel-test",
+    workers: 1,
+    approvalPolicy: "yolo",
+  });
+
+  assert.equal(result.success, false);
+  assert.ok(result.state.nodes.some((n) => n.status === "blocked" && n.blockedReason === "cancelled"));
+});
+
+test("executor resumes from persisted state and skips done nodes", async () => {
+  const executor = createExecutor({
+    ensemble: false,
+    resumeFromState: {
+      runId: "resume-test",
+      startedAt: new Date().toISOString(),
+      nodes: [
+        {
+          id: "plan",
+          name: "Plan",
+          role: "planner",
+          dependsOn: [],
+          status: "done",
+          retries: 0,
+          maxRetries: 1,
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+        },
+        {
+          id: "code",
+          name: "Code",
+          role: "coder",
+          dependsOn: ["plan"],
+          status: "pending",
+          retries: 0,
+          maxRetries: 1,
+        },
+      ],
+    },
+  });
+  const dag = createDag({
+    nodes: [
+      { id: "plan", name: "Plan", role: "planner", dependsOn: [], maxRetries: 1 },
+      { id: "code", name: "Code", role: "coder", dependsOn: ["plan"], maxRetries: 1 },
+    ],
+  });
+  let codeRan = false;
+  const runner = {
+    async run(node, _env) {
+      if (node.id === "code") codeRan = true;
+      return { success: true, stdout: "", stderr: "" };
+    },
+  };
+
+  const result = await executor.execute(dag, runner, {
+    runId: "resume-test",
+    workers: 1,
+    approvalPolicy: "yolo",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(codeRan, true);
+  assert.equal(result.state.nodes.find((n) => n.id === "plan")?.status, "done");
+  assert.equal(result.state.nodes.find((n) => n.id === "code")?.status, "done");
+});
+
+test("evidence gate fails node when file-exists gate misses", async () => {
+  const executor = createExecutor({ ensemble: false });
+  const dag = createDag({
+    nodes: [
+      {
+        id: "build",
+        name: "Build",
+        role: "coder",
+        dependsOn: [],
+        maxRetries: 1,
+        outputs: [{ name: "dist", gate: "file-exists", ref: "/nonexistent/path/xyz.txt" }],
+      },
+    ],
+  });
+  const runner = {
+    async run() {
+      return { success: true, stdout: "built", stderr: "" };
+    },
+  };
+
+  const result = await executor.execute(dag, runner, {
+    runId: "evidence-test",
+    workers: 1,
+    approvalPolicy: "yolo",
+  });
+
+  assert.equal(result.success, false);
+  const buildNode = result.state.nodes.find((n) => n.id === "build");
+  assert.equal(buildNode?.status, "failed");
+  assert.ok(buildNode?.evidence?.some((e) => e.gate === "file-exists" && !e.passed));
+});
+
+
+test("createExecutableDagFromState restores done node runtime fields", () => {
+  const startedAt = new Date().toISOString();
+  const completedAt = new Date().toISOString();
+  const state = {
+    runId: "exec-test",
+    startedAt,
+    nodes: [
+      {
+        id: "plan",
+        name: "Plan",
+        role: "planner",
+        dependsOn: [],
+        status: "done",
+        retries: 0,
+        maxRetries: 1,
+        startedAt,
+        completedAt,
+        durationMs: 1234,
+        attempts: [{ attempt: 1, startedAt, completedAt, durationMs: 1234, status: "done" }],
+      },
+      {
+        id: "code",
+        name: "Code",
+        role: "coder",
+        dependsOn: ["plan"],
+        status: "pending",
+        retries: 0,
+        maxRetries: 1,
+      },
+    ],
+  };
+
+  const dag = createExecutableDagFromState(state);
+  const planNode = dag.nodes.find((n) => n.id === "plan");
+  const codeNode = dag.nodes.find((n) => n.id === "code");
+
+  assert.equal(planNode?.status, "done");
+  assert.equal(planNode?.startedAt, startedAt);
+  assert.equal(planNode?.completedAt, completedAt);
+  assert.equal(planNode?.durationMs, 1234);
+  assert.equal(planNode?.attempts?.length, 1);
+  assert.equal(codeNode?.status, "pending");
+});
+
+test("createExecutableDagFromState forces bootstrap to done", () => {
+  const startedAt = new Date().toISOString();
+  const state = {
+    runId: "bootstrap-test",
+    startedAt,
+    nodes: [
+      {
+        id: "bootstrap",
+        name: "Bootstrap",
+        role: "omk",
+        dependsOn: [],
+        status: "pending",
+        retries: 0,
+        maxRetries: 1,
+      },
+    ],
+  };
+
+  const dag = createExecutableDagFromState(state);
+  const bootstrap = dag.nodes.find((n) => n.id === "bootstrap");
+  assert.equal(bootstrap?.status, "done");
+  assert.equal(bootstrap?.startedAt, startedAt);
+  assert.equal(bootstrap?.completedAt, startedAt);
 });

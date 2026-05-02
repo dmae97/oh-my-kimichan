@@ -3,27 +3,27 @@
  *
  * Renders a compact, non-intrusive terminal panel showing:
  * - Running / done / failed / blocked nodes with role colors
- * - Progress bar and ETA
+ * - Progress bar and ETA with confidence
  * - Safety / approval policy chip
  * - Ensemble quorum gauge (when applicable)
+ * - Blocker and completion panels
+ *
+ * Three view modes:
+ *   cockpit — full 4-section dashboard (default)
+ *   compact — single-line cursor-refresh status
+ *   table   — append-only timestamped rows for CI logs
  */
 
-import type { RunState, RunProgressEstimate } from "../contracts/orchestration.js";
+import type { RunState } from "../contracts/orchestration.js";
+import {
+  buildRunViewModel,
+  type RunViewModel,
+  type RunViewModelWorker,
+} from "./run-view-model.js";
 import {
   style,
-  gradient,
-  panel,
-  gauge,
-  stat,
-  separator,
-  parallelStatusBadge,
-  workerLabel,
-  safetyChip,
-  ensembleQuorumBar,
   roleColor,
-  sparkleHeader,
   padEndAnsi,
-  sanitizeTerminalText,
 } from "./theme.js";
 
 let stdoutLock: Promise<void> = Promise.resolve();
@@ -45,6 +45,8 @@ function hashString(str: string): number {
   return h;
 }
 
+export type ParallelViewMode = "cockpit" | "table" | "compact";
+
 export interface ParallelLiveUIOptions {
   runId: string;
   approvalPolicy?: string;
@@ -52,13 +54,20 @@ export interface ParallelLiveUIOptions {
   ensembleEnabled?: boolean;
   refreshMs?: number;
   onFrame?: (frame: string) => void;
+  goalTitle?: string;
+  mode?: "watch" | "no-watch" | "chat-handoff";
+  workerLabels?: Record<string, string>;
+  statePath?: string;
+  useAlternateScreen?: boolean;
+  view?: ParallelViewMode;
 }
 
-export interface ParallelRenderContext {
-  state: RunState;
-  policy: string;
-  workers: number;
-  ensemble: boolean;
+function stripAnsi(str: string): string {
+  return str
+    .replace(/\x1B\][\s\S]*?(?:\x07|\x1B\\)/g, "")
+    .replace(/\x1B[P^_][\s\S]*?\x1B\\/g, "")
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "");
 }
 
 function truncate(value: string, max: number): string {
@@ -68,19 +77,7 @@ function truncate(value: string, max: number): string {
   return chars.slice(0, Math.max(1, max - 1)).join("") + "…";
 }
 
-function nodeSortRank(status: string): number {
-  switch (status) {
-    case "running": return 0;
-    case "failed": return 1;
-    case "blocked": return 2;
-    case "pending": return 3;
-    case "done": return 4;
-    default: return 5;
-  }
-}
-
-function formatEta(ms: number | undefined): string {
-  if (ms === undefined || ms < 0) return "--";
+function formatDurationMs(ms: number): string {
   const s = Math.round(ms / 1000);
   const m = Math.floor(s / 60);
   const h = Math.floor(m / 60);
@@ -89,84 +86,284 @@ function formatEta(ms: number | undefined): string {
   return `${s}s`;
 }
 
-export function renderParallelStatusLine(ctx: ParallelRenderContext): string {
-  const { state, policy, workers, ensemble } = ctx;
-  const estimate = state.estimate;
-  const nodes = [...state.nodes].sort((a, b) => {
-    const r = nodeSortRank(a.status) - nodeSortRank(b.status);
-    return r !== 0 ? r : a.id.localeCompare(b.id);
-  });
+function buildBar(percent: number, width = 24): string {
+  const ratio = Math.min(Math.max(percent / 100, 0), 1);
+  const filled = Math.round(ratio * width);
+  const empty = width - filled;
+  let barStr: string;
+  if (ratio > 0.9) {
+    barStr = style.red("█".repeat(filled)) + style.gray("░".repeat(empty));
+  } else if (ratio > 0.7) {
+    barStr = style.orange("█".repeat(filled)) + style.gray("░".repeat(empty));
+  } else {
+    barStr = style.mint("█".repeat(filled)) + style.gray("░".repeat(empty));
+  }
+  return `[${barStr}]`;
+}
 
-  const running = nodes.filter((n) => n.status === "running");
-  const done = nodes.filter((n) => n.status === "done");
-  const failed = nodes.filter((n) => n.status === "failed");
-  const blocked = nodes.filter((n) => n.status === "blocked");
+function formatCompactPolicyChip(policy: string): string {
+  if (policy === "yolo") return style.mintBold("YOLO");
+  if (policy === "auto") return style.orangeBold("AUTO");
+  if (policy === "interactive") return style.pinkBold("INTERACTIVE");
+  if (policy === "block") return style.redBold("BLOCK");
+  return style.gray(policy.toUpperCase());
+}
+
+function formatStateShort(state: string): string {
+  switch (state) {
+    case "running":
+      return style.purpleBold("running");
+    case "done":
+      return style.mintBold("done");
+    case "failed":
+      return style.pinkBold("failed");
+    case "blocked":
+      return style.orangeBold("blocked");
+    default:
+      return style.gray("idle");
+  }
+}
+
+function etaConfidence(vm: RunViewModel): { text: string; level: "high" | "medium" | "low" | "warming" } {
+  const samples = vm.progress.done;
+  if (samples === 0) return { text: "warming up", level: "warming" };
+  if (samples >= 5) return { text: "high confidence", level: "high" };
+  if (samples >= 2) return { text: "medium confidence", level: "medium" };
+  return { text: "low confidence", level: "low" };
+}
+
+/* ── Table mode append-only state ───────────────────────────── */
+
+const tablePrintedRows = new Map<string, Set<string>>();
+
+function getTableRowKey(w: RunViewModelWorker): string {
+  return `${w.id}#${w.state}#${w.currentNode ?? ""}`;
+}
+
+function renderParallelTable(vm: RunViewModel): string {
+  const runId = vm.runId ?? "unknown";
+  let printed = tablePrintedRows.get(runId);
+  if (!printed) {
+    printed = new Set();
+    tablePrintedRows.set(runId, printed);
+  }
+
+  const rows: string[] = [];
+  if (printed.size === 0) {
+    rows.push("TIMESTAMP              STATE    ROLE       NODE                 ELAPSED  RETRY  EVIDENCE");
+  }
+
+  for (const w of vm.workers) {
+    const key = getTableRowKey(w);
+    if (printed.has(key)) continue;
+    printed.add(key);
+
+    const ts = new Date().toISOString();
+    const role = w.label ? w.label.split(":")[0] : "unknown";
+    const node = w.currentNode ?? w.label ?? "--";
+    const state = w.state;
+    const elapsed = w.state === "idle" ? "--" : formatDurationMs(w.elapsedMs);
+    const retry = w.retryCount > 0 ? String(w.retryCount) : "--";
+
+    let evidence = "--";
+    if (w.lastEvidence) {
+      evidence = w.lastEvidence.passed ? "✓" : `✕ ${w.lastEvidence.gate}`;
+    } else if (w.state === "done") {
+      evidence = "⚠";
+    }
+
+    rows.push(
+      `${ts}  ${state.padEnd(7)} ${role.padEnd(8)} ${truncate(node, 20).padEnd(20)} ${elapsed.padEnd(8)} ${retry.padEnd(6)} ${evidence}`
+    );
+  }
+
+  return rows.join("\n") + (rows.length > 0 ? "\n" : "");
+}
+
+/* ── Cockpit mode ───────────────────────────────────────────── */
+
+export function renderParallelCockpit(
+  vm: RunViewModel,
+  options: Pick<ParallelLiveUIOptions, "approvalPolicy" | "workerCount" | "ensembleEnabled" | "mode" | "goalTitle" | "statePath" | "view">
+): string {
+  const view = options.view ?? "cockpit";
+  const termWidth = process.stdout.columns || 80;
+
+  if (termWidth < 60 || view === "compact") {
+    return buildCompactParallelFrame(vm, options.mode ?? "watch", termWidth);
+  }
+
+  if (view === "table") {
+    return renderParallelTable(vm);
+  }
 
   const lines: string[] = [];
+  const policy = options.approvalPolicy || "auto";
+  const workers = options.workerCount || 1;
+  const mode = options.mode ?? "watch";
+  const modeLabel = mode === "chat-handoff" ? "chat handoff" : mode;
+  const goalTitle = options.goalTitle ?? vm.goalTitle ?? "(no goal)";
 
-  // Header
-  lines.push(sparkleHeader("OMK Parallel Execution"));
-  lines.push(`  ${style.gray("Run ID:")} ${style.creamBold(state.runId)}`);
-  lines.push(`  ${safetyChip(policy)}  ${style.gray("workers:")} ${style.creamBold(String(workers))}${ensemble ? "  " + style.purple("[ensemble]") : ""}`);
+  // Section 1 — Header
+  if (termWidth >= 80) {
+    const titlePart = style.creamBold("OMK Parallel Execution");
+    const goalPart = style.gray(`[${truncate(goalTitle, termWidth - 30)}]`);
+    lines.push(`${titlePart}  ${goalPart}`);
+  }
+  lines.push(
+    `Run: ${vm.runId ?? "—"}  |  Workers: ${workers}  |  Policy: ${formatCompactPolicyChip(policy)}  |  Mode: ${modeLabel}`
+  );
   lines.push("");
 
-  // Progress gauge
-  if (estimate) {
-    const pct = estimate.percentComplete ?? 0;
-    lines.push(gauge("Progress", pct, 100, 24));
-    lines.push(gauge("Workers ", running.length, workers, 24));
-    lines.push(stat("ETA", formatEta(estimate.estimatedRemainingMs), ""));
-    lines.push(stat("Nodes", `${done.length} done / ${running.length} running / ${failed.length} fail / ${blocked.length} block / ${nodes.length} total`, ""));
+  // Section 2 — Progress
+  const conf = etaConfidence(vm);
+  const etaText = vm.eta ?? "--";
+  lines.push(`Progress  ${buildBar(vm.progress.percent)} ${vm.progress.percent}%  ·  ETA ${etaText} · ${conf.text}`);
+  const pending = vm.progress.total - vm.progress.done - vm.progress.running - vm.progress.failed - vm.progress.blocked;
+  lines.push(`${vm.progress.done} done · ${vm.progress.running} running · ${vm.progress.failed} failed · ${vm.progress.blocked} blocked · ${pending} pending`);
+  lines.push("");
+
+  // Section 3 — Workers
+  if (vm.workers.length > 0) {
+    const roleW = 10;
+    const stateW = 10;
+    const elapsedW = 8;
+    const retryW = 6;
+    const evidenceW = 12;
+    const nodeW = Math.max(12, termWidth - 53);
+
+    lines.push(style.purpleBold("▸ Workers"));
+    const header = `  ${padEndAnsi(style.gray("ROLE"), roleW)} ${padEndAnsi(style.gray("NODE"), nodeW)} ${padEndAnsi(style.gray("STATE"), stateW)} ${padEndAnsi(style.gray("ELAPSED"), elapsedW)} ${padEndAnsi(style.gray("RETRY"), retryW)} ${style.gray("EVIDENCE")}`;
+    lines.push(header);
+
+    for (const w of vm.workers) {
+      const roleRaw = w.label ? w.label.split(":")[0] : w.id;
+      const roleText = truncate(roleRaw, roleW);
+      const roleCol = roleColor(roleText)(roleText);
+
+      let nodeRaw: string;
+      if (w.state === "running" && w.currentNode) {
+        nodeRaw = w.currentNode;
+      } else if (w.state === "running" && w.label) {
+        nodeRaw = w.label;
+      } else {
+        nodeRaw = w.label ?? w.id;
+      }
+      nodeRaw = truncate(nodeRaw, nodeW);
+      const nodeCol = w.state === "running" ? style.creamBold(nodeRaw) : style.cream(nodeRaw);
+
+      const stateCol = formatStateShort(w.state);
+      const elapsedCol = w.state === "idle" ? "--" : formatDurationMs(w.elapsedMs);
+      const retryCol = w.retryCount > 0 ? style.orange(String(w.retryCount)) : "--";
+
+      let evidenceCol: string;
+      if (w.lastEvidence) {
+        evidenceCol = w.lastEvidence.passed
+          ? style.mint("✓")
+          : `${style.pink("✕")} ${truncate(w.lastEvidence.gate, evidenceW - 2)}`;
+      } else if (w.state === "done") {
+        evidenceCol = style.orange("⚠");
+      } else if (w.state === "failed") {
+        evidenceCol = style.pink("✕");
+      } else {
+        evidenceCol = "--";
+      }
+
+      const row = `  ${padEndAnsi(roleCol, roleW)} ${padEndAnsi(nodeCol, nodeW)} ${padEndAnsi(stateCol, stateW)} ${padEndAnsi(elapsedCol, elapsedW)} ${padEndAnsi(retryCol, retryW)} ${evidenceCol}`;
+      lines.push(row);
+    }
     lines.push("");
   }
 
-  // Node list (compact grid)
-  const nodeLines = nodes.flatMap((n) => {
-    const name = truncate(n.name || n.id, 36);
-    const duration = n.durationMs ? ` ${style.gray(`(${Math.round(n.durationMs / 1000)}s)`)}` : "";
-    const attempts = (n.attempts && n.attempts.length > 1) ? style.orange(` ×${n.attempts.length}`) : "";
-    const out = [`  ${parallelStatusBadge(n.status, n.role)}  ${name}${duration}${attempts}`];
-    if (n.thinking) {
-      out.push(`      ${style.gray(truncate(n.thinking, 56))}`);
-    }
-    return out;
-  });
+  // Section 4 — Action
+  const hasBlockers = vm.blocker != null || vm.progress.failed > 0 || vm.progress.blocked > 0;
+  const allSettled = vm.progress.running === 0 && vm.progress.total > 0;
 
-  lines.push(...nodeLines);
-  lines.push("");
-
-  // Ensemble quorum hint (if metadata present)
-  const ensembleMeta = state.nodes
-    .map((n) => n.id)
-    .filter((id) => id.includes("#"))
-    .length;
-  if (ensemble || ensembleMeta > 0) {
-    // Try to read ensemble metadata from the first node that has it
-    const nodeWithMeta = state.nodes.find((n) => n.evidence && n.evidence.length > 0);
-    if (nodeWithMeta) {
-      lines.push(style.gray("  Ensemble candidates active across nodes."));
+  if (hasBlockers) {
+    lines.push(style.pinkBold("▸ Blockers"));
+    if (vm.blocker) {
+      lines.push(`  ${style.red("Node:")} ${style.creamBold(vm.blocker.nodeId)}`);
+      lines.push(`  ${style.gray("Reason:")} ${vm.blocker.reason}`);
+      lines.push(`  ${style.gray("Next:")} ${style.cream(vm.blocker.nextAction)}`);
+    } else {
+      lines.push(`  ${style.gray("Some nodes are failed or blocked. Review the worker grid above.")}`);
     }
+    const failedWorkers = vm.workers.filter((w) => w.state === "failed");
+    for (const w of failedWorkers) {
+      if (w.lastEvidence) {
+        lines.push(`  ${style.pink("✕")} ${style.creamBold(w.label)} evidence gate failed: ${style.gray(w.lastEvidence.gate)}`);
+        if (w.lastEvidence.message) {
+          lines.push(`    ${style.gray(truncate(w.lastEvidence.message, termWidth - 6))}`);
+        }
+      } else {
+        lines.push(`  ${style.pink("✕")} ${style.creamBold(w.label)} failed`);
+      }
+    }
+    const doneWithoutEvidence = vm.workers.filter((w) => w.state === "done" && !w.lastEvidence);
+    if (doneWithoutEvidence.length > 0) {
+      lines.push(`  ${style.orange("⚠")} ${doneWithoutEvidence.length} done node(s) missing evidence`);
+    }
+    lines.push("");
+  } else if (allSettled) {
+    const success = vm.progress.failed === 0 && vm.progress.blocked === 0;
+    lines.push(success ? style.mintBold("▸ Complete") : style.pinkBold("▸ Complete (with issues)"));
+    lines.push(`  ${success ? style.mint("✓ All workers finished successfully") : style.pink("✕ Some workers failed or blocked")}`);
+    if (options.statePath) {
+      lines.push(`  ${style.gray("State:")} ${style.cream(options.statePath)}`);
+    }
+    lines.push(`  ${style.gray("Next:")} ${style.cream("omk summary")} ${style.gray("|")} ${style.cream("omk verify")} ${style.gray("|")} ${style.cream("omk chat --run-id")}`);
     lines.push("");
   }
 
-  // Footer
-  lines.push(separator(60));
-  lines.push(style.gray("  Ctrl+C to abort  |  omk hud --watch for full dashboard"));
-  lines.push("");
+  return lines.join("\n");
+}
 
-  return panel(lines, gradient("Live Parallel Status"));
+/** @deprecated Use renderParallelCockpit instead */
+export function renderParallelStatusLine(
+  vm: RunViewModel,
+  options: Pick<ParallelLiveUIOptions, "approvalPolicy" | "workerCount" | "ensembleEnabled" | "mode" | "goalTitle" | "statePath">
+): string {
+  return renderParallelCockpit(vm, { ...options, view: "cockpit" });
 }
 
 export function renderParallelFrame(
   state: RunState,
   options: Omit<ParallelLiveUIOptions, "refreshMs" | "onFrame">
 ): string {
-  return renderParallelStatusLine({
-    state,
-    policy: options.approvalPolicy || "yolo",
-    workers: options.workerCount || 1,
-    ensemble: options.ensembleEnabled || false,
-  });
+  const vm = buildRunViewModel(state, { workerLabels: options.workerLabels });
+  const view = options.view ?? "cockpit";
+  if (view === "compact") {
+    return buildCompactParallelFrame(vm, options.mode ?? "watch", process.stdout.columns || 80);
+  }
+  return renderParallelCockpit(vm, options);
+}
+
+function buildCompactParallelFrame(vm: RunViewModel, mode: string, termWidth: number): string {
+  const parts: string[] = ["OMK parallel"];
+  parts.push(`· ${vm.progress.done}/${vm.progress.total} done`);
+  if (vm.progress.running > 0) {
+    parts.push(`· ${vm.progress.running} running`);
+  }
+  const eta = vm.eta ?? "--";
+  parts.push(`· ETA ${eta}`);
+
+  const activeWorker = vm.workers.find((w) => w.state === "running");
+  if (activeWorker) {
+    const role = activeWorker.label ? activeWorker.label.split(":")[0] : "worker";
+    const node = activeWorker.currentNode ?? activeWorker.label ?? "";
+    parts.push(`· ${role}: ${truncate(node, 20)}`);
+  }
+
+  const line = parts.join(" ");
+  return truncate(line, termWidth);
+}
+
+export function renderCompactParallelFrame(
+  state: RunState,
+  options: Omit<ParallelLiveUIOptions, "refreshMs" | "onFrame">
+): string {
+  const vm = buildRunViewModel(state, { workerLabels: options.workerLabels });
+  return buildCompactParallelFrame(vm, options.mode ?? "watch", process.stdout.columns || 80);
 }
 
 export class ParallelLiveRenderer {
@@ -175,16 +372,20 @@ export class ParallelLiveRenderer {
   private lastFrame = "";
   private lastFrameHash = 0;
   private readonly refreshMs: number;
-  private readonly options: Omit<ParallelLiveUIOptions, "refreshMs">;
+  private readonly options: Omit<ParallelLiveUIOptions, "refreshMs" | "useAlternateScreen">;
+  private readonly useAlternateScreen: boolean;
 
   constructor(options: ParallelLiveUIOptions) {
     this.refreshMs = options.refreshMs ?? 2000;
-    const { refreshMs: _, ...rest } = options;
-    this.options = rest;
+    this.useAlternateScreen = options.useAlternateScreen ?? false;
+    this.options = (({ refreshMs: _, useAlternateScreen: __, ...rest }) => rest)(options);
   }
 
   start(stateProvider: () => RunState | undefined): void {
     this.stopped = false;
+    if (this.useAlternateScreen) {
+      process.stdout.write("\x1b[?1049h");
+    }
     this.renderNow(stateProvider);
     this.timer = setInterval(() => {
       if (!this.stopped) this.renderNow(stateProvider);
@@ -197,6 +398,9 @@ export class ParallelLiveRenderer {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.useAlternateScreen) {
+      process.stdout.write("\x1b[?1049l");
     }
   }
 
@@ -220,16 +424,27 @@ export class ParallelLiveRenderer {
       return;
     }
 
-    // Default: home cursor + erase-down for less flicker
-    const output = "\x1b[H\x1b[J" + frame + "\n";
+    const view = this.options.view ?? "cockpit";
+    const mode = this.options.mode ?? "watch";
+    const isTTY = Boolean(process.stdout.isTTY);
+
+    if (view === "compact") {
+      if (mode === "watch" && isTTY) {
+        void lockedStdoutWrite(`\x1b[1G\x1b[2K${frame}`);
+      } else {
+        void lockedStdoutWrite(frame + "\n");
+      }
+      return;
+    }
+
+    if (view === "table") {
+      if (frame) void lockedStdoutWrite(frame);
+      return;
+    }
+
+    // Cockpit mode
+    const clearPrefix = this.useAlternateScreen ? "\x1b[2J\x1b[H" : "\x1b[H\x1b[J";
+    const output = clearPrefix + frame + "\n";
     void lockedStdoutWrite(output);
   }
-}
-
-function stripAnsi(str: string): string {
-  return str
-    .replace(/\x1B\][\s\S]*?(?:\x07|\x1B\\)/g, "")
-    .replace(/\x1B[P^_][\s\S]*?\x1B\\/g, "")
-    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "");
 }

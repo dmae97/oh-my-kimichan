@@ -34,9 +34,10 @@ export function createStatePersister(basePath: string = ".omk/runs"): StatePersi
     async save(state: RunState): Promise<void> {
       const filePath = safePath(basePath, join(state.runId, "state.json"));
       await mkdir(dirname(filePath), { recursive: true });
+      const toSave: RunState = { ...state, schemaVersion: 1 };
       const tempPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
       try {
-        await writeFile(tempPath, JSON.stringify(state, null, 2), "utf-8");
+        await writeFile(tempPath, JSON.stringify(toSave, null, 2), "utf-8");
         await rename(tempPath, filePath);
       } catch (err) {
         try { await unlink(tempPath); } catch { /* ignore cleanup error */ }

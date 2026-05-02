@@ -1,4 +1,5 @@
 import type { Dag, DagNode, TaskStatus } from "./dag.js";
+import { skipNode } from "./dag.js";
 import { getTaskDagGraph } from "./task-graph.js";
 
 export interface Scheduler {
@@ -25,18 +26,20 @@ export function createScheduler(): Scheduler {
         node.retries += 1;
         if (node.retries < node.maxRetries) {
           node.status = "pending";
-        } else {
+        } else if (node.failurePolicy?.skipOnFailure) {
+          skipNode(dag, node.id);
+        } else if (node.failurePolicy?.blockDependents !== false) {
           blockDependents(dag, node.id, `dependency failed: ${node.id}`);
         }
       }
     },
 
     isComplete(dag: Dag): boolean {
-      return dag.nodes.every((n) => n.status === "done");
+      return dag.nodes.every((n) => n.status === "done" || n.status === "skipped" || (n.status === "failed" && Boolean(n.failurePolicy?.fallbackRole)));
     },
 
     isFailed(dag: Dag): boolean {
-      return dag.nodes.some((n) => n.status === "blocked" || (n.status === "failed" && n.retries >= n.maxRetries));
+      return dag.nodes.some((n) => n.status === "blocked" || (n.status === "failed" && n.retries >= n.maxRetries && !n.failurePolicy?.skipOnFailure && !n.failurePolicy?.fallbackRole));
     },
 
     getNodeStatus(dag: Dag, id: string): TaskStatus | undefined {

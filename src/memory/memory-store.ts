@@ -138,7 +138,7 @@ export class MemoryStore {
   async graphQuery(query: string): Promise<GraphQueryResult> {
     const graph = await this.getGraphStore();
     if (typeof graph?.graphQuery !== "function") {
-      throw new Error("omk_graph_query requires backend=local_graph (GraphQL-lite over project-local ontology state)");
+      throw new Error("omk_graph_query requires a graph memory backend (local_graph or neo4j)");
     }
     return graph.graphQuery(query);
   }

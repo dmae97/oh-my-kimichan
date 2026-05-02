@@ -1,0 +1,370 @@
+import { mkdir, writeFile } from "fs/promises";
+import { join } from "path";
+import { getProjectRoot } from "../util/fs.js";
+import { style, header, status, label } from "../util/theme.js";
+
+import { createGoalPersister } from "../goal/persistence.js";
+import { normalizeGoal, updateGoalStatus } from "../goal/intake.js";
+import { checkGoalEvidence } from "../goal/evidence.js";
+import { scoreGoal } from "../goal/scoring.js";
+import { createStatePersister } from "../orchestration/state-persister.js";
+import type { GoalSpec, GoalEvidence } from "../contracts/goal.js";
+
+function getGoalBasePath(): string {
+  return join(getProjectRoot(), ".omk", "goals");
+}
+
+function printAlphaWarning(): void {
+  if (!process.env.OMK_GOAL_ALPHA) {
+    console.log(style.orange("⚠️  Goal feature is alpha. Set OMK_GOAL_ALPHA=1 to suppress this warning."));
+  }
+}
+
+function createPersister() {
+  return createGoalPersister(getGoalBasePath());
+}
+
+function formatGoalTable(goals: Array<{ spec: GoalSpec; evidenceCount: number }>): string {
+  const lines: string[] = [
+    `  ${style.creamBold("ID")}                    ${style.creamBold("Status")}       ${style.creamBold("Risk")}   ${style.creamBold("Updated")}              ${style.creamBold("Title")}`,
+  ];
+  for (const { spec } of goals) {
+    const id = spec.goalId.slice(0, 22).padEnd(22);
+    const st = spec.status.padEnd(10);
+    const risk = spec.riskLevel.padEnd(6);
+    const updated = spec.updatedAt.slice(0, 19).padEnd(20);
+    const title = spec.title.slice(0, 36);
+    lines.push(`  ${style.gray(id)} ${style.gray(st)} ${style.gray(risk)} ${style.gray(updated)} ${title}`);
+  }
+  return lines.join("\n");
+}
+
+function renderGoalDetail(spec: GoalSpec): string {
+  const lines: string[] = [
+    header(`Goal: ${spec.title}`),
+    label("ID", spec.goalId),
+    label("Status", spec.status),
+    label("Risk", spec.riskLevel),
+    label("Plan revision", String(spec.planRevision)),
+    label("Created", spec.createdAt),
+    label("Updated", spec.updatedAt),
+    "",
+    style.purpleBold("Objective"),
+    spec.objective,
+    "",
+    style.purpleBold("Success Criteria"),
+  ];
+  for (const c of spec.successCriteria) {
+    const req = c.requirement === "required" ? style.pink("[required]") : style.gray("[optional]");
+    const inf = c.inferred ? style.gray("(inferred)") : "";
+    lines.push(`  ${req} ${c.description} ${inf}`);
+  }
+  if (spec.constraints.length > 0) {
+    lines.push("", style.purpleBold("Constraints"));
+    for (const c of spec.constraints) {
+      lines.push(`  • ${c.description}`);
+    }
+  }
+  if (spec.nonGoals.length > 0) {
+    lines.push("", style.purpleBold("Non-Goals"));
+    for (const ng of spec.nonGoals) {
+      lines.push(`  • ${ng}`);
+    }
+  }
+  if (spec.expectedArtifacts.length > 0) {
+    lines.push("", style.purpleBold("Expected Artifacts"));
+    for (const a of spec.expectedArtifacts) {
+      lines.push(`  • ${a.name}${a.path ? ` → ${a.path}` : ""}`);
+    }
+  }
+  if (spec.runIds.length > 0) {
+    lines.push("", style.purpleBold("Runs"));
+    for (const rid of spec.runIds) {
+      lines.push(`  • ${rid}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export async function goalCreateCommand(
+  rawPrompt: string,
+  options: { json?: boolean; title?: string; objective?: string; risk?: string }
+): Promise<void> {
+  printAlphaWarning();
+  const root = getProjectRoot();
+  await mkdir(join(root, ".omk", "goals"), { recursive: true });
+
+  const spec = normalizeGoal({
+    rawPrompt,
+    title: options.title,
+    objective: options.objective,
+    riskLevel: options.risk as GoalSpec["riskLevel"] | undefined,
+  });
+
+  const persister = createPersister();
+  await persister.save(spec);
+
+  // Human-readable mirror
+  const mirrorDir = join(getGoalBasePath(), spec.goalId);
+  await mkdir(mirrorDir, { recursive: true });
+  await writeFile(
+    join(mirrorDir, "goal.md"),
+    [`# Goal: ${spec.title}`, "", spec.objective, "", `**Status:** ${spec.status}`, `**Risk:** ${spec.riskLevel}`].join("\n")
+  );
+
+  if (options.json) {
+    console.log(JSON.stringify(spec, null, 2));
+    return;
+  }
+
+  console.log(header("Goal Created"));
+  console.log(label("ID", spec.goalId));
+  console.log(label("Title", spec.title));
+  console.log(label("Status", spec.status));
+  console.log(label("Risk", spec.riskLevel));
+  console.log("");
+  console.log(status.success(`goal.json → ${join(mirrorDir, "goal.json")}`));
+}
+
+export async function goalListCommand(options: { json?: boolean }): Promise<void> {
+  printAlphaWarning();
+  const persister = createPersister();
+  const ids = await persister.list();
+
+  const goals = await Promise.all(
+    ids.map(async (id) => {
+      const spec = await persister.load(id);
+      const evidence = spec ? await persister.loadEvidence(id) : [];
+      return { spec: spec!, evidenceCount: evidence.length };
+    })
+  );
+
+  if (options.json) {
+    console.log(JSON.stringify(goals.map((g) => g.spec), null, 2));
+    return;
+  }
+
+  if (goals.length === 0) {
+    console.log(style.gray("No goals found. Create one with: omk goal create \"<prompt>\""));
+    return;
+  }
+
+  console.log(header("Goals"));
+  console.log(formatGoalTable(goals));
+}
+
+export async function goalShowCommand(goalId: string, options: { json?: boolean }): Promise<void> {
+  printAlphaWarning();
+  const persister = createPersister();
+  const spec = await persister.load(goalId);
+
+  if (!spec) {
+    console.error(status.error(`Goal not found: ${goalId}`));
+    process.exit(1);
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify(spec, null, 2));
+    return;
+  }
+
+  console.log(renderGoalDetail(spec));
+}
+
+export async function goalPlanCommand(goalId: string): Promise<void> {
+  printAlphaWarning();
+  const persister = createPersister();
+  const spec = await persister.load(goalId);
+
+  if (!spec) {
+    console.error(status.error(`Goal not found: ${goalId}`));
+    process.exit(1);
+  }
+
+  const updated = updateGoalStatus(spec, "planned", { planRevision: spec.planRevision + 1 });
+  await persister.save(updated);
+  await persister.appendHistory(goalId, {
+    at: new Date().toISOString(),
+    action: "plan",
+    detail: { planRevision: updated.planRevision },
+  });
+
+  // Write plan.md stub
+  const mirrorDir = join(getGoalBasePath(), goalId);
+  await mkdir(mirrorDir, { recursive: true });
+  await writeFile(
+    join(mirrorDir, "plan.md"),
+    [`# Plan: ${updated.title}`, "", `**Objective:** ${updated.objective}`, "", "## Steps", "", "1. (to be planned)"].join("\n")
+  );
+
+  console.log(header("Goal Planned"));
+  console.log(label("ID", updated.goalId));
+  console.log(label("Status", updated.status));
+  console.log(label("Plan revision", String(updated.planRevision)));
+}
+
+export async function goalRunCommand(
+  goalId: string,
+  options: { workers?: string; runId?: string }
+): Promise<void> {
+  printAlphaWarning();
+  const persister = createPersister();
+  const spec = await persister.load(goalId);
+
+  if (!spec) {
+    console.error(status.error(`Goal not found: ${goalId}`));
+    process.exit(1);
+  }
+
+  const updated = updateGoalStatus(spec, "running");
+  await persister.save(updated);
+  await persister.appendHistory(goalId, {
+    at: new Date().toISOString(),
+    action: "run",
+    detail: { workers: options.workers },
+  });
+
+  // Delegate to parallel command (default flow for goals)
+  const { parallelCommand } = await import("./parallel.js");
+  const parallelOpts: import("./parallel.js").ParallelCommandOptions = {
+    workers: options.workers,
+    runId: options.runId,
+    watch: true,
+    goalId,
+  };
+  await parallelCommand(updated.objective, parallelOpts);
+}
+
+export async function goalVerifyCommand(goalId: string, options: { json?: boolean }): Promise<void> {
+  printAlphaWarning();
+  const root = getProjectRoot();
+  const persister = createPersister();
+  const spec = await persister.load(goalId);
+
+  if (!spec) {
+    const msg = `Goal not found: ${goalId}`;
+    if (options.json) {
+      console.log(JSON.stringify({ error: msg }));
+    } else {
+      console.error(status.error(msg));
+    }
+    process.exit(1);
+  }
+
+  const updated = updateGoalStatus(spec, "verifying");
+  await persister.save(updated);
+
+  // Load run state for the latest run associated with the goal
+  let runState: import("../contracts/orchestration.js").RunState | undefined;
+  if (spec.runIds.length > 0) {
+    const latestRunId = spec.runIds[spec.runIds.length - 1];
+    const statePersister = createStatePersister(join(root, ".omk", "runs"));
+    runState = (await statePersister.load(latestRunId)) ?? undefined;
+  }
+
+  const evidence = await checkGoalEvidence(updated, { root, runState: runState ?? { schemaVersion: 1, runId: "none", nodes: [], startedAt: new Date().toISOString() } });
+  const score = scoreGoal(updated, evidence);
+
+  let finalStatus: GoalSpec["status"];
+  if (score.overall === "pass") {
+    finalStatus = "done";
+  } else if (score.overall === "fail") {
+    finalStatus = "failed";
+  } else {
+    finalStatus = "verifying";
+  }
+
+  const closed = updateGoalStatus(updated, finalStatus);
+  await persister.save(closed);
+  await persister.saveEvidence(goalId, evidence);
+  await persister.appendHistory(goalId, {
+    at: new Date().toISOString(),
+    action: "verify",
+    detail: { score, status: finalStatus },
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify({ goalId, score, status: closed.status, evidence }, null, 2));
+    return;
+  }
+
+  console.log(header("Goal Verification"));
+  console.log(label("ID", closed.goalId));
+  console.log(label("Status", closed.status));
+  console.log(label("Overall", score.overall));
+  console.log(label("Required", `${score.requiredPassed}/${score.requiredTotal}`));
+  if (score.optionalScore > 0) {
+    console.log(label("Optional", String(score.optionalScore)));
+  }
+  console.log(label("Quality gate", score.qualityGatePassed ? "passed" : "failed"));
+  console.log("");
+  console.log(style.purpleBold("Evidence"));
+  for (const ev of evidence) {
+    const icon = ev.passed ? style.mint("✓") : style.pink("✗");
+    console.log(`  ${icon} ${ev.criterionId}: ${ev.message ?? ""}`);
+  }
+}
+
+export async function goalCloseCommand(
+  goalId: string,
+  options: { force?: boolean; reason?: string }
+): Promise<void> {
+  printAlphaWarning();
+  const persister = createPersister();
+  const spec = await persister.load(goalId);
+
+  if (!spec) {
+    console.error(status.error(`Goal not found: ${goalId}`));
+    process.exit(1);
+  }
+
+  const evidence = await persister.loadEvidence(goalId);
+  const hasPassedEvidence = evidence.some((e: GoalEvidence) => e.passed);
+
+  if (spec.status !== "done" && !hasPassedEvidence && !options.force) {
+    console.error(
+      status.error(
+        `⚠️  No passed evidence gates found for this goal. Use --force to close anyway.`
+      )
+    );
+    process.exit(1);
+  }
+
+  const updated = updateGoalStatus(spec, "closed");
+  await persister.save(updated);
+  await persister.appendHistory(goalId, {
+    at: new Date().toISOString(),
+    action: "close",
+    detail: { reason: options.reason, force: options.force },
+  });
+
+  console.log(header("Goal Closed"));
+  console.log(label("ID", updated.goalId));
+  console.log(label("Status", updated.status));
+  if (options.reason) {
+    console.log(label("Reason", options.reason));
+  }
+}
+
+export async function goalBlockCommand(goalId: string, options: { reason: string }): Promise<void> {
+  printAlphaWarning();
+  const persister = createPersister();
+  const spec = await persister.load(goalId);
+
+  if (!spec) {
+    console.error(status.error(`Goal not found: ${goalId}`));
+    process.exit(1);
+  }
+
+  const updated = updateGoalStatus(spec, "blocked");
+  await persister.save(updated);
+  await persister.appendHistory(goalId, {
+    at: new Date().toISOString(),
+    action: "block",
+    detail: { reason: options.reason },
+  });
+
+  console.log(header("Goal Blocked"));
+  console.log(label("ID", updated.goalId));
+  console.log(label("Reason", options.reason));
+}

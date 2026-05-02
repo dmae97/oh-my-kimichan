@@ -43,9 +43,10 @@ export interface MemoryMindmap {
 export interface GraphQueryResult {
   data: unknown;
   extensions: {
-    dialect: "omk-graphql-lite-v1";
-    backend: "local_graph";
-    statePath: string;
+    dialect: "omk-graphql-lite-v1" | "cypher";
+    backend: "local_graph" | "neo4j";
+    statePath?: string;
+    database?: string;
   };
 }
 
@@ -800,7 +801,7 @@ function sortRank(type: string): number {
 }
 
 function readStringArg(query: string, name: string): string | undefined {
-  const match = query.match(new RegExp(`${name}\\s*:\\s*[\"']([^\"']*)[\"']`, "i"));
+  const match = query.match(new RegExp(`${name}\\s*:\\s*["']([^"']*)["']`, "i"));
   return match?.[1];
 }
 

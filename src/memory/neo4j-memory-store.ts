@@ -7,8 +7,14 @@ import {
   type MemorySettings,
   type MemoryStatus,
 } from "./memory-config.js";
+import {
+  ONTOLOGY_SCHEMA_VERSION,
+  createOntologyConstraints,
+  containsMutation,
+} from "./ontology-model.js";
 
 interface Neo4jRecordLike {
+  keys: string[];
   get(key: string): unknown;
 }
 
@@ -22,6 +28,17 @@ export interface Neo4jMemorySearchResult {
   sessionId: string;
   updatedAt: string;
   source: string;
+}
+
+export interface Neo4jGraphQueryResult {
+  data: {
+    records: Array<Record<string, unknown>>;
+  };
+  extensions: {
+    dialect: "cypher";
+    backend: "neo4j";
+    database: string;
+  };
 }
 
 export interface Neo4jMemoryStoreOptions {
@@ -93,17 +110,25 @@ export class Neo4jMemoryStore {
     const now = new Date().toISOString();
     const memoryKey = this.memoryKey(path);
     const versionKey = this.versionKey(path, content, now);
+    const rootHash = hash(this.settings.project.root);
     await this.execute(
       `MERGE (p:OmkProject {key: $projectKey})
          ON CREATE SET p.createdAt = $now
        SET p.name = $projectName,
            p.root = $projectRoot,
-           p.updatedAt = $now
+           p.updatedAt = $now,
+           p.id = $projectKey,
+           p.projectId = $projectKey,
+           p.workspaceRootHash = $workspaceRootHash,
+           p.schemaVersion = $schemaVersion
        MERGE (s:OmkSession {key: $sessionKey})
          ON CREATE SET s.createdAt = $now,
                        s.id = $sessionId,
                        s.projectKey = $projectKey
-       SET s.updatedAt = $now
+       SET s.updatedAt = $now,
+           s.projectId = $projectKey,
+           s.workspaceRootHash = $workspaceRootHash,
+           s.schemaVersion = $schemaVersion
        MERGE (p)-[:HAS_SESSION]->(s)
        MERGE (m:OmkMemory {key: $memoryKey})
          ON CREATE SET m.createdAt = $now,
@@ -112,7 +137,11 @@ export class Neo4jMemoryStore {
        SET m.content = $content,
            m.updatedAt = $now,
            m.sessionId = $sessionId,
-           m.source = $source
+           m.source = $source,
+           m.id = $memoryKey,
+           m.projectId = $projectKey,
+           m.workspaceRootHash = $workspaceRootHash,
+           m.schemaVersion = $schemaVersion
        MERGE (p)-[:HAS_MEMORY]->(m)
        CREATE (v:OmkMemoryVersion {
          key: $versionKey,
@@ -121,7 +150,11 @@ export class Neo4jMemoryStore {
          createdAt: $now,
          projectKey: $projectKey,
          sessionId: $sessionId,
-         source: $source
+         source: $source,
+         id: $versionKey,
+         projectId: $projectKey,
+         workspaceRootHash: $workspaceRootHash,
+         schemaVersion: $schemaVersion
        })
        MERGE (s)-[:WROTE]->(v)
        MERGE (v)-[:UPDATES]->(m)`,
@@ -137,6 +170,8 @@ export class Neo4jMemoryStore {
         content,
         now,
         source: this.source,
+        workspaceRootHash: rootHash,
+        schemaVersion: ONTOLOGY_SCHEMA_VERSION,
       }
     );
   }
@@ -175,6 +210,31 @@ export class Neo4jMemoryStore {
     }));
   }
 
+  async graphQuery(query: string): Promise<Neo4jGraphQueryResult> {
+    this.assertConfigured();
+    await this.ensureSchema();
+    if (containsMutation(query)) {
+      throw new Error("omk_graph_query: write mutations are not allowed in Cypher queries");
+    }
+    const result = await this.execute(query, {});
+    return {
+      data: {
+        records: result.records.map((record) => {
+          const obj: Record<string, unknown> = {};
+          for (const key of record.keys) {
+            obj[key] = record.get(key);
+          }
+          return obj;
+        }),
+      },
+      extensions: {
+        dialect: "cypher",
+        backend: "neo4j",
+        database: this.settings.neo4j.database || "neo4j",
+      },
+    };
+  }
+
   async close(): Promise<void> {
     if (!this.driver) return;
     const driver = this.driver;
@@ -194,13 +254,21 @@ export class Neo4jMemoryStore {
     await this.execute("CREATE CONSTRAINT omk_session_key IF NOT EXISTS FOR (s:OmkSession) REQUIRE s.key IS UNIQUE", {});
     await this.execute("CREATE CONSTRAINT omk_memory_key IF NOT EXISTS FOR (m:OmkMemory) REQUIRE m.key IS UNIQUE", {});
     await this.execute("CREATE CONSTRAINT omk_memory_version_key IF NOT EXISTS FOR (v:OmkMemoryVersion) REQUIRE v.key IS UNIQUE", {});
+    await createOntologyConstraints(
+      { executeQuery: (q, p, o) => this.execute(q, p ?? {}, o) },
+      this.settings.neo4j.database
+    );
     this.schemaReady = true;
   }
 
-  private async execute(query: string, params: Record<string, unknown>): Promise<Neo4jResultLike> {
+  private async execute(query: string, params: Record<string, unknown>, options?: { database?: string }): Promise<Neo4jResultLike> {
     const driver = this.getDriver();
-    const options = this.settings.neo4j.database ? { database: this.settings.neo4j.database } : undefined;
-    return driver.executeQuery(query, params, options) as Promise<Neo4jResultLike>;
+    const dbOptions = options?.database
+      ? { database: options.database }
+      : this.settings.neo4j.database
+        ? { database: this.settings.neo4j.database }
+        : undefined;
+    return driver.executeQuery(query, params, dbOptions) as Promise<Neo4jResultLike>;
   }
 
   private getDriver(): Driver {

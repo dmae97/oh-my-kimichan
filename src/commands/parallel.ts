@@ -1,8 +1,8 @@
-import { mkdir, writeFile, readFile } from "fs/promises";
+import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import readline from "readline";
 
-import { getOmkPath, getProjectRoot, pathExists, readTextFile } from "../util/fs.js";
+import { getOmkPath, getProjectRoot } from "../util/fs.js";
 import { style, header, status, label, kimichanCliHero, bullet } from "../util/theme.js";
 import { t } from "../util/i18n.js";
 import { createKimiTaskRunner } from "../util/kimi-runner.js";
@@ -11,9 +11,9 @@ import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { createRoutedRunState, createDagFromRunState, refreshRunStateEstimate, routeRunState } from "../orchestration/run-state.js";
 import { createExecutor } from "../orchestration/executor.js";
 import { createStatePersister } from "../orchestration/state-persister.js";
-import { ParallelLiveRenderer } from "../util/parallel-ui.js";
+import { ParallelLiveRenderer, renderCompactParallelFrame, type ParallelViewMode } from "../util/parallel-ui.js";
 import { formatOmkVersionFooter } from "../util/version.js";
-import type { RunState, TaskResult } from "../contracts/orchestration.js";
+import type { RunState } from "../contracts/orchestration.js";
 import type { Dag } from "../orchestration/dag.js";
 
 export interface ParallelCommandOptions {
@@ -21,7 +21,14 @@ export interface ParallelCommandOptions {
   runId?: string;
   approvalPolicy?: string;
   watch?: boolean;
+  noWatch?: boolean;
+  view?: string;
   chat?: boolean;
+  fromSpec?: string;
+  alternateScreen?: boolean;
+  noPause?: boolean;
+  compact?: boolean;
+  goalId?: string;
 }
 
 export async function parallelCommand(
@@ -29,12 +36,12 @@ export async function parallelCommand(
   options: ParallelCommandOptions = {}
 ): Promise<void> {
   const root = getProjectRoot();
-  process.env.OMK_MCP_SCOPE = "all";
-  process.env.OMK_SKILLS_SCOPE = "all";
   const resources = await getOmkResourceSettings();
   const workerCount = normalizeWorkerCount(options.workers, resources.maxWorkers);
 
-  if (!goal) {
+  const hasFromSpec = Boolean(options.fromSpec);
+
+  if (!goal && !hasFromSpec) {
     console.error(status.error(t("parallel.goalRequired")));
     process.exit(1);
   }
@@ -51,43 +58,112 @@ export async function parallelCommand(
     `# Plan\n\nFlow: parallel\nWorkers: ${workerCount}\nResource profile: ${resources.profile}\nApproval policy: ${approvalPolicy}\n`
   );
 
-  const runState = createInteractiveRunState({
-    runId,
-    flow: "parallel",
-    goal,
-    workerCount,
-    startedAt,
-    approvalPolicy,
-  });
+  let runState: RunState;
+  let effectiveGoal = goal ?? "";
+
+  let goalId: string | undefined;
+  let goalSnapshot: RunState["goalSnapshot"] | undefined;
+  if (options.goalId) {
+    const { createGoalPersister } = await import("../goal/persistence.js");
+    const goalPersister = createGoalPersister(join(root, ".omk", "goals"));
+    const goalSpec = await goalPersister.load(options.goalId);
+    if (goalSpec) {
+      goalId = goalSpec.goalId;
+      goalSnapshot = {
+        title: goalSpec.title,
+        objective: goalSpec.objective,
+        successCriteria: goalSpec.successCriteria.map((c) => ({
+          id: c.id,
+          description: c.description,
+          requirement: c.requirement,
+        })),
+      };
+      if (!effectiveGoal) {
+        effectiveGoal = goalSpec.objective;
+      }
+    }
+  }
+
+  if (hasFromSpec) {
+    const { loadSpecDag } = await import("./dag-from-spec.js");
+    const specDag = await loadSpecDag(options.fromSpec!, { parallel: true });
+    effectiveGoal = goal ?? `spec: ${specDag.nodes[0]?.name ?? options.fromSpec!}`;
+
+    const specNodes = specDag.nodes.map((node) => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { status, retries, ...def } = node;
+      return def;
+    });
+
+    runState = createRoutedRunState({
+      runId,
+      startedAt,
+      nodes: specNodes,
+      workerCount,
+      goalId,
+      goalSnapshot,
+    });
+  } else {
+    runState = createInteractiveRunState({
+      runId,
+      flow: "parallel",
+      goal: effectiveGoal,
+      workerCount,
+      startedAt,
+      approvalPolicy,
+      goalId,
+      goalSnapshot,
+    });
+  }
   await writeFile(join(runDir, "state.json"), JSON.stringify(runState, null, 2));
 
   console.log(header("Parallel Execution"));
   console.log(label("Run ID", runId));
-  console.log(label("Goal", goal));
+  console.log(label("Goal", effectiveGoal));
   console.log(label("Workers", String(workerCount)));
   console.log(label("Resource profile", `${resources.profile} (${resources.reason})`));
   console.log(label("Approval policy", approvalPolicy) + "\n");
 
   const agentFile = getOmkPath("agents/root.yaml");
-  const promptText = buildPromptText(goal, runId, resources.profile, workerCount);
+  const promptText = buildPromptText(effectiveGoal, runId, resources.profile, workerCount);
   const statePath = join(runDir, "state.json");
 
   const routedState = routeRunState(runState, workerCount);
   await writeFile(statePath, JSON.stringify(routedState, null, 2));
 
   const dag = createExecutableDagFromState(routedState);
+  const abortController = new AbortController();
+  function handleSignal(): void {
+    abortController.abort();
+  }
+  process.on("SIGINT", handleSignal);
+  process.on("SIGTERM", handleSignal);
+
   const executor = createExecutor({
     persister: createStatePersister(join(root, ".omk", "runs")),
     ensemble: resources.ensembleDefaultEnabled ? {} : false,
+    resumeFromState: routedState,
+    signal: abortController.signal,
   });
 
   console.log(kimichanCliHero(formatOmkVersionFooter()));
   console.log(style.purpleBold("🐾 omk parallel — DAG executor with live UI"));
   console.log(style.gray(t("parallel.agentsActivated")));
 
-  // Use alternate screen buffer so the original terminal content is restored
-  // when the parallel run finishes, preventing the HUD from appearing "killed".
-  if (process.stdout.isTTY) {
+  // Determine TTY and mode defaults
+  const isTTY = Boolean(process.stdout.isTTY);
+  const useWatch = options.noWatch
+    ? false
+    : options.watch ?? isTTY;
+  const useAlternateScreen = options.alternateScreen === true;
+  const useCompact = options.compact === true || options.view === "compact";
+  const shouldPause = isTTY && options.noPause !== true;
+
+  // Build worker labels for the UI
+  const workerLabels = buildWorkerLabels(routedState);
+
+  // Enter alternate screen only when explicitly requested
+  if (useAlternateScreen && isTTY) {
     process.stdout.write("\x1b[?1049h");
   }
 
@@ -99,13 +175,35 @@ export async function parallelCommand(
     workerCount,
     ensembleEnabled: resources.ensembleDefaultEnabled,
     refreshMs: 1500,
+    goalTitle: effectiveGoal,
+    mode: useWatch ? "watch" : "no-watch",
+    workerLabels,
+    statePath,
+    view: (options.view as ParallelViewMode | undefined) ?? (useCompact ? "compact" : "cockpit"),
   });
 
-  if (options.watch !== false) {
+  if (useWatch) {
     executor.onStateChange((state) => {
       latestState = state;
     });
-    liveRenderer.start(() => latestState);
+    if (useCompact) {
+      // Compact mode: render a single line on each state change
+      executor.onStateChange((state) => {
+        const line = renderCompactParallelFrame(state, {
+          runId,
+          approvalPolicy,
+          workerCount,
+          ensembleEnabled: resources.ensembleDefaultEnabled,
+          goalTitle: effectiveGoal,
+          mode: "watch",
+          workerLabels,
+          statePath,
+        });
+        console.log(line);
+      });
+    } else {
+      liveRenderer.start(() => latestState);
+    }
   } else {
     const previousStatuses = new Map<string, string>();
     executor.onStateChange((stateSnapshot) => logRunStateTransitions(stateSnapshot, previousStatuses));
@@ -116,19 +214,19 @@ export async function parallelCommand(
     timeout: 0,
     agentFile,
     promptPrefix: promptText,
-    mcpScope: "all",
-    skillsScope: "all",
+    mcpScope: resources.mcpScope,
+    skillsScope: resources.skillsScope,
     roleAgentFiles: true,
     env: {
       ...createOmkSessionEnv(root, runId),
       OMK_RUN_ID: runId,
       OMK_FLOW: "parallel",
-      OMK_GOAL: goal,
+      OMK_GOAL: effectiveGoal,
       OMK_WORKERS: String(workerCount),
       OMK_DAG_ROUTING: "1",
       OMK_DAG_STATE_PATH: statePath,
-      OMK_MCP_SCOPE: "all",
-      OMK_SKILLS_SCOPE: "all",
+      OMK_MCP_SCOPE: resources.mcpScope,
+      OMK_SKILLS_SCOPE: resources.skillsScope,
       OMK_APPROVAL_POLICY: approvalPolicy,
     },
   });
@@ -137,12 +235,16 @@ export async function parallelCommand(
     runId,
     workers: workerCount,
     approvalPolicy: approvalPolicy as "interactive" | "auto" | "yolo" | "block",
+    nodeTimeoutMs: 600_000,
   });
 
   liveRenderer.stop();
 
+  process.off("SIGINT", handleSignal);
+  process.off("SIGTERM", handleSignal);
+
   // Restore original terminal screen before printing results
-  if (process.stdout.isTTY) {
+  if (useAlternateScreen && isTTY) {
     process.stdout.write("\x1b[?1049l");
   }
 
@@ -151,6 +253,7 @@ export async function parallelCommand(
     console.log(status.ok("Parallel DAG run complete"));
   } else {
     console.log(status.error("Parallel DAG run failed"));
+    process.exitCode = 1;
   }
   console.log(label("State", statePath));
 
@@ -163,7 +266,7 @@ export async function parallelCommand(
   }
 
   // Pause so the user can read the result before the process exits
-  if (process.stdin.isTTY) {
+  if (shouldPause) {
     console.log(style.gray("\n  Press Enter to continue..."));
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     await new Promise<void>((resolve) => {
@@ -184,7 +287,7 @@ function normalizeWorkerCount(value: string | undefined, fallback: number): numb
 
 function normalizeApprovalPolicy(
   value: string | undefined,
-  profile: string
+  _profile: string
 ): "interactive" | "auto" | "yolo" | "block" {
   const v = value?.trim().toLowerCase();
   if (v === "interactive" || v === "auto" || v === "yolo" || v === "block") return v;
@@ -213,6 +316,27 @@ function buildPromptText(goal: string, runId: string, profile: string, workerCou
   ].join("\n");
 }
 
+function buildWorkerLabels(state: RunState): Record<string, string> {
+  const labels: Record<string, string> = {};
+  const coordinator = state.nodes.find((n) => n.id === "root-coordinator");
+  if (coordinator) {
+    labels[coordinator.id] = "planner";
+  }
+  const reviewer = state.nodes.find((n) => n.id === "review-merge" || n.role === "reviewer");
+  if (reviewer) {
+    labels[reviewer.id] = "reviewer";
+  }
+  const coders = state.nodes.filter(
+    (n) => n.role === "coder" || n.id.startsWith("worker-")
+  );
+  coders.forEach((n, index) => {
+    if (!labels[n.id]) {
+      labels[n.id] = `coder-${index + 1}`;
+    }
+  });
+  return labels;
+}
+
 function createInteractiveRunState(input: {
   runId: string;
   flow: string;
@@ -220,6 +344,8 @@ function createInteractiveRunState(input: {
   workerCount: number;
   startedAt: string;
   approvalPolicy: string;
+  goalId?: string;
+  goalSnapshot?: RunState["goalSnapshot"];
 }): RunState {
   const workerNodes = Array.from({ length: input.workerCount }, (_, index) => ({
     id: `worker-${index + 1}`,
@@ -235,6 +361,8 @@ function createInteractiveRunState(input: {
     runId: input.runId,
     startedAt: input.startedAt,
     workerCount: input.workerCount,
+    goalId: input.goalId,
+    goalSnapshot: input.goalSnapshot,
     nodes: [
       {
         id: "bootstrap",
