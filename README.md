@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./kimichan.png" alt="oh-my-kimichan" width="720" />
+<img src="./readmeasset/kimichan.png" alt="oh-my-kimichan" width="720" />
 
 <h1>oh-my-kimichan</h1>
 
@@ -149,7 +149,7 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 
 > `@oneprompt.mp4` prompt → COS landing page. 10–20 min. Kimi-native multi-agent CLI behind it.
 
-![One Prompt Demo](./oneprompt.gif)
+![One Prompt Demo](./readmeasset/oneprompt.gif)
 
 ---
 
@@ -237,18 +237,18 @@ The interactive wrapper also augments Kimi’s native `context:` status line wit
 
 #### Live Cockpit (`omk hud`)
 
-![omk hud cockpit](./readmeomkcockpit.png)
+![omk hud cockpit](./readmeasset/readmeomkcockpit.png)
 
 #### Live HUD (`omk hud`)
 
-![omk hud](./omk-hud-1.png)
+![omk hud](./readmeasset/omk-hud-1.png)
 
 #### Kimi Status Line with Usage Gauges
 
 OMK augments Kimi’s native `context:` status line with masked OAuth account + 5h/weekly quota. Set `OMK_KIMI_STATUS_GAUGES=1` for visual bar gauges.
 
-![status line gauge](./omk-statusline-gauge.png)
-![status line with reset hint](./omk-statusline-reset.png)
+![status line gauge](./readmeasset/omk-statusline-gauge.png)
+![status line with reset hint](./readmeasset/omk-statusline-reset.png)
 
 ```bash
 $ omk doctor
@@ -499,14 +499,14 @@ omk chat
 
 #### Live HUD (`omk hud`)
 
-![omk hud](./omk-hud-1.png)
+![omk hud](./readmeasset/omk-hud-1.png)
 
 #### Kimi Status Line with Usage Gauges
 
 OMK augments Kimi’s native `context:` status line with masked OAuth account + 5h/weekly quota. Set `OMK_KIMI_STATUS_GAUGES=1` for visual bar gauges.
 
-![status line gauge](./omk-statusline-gauge.png)
-![status line with reset hint](./omk-statusline-reset.png)
+![status line gauge](./readmeasset/omk-statusline-gauge.png)
+![status line with reset hint](./readmeasset/omk-statusline-reset.png)
 
 ```bash
 $ omk doctor
@@ -712,14 +712,14 @@ omk chat
 
 #### Live HUD (`omk hud`)
 
-![omk hud](./omk-hud-1.png)
+![omk hud](./readmeasset/omk-hud-1.png)
 
 #### Kimi Status Line with Usage Gauges
 
 OMK augments Kimi’s native `context:` status line with masked OAuth account + 5h/weekly quota. Set `OMK_KIMI_STATUS_GAUGES=1` for visual bar gauges.
 
-![status line gauge](./omk-statusline-gauge.png)
-![status line with reset hint](./omk-statusline-reset.png)
+![status line gauge](./readmeasset/omk-statusline-gauge.png)
+![status line with reset hint](./readmeasset/omk-statusline-reset.png)
 
 ```bash
 $ omk doctor
@@ -925,14 +925,14 @@ omk chat
 
 #### Live HUD (`omk hud`)
 
-![omk hud](./omk-hud-1.png)
+![omk hud](./readmeasset/omk-hud-1.png)
 
 #### Kimi Status Line with Usage Gauges
 
 OMK augments Kimi’s native `context:` status line with masked OAuth account + 5h/weekly quota. Set `OMK_KIMI_STATUS_GAUGES=1` for visual bar gauges.
 
-![status line gauge](./omk-statusline-gauge.png)
-![status line with reset hint](./omk-statusline-reset.png)
+![status line gauge](./readmeasset/omk-statusline-gauge.png)
+![status line with reset hint](./readmeasset/omk-statusline-reset.png)
 
 ```bash
 $ omk doctor
