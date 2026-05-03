@@ -12,7 +12,7 @@
     "dev": "tsx src/cli.ts",
     "lint": "node node_modules/eslint/bin/eslint.js --max-warnings=0 src/ && npm run secret:scan",
     "check": "tsc --noEmit",
-    "test": "npm run build && node --test --test-timeout=60000 test/*.test.mjs",
+    "test": "npm run build && node --test --test-timeout=60000 --test-concurrency=1 test/*.test.mjs",
     "secret:scan": "node scripts/secret-scan.mjs",
     "audit:package": "node scripts/package-audit.mjs",
     "prepare": "npm run build",
