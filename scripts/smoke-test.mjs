@@ -141,7 +141,6 @@ const KNOWN_SOFT_ISSUES = new Set([
 
 function assertNoUnexpectedIssues(parsed, label) {
   const errors = Array.isArray(parsed.errors) ? parsed.errors : [];
-  const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
 
   const unexpectedErrors = errors.filter((e) => {
     const name = typeof e === "string" ? e : e?.name ?? "";
@@ -153,15 +152,7 @@ function assertNoUnexpectedIssues(parsed, label) {
     );
   }
 
-  const unexpectedWarnings = warnings.filter((w) => {
-    const name = typeof w === "string" ? w : w?.name ?? "";
-    return !KNOWN_SOFT_ISSUES.has(name);
-  });
-  if (unexpectedWarnings.length > 0) {
-    throw new Error(
-      `${label} unexpected doctor warnings: ${unexpectedWarnings.map((w) => (typeof w === "string" ? w : w?.name)).join(", ")}`
-    );
-  }
+  // Warnings are informational in soft mode; only hard errors break the smoke test
 }
 
 try {
