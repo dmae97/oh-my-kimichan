@@ -221,7 +221,7 @@ async function collectTsFiles(dir: string, root: string): Promise<string[]> {
   return files;
 }
 
-async function buildSymbolIndex(root: string): Promise<SymbolIndex> {
+export async function buildSymbolIndex(root: string): Promise<SymbolIndex> {
   const srcDir = join(root, "src");
   const tsFiles = (await pathExists(srcDir)) ? await collectTsFiles(srcDir, root) : [];
   const symbols: SymbolEntry[] = [];

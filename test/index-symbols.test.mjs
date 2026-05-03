@@ -1,24 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { execSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { buildSymbolIndex } from "../dist/commands/project-index.js";
 
 const PROJECT_ROOT = process.cwd();
-const SYMBOLS_PATH = join(PROJECT_ROOT, ".omk", "index", "symbols.json");
 
 describe("omk index --symbols", () => {
-  it("generates a symbols.json with structured symbol entries", () => {
-    execSync("node dist/cli.js index --symbols", {
-      cwd: PROJECT_ROOT,
-      encoding: "utf-8",
-      stdio: "pipe",
-    });
-
-    assert.ok(existsSync(SYMBOLS_PATH), "symbols.json should be created");
-
-    const raw = readFileSync(SYMBOLS_PATH, "utf-8");
-    const index = JSON.parse(raw);
+  it("generates a symbols.json with structured symbol entries", async () => {
+    const index = await buildSymbolIndex(PROJECT_ROOT);
 
     assert.ok(Array.isArray(index.symbols), "symbols should be an array");
     assert.ok(index.symbols.length > 0, "should index at least one symbol");
@@ -36,14 +24,14 @@ describe("omk index --symbols", () => {
     const ownSymbols = index.symbols.filter((s) => s.file === "src/commands/project-index.ts");
     assert.ok(ownSymbols.length > 0, "should index src/commands/project-index.ts");
 
-    const buildSymbolIndex = ownSymbols.find((s) => s.name === "buildSymbolIndex");
-    assert.ok(buildSymbolIndex, "should find buildSymbolIndex function");
-    assert.strictEqual(buildSymbolIndex.kind, "function");
-    assert.strictEqual(buildSymbolIndex.exported, false);
+    const buildSymbolIndexSymbol = ownSymbols.find((s) => s.name === "buildSymbolIndex");
+    assert.ok(buildSymbolIndexSymbol, "should find buildSymbolIndex function");
+    assert.strictEqual(buildSymbolIndexSymbol.kind, "function");
+    assert.strictEqual(buildSymbolIndexSymbol.exported, true);
 
-    const indexCommand = ownSymbols.find((s) => s.name === "indexCommand");
-    assert.ok(indexCommand, "should find indexCommand function");
-    assert.strictEqual(indexCommand.kind, "function");
-    assert.strictEqual(indexCommand.exported, true);
+    const indexCommandSymbol = ownSymbols.find((s) => s.name === "indexCommand");
+    assert.ok(indexCommandSymbol, "should find indexCommand function");
+    assert.strictEqual(indexCommandSymbol.kind, "function");
+    assert.strictEqual(indexCommandSymbol.exported, true);
   });
 });
