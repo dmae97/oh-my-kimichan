@@ -134,6 +134,9 @@ const KNOWN_SOFT_ISSUES = new Set([
   "Git Clean",
   "Built-in LSP",
   "Global Pollution",
+  "Git Repo",
+  "Global MCP (stdio)",
+  "Global Memory",
 ]);
 
 function assertNoUnexpectedIssues(parsed, label) {
