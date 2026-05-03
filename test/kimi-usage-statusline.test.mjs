@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { getKimiUsage, formatKimiUsageInline } from "../dist/util/kimi-usage.js";
-import { enhanceKimiContextStatusLine, KimiStatusLineEnhancer } from "../dist/util/kimi-statusline.js";
+import { getKimiUsage, formatKimiUsageInline } from "../dist/kimi/usage.js";
+import { enhanceKimiContextStatusLine, KimiStatusLineEnhancer } from "../dist/kimi/statusline.js";
 
 function fakeJwt(payload) {
   const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
@@ -56,7 +56,7 @@ test("Kimi context status line is augmented once", () => {
   const once = enhanceKimiContextStatusLine(input, "acct:oauth:abc | 5h:30% used | wk:20% used", false);
   const twice = enhanceKimiContextStatusLine(once, "acct:oauth:abc | 5h:30% used | wk:20% used", false);
 
-  assert.equal(once, "omk:acct:oauth:abc | 5h:30% used | wk:20% used | context: 35.6% (93.2k/262.1k) | in:93.2k out:1.8k");
+  assert.equal(once, "context:acct:oauth:abc | 5h:30% used | wk:20% used | context: 35.6% (93.2k/262.1k) | in:93.2k out:1.8k");
   assert.equal(twice, once);
 });
 

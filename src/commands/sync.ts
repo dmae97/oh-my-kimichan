@@ -27,7 +27,7 @@ export async function syncCommand(options?: { dryRun?: boolean; diff?: boolean; 
   // Create empty .kimi/mcp.json template if missing (space for user-added Kimi-specific MCPs)
   const kimiMcpPath = join(root, ".kimi", "mcp.json");
   if (!(await pathExists(kimiMcpPath))) {
-    const content = JSON.stringify({ mcpServers: {} }, null, 2);
+    const content = JSON.stringify({ _comment: "SearchWeb and FetchURL are built-in Kimi tools.", mcpServers: {} }, null, 2) + "\n";
     if (options?.dryRun) {
       console.log(`local | create | ${relative(root, kimiMcpPath)}`);
       manifest.push({

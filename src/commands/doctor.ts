@@ -2,11 +2,11 @@ import { join } from "path";
 import { homedir } from "os";
 import { execSync } from "child_process";
 import { checkCommand, getKimiVersion, runShell } from "../util/shell.js";
-import { getKimiCapabilities } from "../util/kimi-capability.js";
+import { getKimiCapabilities } from "../kimi/capability.js";
 import { pathExists, getKimiConfigPath, readTextFile, getProjectRoot } from "../util/fs.js";
 import { isGitAvailable, getCurrentBranch, getGitStatus } from "../util/git.js";
 import { style, status, header, separator } from "../util/theme.js";
-import { getGlobalMemoryConfigPath, isGraphMemoryBackend, loadMemorySettings, usesExternalNeo4jBackend, usesLocalGraphBackend } from "../memory/memory-config.js";
+import { getGlobalMemoryConfigPath, isGraphMemoryBackend, loadMemorySettings, usesExternalNeo4jBackend, usesLocalGraphBackend, usesKuzuBackend } from "../memory/memory-config.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { t } from "../util/i18n.js";
 import { formatBytes } from "../util/output-buffer.js";
@@ -36,6 +36,28 @@ interface CheckResult {
 interface CheckCategory {
   title: string;
   checks: () => Promise<CheckResult[]>;
+}
+
+const SECRET_KEY_SUBSTRINGS = ["apikey", "token", "password", "secret", "authorization", "bearer", "key"];
+
+function isSecretKey(key: string): boolean {
+  const lk = key.toLowerCase();
+  return SECRET_KEY_SUBSTRINGS.some((sk) => lk === sk || lk.endsWith(sk));
+}
+
+function redactSecrets(obj: unknown): unknown {
+  if (typeof obj === "string") return obj;
+  if (typeof obj !== "object" || obj === null) return obj;
+  if (Array.isArray(obj)) return obj.map(redactSecrets);
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value === "string" && isSecretKey(key)) {
+      result[key] = "***";
+    } else {
+      result[key] = redactSecrets(value);
+    }
+  }
+  return result;
 }
 
 export async function doctorCommand(options: { json?: boolean; soft?: boolean } = {}): Promise<void> {
@@ -166,6 +188,42 @@ export async function doctorCommand(options: { json?: boolean; soft?: boolean } 
     console.log(status.warn(t("doctor.warnings", warns)));
   } else {
     console.log(status.ok(t("doctor.allPassed")));
+  }
+
+  // ── Interactive update prompt for OMK Version ──
+  const omkVersionResult = allResults.find((r) => r.name === "OMK Version");
+  if (omkVersionResult?.status === "warn" && process.stdin.isTTY && process.stdout.isTTY && !options.json) {
+    try {
+      const { select } = await import("@inquirer/prompts");
+      const answer = await select(
+        {
+          message: `A new version of oh-my-kimichan is available. Update now?`,
+          choices: [
+            { name: "YES — run npm i -g oh-my-kimichan", value: "yes" },
+            { name: "NO — skip this update", value: "no" },
+          ],
+        },
+        { signal: AbortSignal.timeout(30_000) }
+      );
+      if (answer === "yes") {
+        console.log(style.gray("Running update…"));
+        const updateResult = await runShell("npm", ["i", "-g", "oh-my-kimichan"], { timeout: 120_000 });
+        if (updateResult.failed) {
+          console.log(status.error(`Update failed: ${updateResult.stderr.trim() || updateResult.stdout.trim()}`));
+          process.exit(1);
+        } else {
+          console.log(status.ok("Update completed successfully. Restart your terminal to use the new version."));
+        }
+      } else {
+        console.log(style.gray("Update skipped."));
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === "ExitPromptError") {
+        console.log(style.gray("Update prompt cancelled."));
+        process.exit(0);
+      }
+      // Non-TTY or timeout — silently skip
+    }
   }
 }
 
@@ -434,14 +492,15 @@ async function kimiChecks(): Promise<CheckResult[]> {
 async function projectChecks(root: string): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
-  const agentsMdExists = await pathExists(join(root, "AGENTS.md"));
+  const [agentsMdExists, kimiAgentsMdExists] = await Promise.all([
+    pathExists(join(root, "AGENTS.md")),
+    pathExists(join(root, ".kimi", "AGENTS.md")),
+  ]);
   results.push({
     name: "AGENTS.md",
     status: agentsMdExists ? "ok" : "warn",
     message: agentsMdExists ? t("doctor.agentsMdExists") : t("doctor.agentsMdMissing"),
   });
-
-  const kimiAgentsMdExists = await pathExists(join(root, ".kimi", "AGENTS.md"));
   results.push({
     name: ".kimi/AGENTS.md",
     status: kimiAgentsMdExists ? "ok" : "warn",
@@ -483,8 +542,6 @@ async function omkChecks(root: string): Promise<CheckResult[]> {
     message: rootYamlExists ? t("doctor.rootYamlExists") : t("doctor.rootYamlMissing"),
   });
 
-  let okabeAgentCount = 0;
-  let totalAgentCount = 0;
   const agentYamlPaths = [
     join(omkDir, "agents", "root.yaml"),
     join(omkDir, "agents", "roles", "architect.yaml"),
@@ -494,12 +551,16 @@ async function omkChecks(root: string): Promise<CheckResult[]> {
     join(omkDir, "agents", "roles", "qa.yaml"),
     join(omkDir, "agents", "roles", "reviewer.yaml"),
   ];
-  for (const agentPath of agentYamlPaths) {
-    if (!(await pathExists(agentPath))) continue;
-    totalAgentCount += 1;
-    const content = await readTextFile(agentPath, "");
-    if (/^\s*extend:\s*(?:\.\.\/|\.)?\/?okabe\.yaml\b/m.test(content)) okabeAgentCount += 1;
-  }
+  const agentChecks = await Promise.all(
+    agentYamlPaths.map(async (agentPath) => {
+      if (!(await pathExists(agentPath))) return { exists: false, extendsOkabe: false };
+      const content = await readTextFile(agentPath, "");
+      const extendsOkabe = /^\s*extend:\s*(?:\.\.\/|\.)?\/?okabe\.yaml\b/m.test(content);
+      return { exists: true, extendsOkabe };
+    })
+  );
+  const totalAgentCount = agentChecks.filter((c) => c.exists).length;
+  const okabeAgentCount = agentChecks.filter((c) => c.extendsOkabe).length;
   const okabeBase = await readTextFile(join(omkDir, "agents", "okabe.yaml"), "");
   const okabeBaseHasDMail = okabeBase.includes("kimi_cli.tools.dmail:SendDMail");
   results.push({
@@ -556,37 +617,37 @@ async function omkChecks(root: string): Promise<CheckResult[]> {
 async function mcpSkillsChecks(root: string): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
-  const omkMcpExists = await pathExists(join(root, ".omk", "mcp.json"));
+  const kimiSkillsDir = join(root, ".kimi", "skills");
+  const agentsSkillsDir = join(root, ".agents", "skills");
+  const [omkMcpExists, kimiSkillsCount, agentsSkillsCount] = await Promise.all([
+    pathExists(join(root, ".omk", "mcp.json")),
+    (async () => {
+      if (!(await pathExists(kimiSkillsDir))) return 0;
+      try {
+        const fs = await import("fs/promises");
+        const entries = await fs.readdir(kimiSkillsDir, { withFileTypes: true });
+        return entries.filter((e) => e.isDirectory()).length;
+      } catch { return 0; }
+    })(),
+    (async () => {
+      if (!(await pathExists(agentsSkillsDir))) return 0;
+      try {
+        const fs = await import("fs/promises");
+        const entries = await fs.readdir(agentsSkillsDir, { withFileTypes: true });
+        return entries.filter((e) => e.isDirectory()).length;
+      } catch { return 0; }
+    })(),
+  ]);
   results.push({
     name: "OMK MCP",
     status: omkMcpExists ? "ok" : "info",
     message: omkMcpExists ? t("doctor.mcpExists") : t("doctor.mcpMissing"),
   });
-
-  const kimiSkillsDir = join(root, ".kimi", "skills");
-  let kimiSkillsCount = 0;
-  if (await pathExists(kimiSkillsDir)) {
-    try {
-      const fs = await import("fs/promises");
-      const entries = await fs.readdir(kimiSkillsDir, { withFileTypes: true });
-      kimiSkillsCount = entries.filter((e) => e.isDirectory()).length;
-    } catch { /* ignore */ }
-  }
   results.push({
     name: ".kimi/skills",
     status: kimiSkillsCount > 0 ? "ok" : "warn",
     message: kimiSkillsCount > 0 ? t("doctor.skillsExist", kimiSkillsCount) : t("doctor.skillsMissing"),
   });
-
-  const agentsSkillsDir = join(root, ".agents", "skills");
-  let agentsSkillsCount = 0;
-  if (await pathExists(agentsSkillsDir)) {
-    try {
-      const fs = await import("fs/promises");
-      const entries = await fs.readdir(agentsSkillsDir, { withFileTypes: true });
-      agentsSkillsCount = entries.filter((e) => e.isDirectory()).length;
-    } catch { /* ignore */ }
-  }
   results.push({
     name: ".agents/skills",
     status: agentsSkillsCount > 0 ? "ok" : "warn",
@@ -594,7 +655,13 @@ async function mcpSkillsChecks(root: string): Promise<CheckResult[]> {
   });
 
   const lspConfigPath = join(root, ".omk", "lsp.json");
-  const lspConfigExists = await pathExists(lspConfigPath);
+  const tsLspBinary = resolveBundledLspBinary("typescript");
+  const [lspConfigExists, tsLspAvailable] = await Promise.all([
+    pathExists(lspConfigPath),
+    tsLspBinary.includes("/") || tsLspBinary.includes("\\")
+      ? pathExists(tsLspBinary)
+      : checkCommand(tsLspBinary),
+  ]);
   let lspConfigValid = false;
   if (lspConfigExists) {
     try {
@@ -605,10 +672,6 @@ async function mcpSkillsChecks(root: string): Promise<CheckResult[]> {
       lspConfigValid = parsed.enabled === true && typeof parsed.servers?.typescript === "object";
     } catch { /* ignore */ }
   }
-  const tsLspBinary = resolveBundledLspBinary("typescript");
-  const tsLspAvailable = tsLspBinary.includes("/") || tsLspBinary.includes("\\")
-    ? await pathExists(tsLspBinary)
-    : await checkCommand(tsLspBinary);
   results.push({
     name: "Built-in LSP",
     status: lspConfigValid && tsLspAvailable ? "ok" : "warn",
@@ -620,11 +683,24 @@ async function mcpSkillsChecks(root: string): Promise<CheckResult[]> {
   const globalMcpPath = join(homedir(), ".kimi", "mcp.json");
   const globalMcpExists = await pathExists(globalMcpPath);
   let globalMcpCount = 0;
+  const stdioMcpServers: string[] = [];
+  const npxMcpServers: string[] = [];
   if (globalMcpExists) {
     try {
       const content = await readTextFile(globalMcpPath, "{}");
-      const parsed = JSON.parse(content);
-      globalMcpCount = Object.keys(parsed.mcpServers ?? {}).length;
+      const parsed = redactSecrets(JSON.parse(content)) as {
+        mcpServers?: Record<string, { command?: string; type?: string }>;
+      };
+      const servers: Record<string, { command?: string; type?: string }> = parsed.mcpServers ?? {};
+      globalMcpCount = Object.keys(servers).length;
+      for (const [name, cfg] of Object.entries(servers)) {
+        if (cfg.type === "stdio" || !cfg.type) {
+          stdioMcpServers.push(name);
+          if (cfg.command?.includes("npx") || cfg.command?.includes("npm")) {
+            npxMcpServers.push(name);
+          }
+        }
+      }
     } catch { /* ignore */ }
   }
   results.push({
@@ -632,6 +708,17 @@ async function mcpSkillsChecks(root: string): Promise<CheckResult[]> {
     status: globalMcpCount > 0 ? "ok" : "warn",
     message: globalMcpCount > 0 ? t("doctor.globalMcpSynced", globalMcpCount) : t("doctor.globalMcpMissing"),
   });
+  if (stdioMcpServers.length > 0) {
+    results.push({
+      name: "Global MCP (stdio)",
+      status: npxMcpServers.length > 0 ? "warn" : "info",
+      message:
+        `${stdioMcpServers.join(", ")} — ` +
+        (npxMcpServers.length > 0
+          ? `npx-based servers (${npxMcpServers.join(", ")}) may fail to connect and crash Kimi CLI sessions. Remove or fix them in ~/.kimi/mcp.json if unused.`
+          : "stdio servers detected. Ensure they are available."),
+    });
+  }
 
   const globalSkillsDir = join(homedir(), ".kimi", "skills");
   const globalSkillsExists = await pathExists(globalSkillsDir);
@@ -673,9 +760,11 @@ async function memoryChecks(): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
   const globalMemoryConfigPath = getGlobalMemoryConfigPath();
-  const [globalMemoryConfigExists, memorySettings] = await Promise.all([
+  const globalKimiDir = join(homedir(), ".kimi");
+  const [globalMemoryConfigExists, memorySettings, globalKimiDirExists] = await Promise.all([
     pathExists(globalMemoryConfigPath),
     loadMemorySettings(process.cwd()),
+    pathExists(globalKimiDir),
   ]);
 
   results.push({
@@ -694,15 +783,16 @@ async function memoryChecks(): Promise<CheckResult[]> {
     message: isGraphMemoryBackend(memorySettings.backend)
       ? usesLocalGraphBackend(memorySettings.backend)
         ? `backend=local_graph, ontology=${memorySettings.localGraph.ontology}, state=${memorySettings.localGraph.path}`
-        : memorySettings.neo4j.configured
-          ? `backend=${memorySettings.backend}, database=${memorySettings.neo4j.database}, project=${memorySettings.project.key}`
-          : t("doctor.memoryNeo4jBackend", memorySettings.backend, memorySettings.neo4j.missing.join(", "))
+        : usesKuzuBackend(memorySettings.backend)
+          ? `backend=kuzu, path=${join(memorySettings.project.root, ".omk", "memory", "kuzu.db")}, project=${memorySettings.project.key}`
+          : memorySettings.neo4j.configured
+            ? `backend=${memorySettings.backend}, database=${memorySettings.neo4j.database}, project=${memorySettings.project.key}`
+            : t("doctor.memoryNeo4jBackend", memorySettings.backend, memorySettings.neo4j.missing.join(", "))
       : t("doctor.memoryFileBackend"),
   });
 
-  const globalKimiDir = join(homedir(), ".kimi");
   let globalPollution = false;
-  if (await pathExists(globalKimiDir)) {
+  if (globalKimiDirExists) {
     try {
       const fs = await import("fs/promises");
       const entries = await fs.readdir(globalKimiDir, { withFileTypes: true });

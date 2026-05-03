@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { style, kimichanCliHero } from "./util/theme.js";
 import { formatOmkVersionFooter, getOmkVersionSync } from "./util/version.js";
 import { t, initI18n } from "./util/i18n.js";
+import { orchestratePrompt } from "./orchestration/orchestrate-prompt.js";
 
 const OMK_VERSION = getOmkVersionSync();
 const OMK_VERSION_FOOTER = formatOmkVersionFooter(OMK_VERSION);
@@ -32,6 +33,8 @@ function buildCustomHelp(): string {
     "\n    " + style.mintBold("omk skill") + "     " + style.gray(t("cli.skillDesc")) +
     "\n    " + style.mintBold("omk summary") + "   " + style.gray(t("cli.summaryDesc")) +
     "\n    " + style.mintBold("omk star") + "      " + style.gray(t("cmd.starDesc")) +
+    "\n    " + style.mintBold("omk runs") + "     " + style.gray(t("cmd.runsDesc")) +
+    "\n    " + style.mintBold("omk history") + "   " + style.gray(t("cmd.historyDesc")) +
     "",
     "  " + style.purpleBold(t("cli.quickStart")) + style.gray(" ────────────────────────────────────────────────────────"),
     "",
@@ -52,6 +55,7 @@ program
   .usage("[options] [command]")
   .version(OMK_VERSION)
   .option("-r, --run-id <id>", t("cli.runIdOption"))
+  .option("--workers <n>", t("cmd.parallelWorkersOption"), "auto")
   .option("--sudo", t("cli.sudoOption"))
   .addHelpText("before", buildCustomHelp)
   .addHelpText("afterAll", `\n  ${style.gray(OMK_VERSION_FOOTER)}\n`)
@@ -138,13 +142,32 @@ program
 
     switch (answer) {
       case "1": {
-        // Run omk chat subcommand (keeps omk path, not kimi CLI directly)
-        const { spawnSync } = await import("child_process");
-        const chatArgs = [process.argv[1]!, "chat", "--layout", "auto", "--brand", "kimichan"];
-        if (globalOpts.runId) chatArgs.push("--run-id", globalOpts.runId);
-        const result = spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
-        if (result.status !== 0) {
-          process.exit(result.status ?? 1);
+        const { input } = await import("@inquirer/prompts");
+        let rawPrompt: string;
+        try {
+          rawPrompt = await input({ message: "Prompt:" });
+        } catch (err) {
+          if (err instanceof Error && err.name === "ExitPromptError") {
+            console.log(style.purple("🐾 See you, onii-chan~ 💜"));
+            process.exit(0);
+          }
+          throw err;
+        }
+        try {
+          await orchestratePrompt(rawPrompt, {
+            sourceCommand: "default",
+            runId: globalOpts.runId,
+            workers: globalOpts.workers,
+          });
+        } catch {
+          const { spawnSync } = await import("child_process");
+          const chatArgs = [process.argv[1]!, "chat", "--layout", "auto", "--brand", "kimichan"];
+          if (globalOpts.runId) chatArgs.push("--run-id", globalOpts.runId);
+          if (globalOpts.workers) chatArgs.push("--workers", globalOpts.workers);
+          const result = spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
+          if (result.status !== 0) {
+            process.exit(result.status ?? 1);
+          }
         }
         break;
       }
@@ -184,6 +207,7 @@ program
         }
         const parallelArgs = [process.argv[1]!, "parallel", goal];
         if (globalOpts.runId) parallelArgs.push("--run-id", globalOpts.runId);
+        if (globalOpts.workers) parallelArgs.push("--workers", globalOpts.workers);
         const result = spawnSync(process.execPath, parallelArgs, { stdio: "inherit" });
         if (result.status !== 0) {
           process.exit(result.status ?? 1);
@@ -222,12 +246,32 @@ program
       }
       default: {
         console.log(style.orange(t("cli.unknownChoice", answer)));
-        const { spawnSync } = await import("child_process");
-        const chatArgs = [process.argv[1]!, "chat"];
-        if (globalOpts.runId) chatArgs.push("--run-id", globalOpts.runId);
-        const result = spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
-        if (result.status !== 0) {
-          process.exit(result.status ?? 1);
+        const { input } = await import("@inquirer/prompts");
+        let rawPrompt: string;
+        try {
+          rawPrompt = await input({ message: "Prompt:" });
+        } catch (err) {
+          if (err instanceof Error && err.name === "ExitPromptError") {
+            console.log(style.purple("🐾 See you, onii-chan~ 💜"));
+            process.exit(0);
+          }
+          throw err;
+        }
+        try {
+          await orchestratePrompt(rawPrompt, {
+            sourceCommand: "default",
+            runId: globalOpts.runId,
+            workers: globalOpts.workers,
+          });
+        } catch {
+          const { spawnSync } = await import("child_process");
+          const chatArgs = [process.argv[1]!, "chat"];
+          if (globalOpts.runId) chatArgs.push("--run-id", globalOpts.runId);
+          if (globalOpts.workers) chatArgs.push("--workers", globalOpts.workers);
+          const result = spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
+          if (result.status !== 0) {
+            process.exit(result.status ?? 1);
+          }
         }
       }
     }
@@ -262,6 +306,68 @@ program
   });
 
 program
+  .command("runs")
+  .description(t("cmd.runsDesc"))
+  .option("-n, --limit <n>", t("cmd.runsLimitOption"), "20")
+  .option("-w, --watch", t("cmd.runsWatchOption"))
+  .option("--refresh <ms>", t("cmd.runsRefreshOption"), "3000")
+  .option("--status <status>", t("cmd.runsStatusOption"))
+  .option("--search <keyword>", t("cmd.runsSearchOption"))
+  .option("--since <iso-date>", t("cmd.runsSinceOption"))
+  .option("--until <iso-date>", t("cmd.runsUntilOption"))
+  .option("--stats", "Show aggregate statistics instead of list")
+  .option("--insights", "Show parallel-computed insights (longest, most complex, failure hotspots, activity)")
+  .option("--export <path>", t("cmd.runsExportOption"))
+  .option("--json", "Output as JSON")
+  .action(async (options) => {
+    const { runsCommand } = await import("./commands/runs.js");
+    await runsCommand({
+      limit: Number.parseInt(options.limit, 10),
+      watch: Boolean(options.watch),
+      refreshMs: Number.parseInt(options.refresh, 10),
+      json: Boolean(options.json),
+      statusFilter: options.status,
+      searchKeyword: options.search,
+      sinceMs: options.since ? Date.parse(options.since) : undefined,
+      untilMs: options.until ? Date.parse(options.until) : undefined,
+      stats: Boolean(options.stats),
+      exportPath: options.export,
+      insights: Boolean(options.insights),
+    });
+  });
+
+program
+  .command("history")
+  .description(t("cmd.historyDesc"))
+  .option("-n, --limit <n>", t("cmd.runsLimitOption"), "20")
+  .option("-w, --watch", t("cmd.runsWatchOption"))
+  .option("--refresh <ms>", t("cmd.runsRefreshOption"), "3000")
+  .option("--status <status>", t("cmd.runsStatusOption"))
+  .option("--search <keyword>", t("cmd.runsSearchOption"))
+  .option("--since <iso-date>", t("cmd.runsSinceOption"))
+  .option("--until <iso-date>", t("cmd.runsUntilOption"))
+  .option("--stats", "Show aggregate statistics instead of list")
+  .option("--insights", "Show parallel-computed insights (longest, most complex, failure hotspots, activity)")
+  .option("--export <path>", t("cmd.runsExportOption"))
+  .option("--json", "Output as JSON")
+  .action(async (options) => {
+    const { runsCommand } = await import("./commands/runs.js");
+    await runsCommand({
+      limit: Number.parseInt(options.limit, 10),
+      watch: Boolean(options.watch),
+      refreshMs: Number.parseInt(options.refresh, 10),
+      json: Boolean(options.json),
+      statusFilter: options.status,
+      searchKeyword: options.search,
+      sinceMs: options.since ? Date.parse(options.since) : undefined,
+      untilMs: options.until ? Date.parse(options.until) : undefined,
+      stats: Boolean(options.stats),
+      exportPath: options.export,
+      insights: Boolean(options.insights),
+    });
+  });
+
+program
   .command("init")
   .description(t("cmd.initDesc"))
   .option("--profile <profile>", t("cmd.initProfileOption"), "fullstack")
@@ -286,7 +392,7 @@ program
   .option("--changed", t("cmd.indexChangedOption"))
   .option("--symbols", t("cmd.indexSymbolsOption"))
   .action(async (options) => {
-    const { indexCommand } = await import("./commands/index.js");
+    const { indexCommand } = await import("./commands/project-index.js");
     await indexCommand({ ...options, symbols: Boolean(options.symbols) });
   });
 
@@ -294,7 +400,7 @@ program
   .command("index-show")
   .description(t("cmd.indexShowDesc"))
   .action(async () => {
-    const { indexShowCommand } = await import("./commands/index.js");
+    const { indexShowCommand } = await import("./commands/project-index.js");
     await indexShowCommand();
   });
 
@@ -828,6 +934,15 @@ goal
     const { goalBlockCommand } = await import("./commands/goal.js");
     await goalBlockCommand(goalId, options);
   });
+goal
+  .command("continue [goal-id]")
+  .description("Continue the latest active goal (or specified goal-id)")
+  .option("--workers <n>", "Worker count", "auto")
+  .option("--run-id <id>", "Run ID")
+  .action(async (goalId, options) => {
+    const { goalContinueCommand } = await import("./commands/goal.js");
+    await goalContinueCommand(goalId, options);
+  });
 
 const mcp = program.command("mcp").description(t("cli.mcpDesc"));
 mcp
@@ -850,6 +965,37 @@ mcp
   .action(async (server) => {
     const { mcpTestCommand } = await import("./commands/mcp.js");
     await mcpTestCommand(server);
+  });
+mcp
+  .command("remove <server>")
+  .description("Remove an MCP server from project-local .kimi/mcp.json or .omk/mcp.json")
+  .action(async (server) => {
+    const { mcpRemoveCommand } = await import("./commands/mcp.js");
+    await mcpRemoveCommand(server);
+  });
+mcp
+  .command("add <server>")
+  .description("Copy an MCP server from global ~/.kimi/mcp.json into project .omk/mcp.json")
+  .action(async (server) => {
+    const { mcpAddCommand } = await import("./commands/mcp.js");
+    await mcpAddCommand(server);
+  });
+mcp
+  .command("install <name> [args...]")
+  .description("Install a new MCP server into project .omk/mcp.json")
+  .option("-e, --env <pair>", "Environment variable (KEY=VALUE)", (val: string, prev: string[]) => [...prev, val], [])
+  .action(async (name, args, options) => {
+    const { mcpInstallCommand } = await import("./commands/mcp.js");
+    await mcpInstallCommand(name, args[0] ?? name, args.slice(1), { env: options.env });
+  });
+mcp
+  .command("sync-global")
+  .description("Import global Kimi MCP servers into project-local config")
+  .option("--overwrite", "Overwrite existing local definitions with global ones")
+  .option("--omk", "Write to .omk/mcp.json instead of .kimi/mcp.json")
+  .action(async (options) => {
+    const { mcpSyncGlobalCommand } = await import("./commands/mcp.js");
+    await mcpSyncGlobalCommand(options);
   });
 
 const dag = program.command("dag").description(t("cli.dagDesc"));

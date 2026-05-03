@@ -8,7 +8,10 @@ import { normalizeGoal, updateGoalStatus } from "../goal/intake.js";
 import { checkGoalEvidence } from "../goal/evidence.js";
 import { scoreGoal } from "../goal/scoring.js";
 import { createStatePersister } from "../orchestration/state-persister.js";
+import { generateNextPrompt } from "../goal/control-loop.js";
+import { orchestratePrompt } from "../orchestration/orchestrate-prompt.js";
 import type { GoalSpec, GoalEvidence } from "../contracts/goal.js";
+import type { RunState } from "../contracts/orchestration.js";
 
 function getGoalBasePath(): string {
   return join(getProjectRoot(), ".omk", "goals");
@@ -208,6 +211,7 @@ export async function goalRunCommand(
   options: { workers?: string; runId?: string }
 ): Promise<void> {
   printAlphaWarning();
+  const root = getProjectRoot();
   const persister = createPersister();
   const spec = await persister.load(goalId);
 
@@ -224,15 +228,28 @@ export async function goalRunCommand(
     detail: { workers: options.workers },
   });
 
-  // Delegate to parallel command (default flow for goals)
-  const { parallelCommand } = await import("./parallel.js");
-  const parallelOpts: import("./parallel.js").ParallelCommandOptions = {
-    workers: options.workers,
+  // Load evidence and latest run state for continue engine
+  const evidence = await persister.loadEvidence(goalId);
+  let runState: RunState | undefined;
+  if (updated.runIds.length > 0) {
+    const latestRunId = updated.runIds[updated.runIds.length - 1];
+    const statePersister = createStatePersister(join(root, ".omk", "runs"));
+    runState = (await statePersister.load(latestRunId)) ?? undefined;
+  }
+
+  // Generate enriched next-prompt
+  const nextResult = await generateNextPrompt(updated, evidence, runState, undefined, root);
+  const mirrorDir = join(getGoalBasePath(), goalId);
+  await mkdir(mirrorDir, { recursive: true });
+  await writeFile(join(mirrorDir, "next-prompt.md"), nextResult.prompt);
+
+  // Delegate to orchestration with enriched prompt
+  await orchestratePrompt(nextResult.prompt, {
+    sourceCommand: "goal-run",
     runId: options.runId,
-    watch: true,
+    workers: options.workers,
     goalId,
-  };
-  await parallelCommand(updated.objective, parallelOpts);
+  });
 }
 
 export async function goalVerifyCommand(goalId: string, options: { json?: boolean }): Promise<void> {
@@ -367,4 +384,82 @@ export async function goalBlockCommand(goalId: string, options: { reason: string
   console.log(header("Goal Blocked"));
   console.log(label("ID", updated.goalId));
   console.log(label("Reason", options.reason));
+}
+
+export async function goalContinueCommand(
+  goalId: string | undefined,
+  options: { workers?: string; runId?: string }
+): Promise<void> {
+  printAlphaWarning();
+  const root = getProjectRoot();
+  const persister = createPersister();
+
+  let spec: GoalSpec | null;
+  if (goalId) {
+    spec = await persister.load(goalId);
+  } else {
+    spec = await persister.loadLatestActive();
+  }
+
+  if (!spec) {
+    const msg = goalId ? `Goal not found: ${goalId}` : "No active goal found.";
+    console.error(status.error(msg));
+    process.exit(1);
+  }
+
+  const effectiveGoalId = spec.goalId;
+
+  // Load evidence and latest run state
+  const evidence = await persister.loadEvidence(effectiveGoalId);
+  let runState: RunState | undefined;
+  let effectiveRunId = options.runId;
+  if (!effectiveRunId && spec.runIds.length > 0) {
+    effectiveRunId = spec.runIds[spec.runIds.length - 1];
+  }
+  if (effectiveRunId) {
+    const statePersister = createStatePersister(join(root, ".omk", "runs"));
+    runState = (await statePersister.load(effectiveRunId)) ?? undefined;
+  }
+
+  // Generate enriched next-prompt via continue engine
+  const nextResult = await generateNextPrompt(spec, evidence, runState, undefined, root);
+
+  // Write next-prompt.md to goal directory
+  const goalDir = join(getGoalBasePath(), effectiveGoalId);
+  await mkdir(goalDir, { recursive: true });
+  const nextPromptPath = join(goalDir, "next-prompt.md");
+  await writeFile(nextPromptPath, nextResult.prompt);
+
+  // Write plan.md to run directory if runId is available
+  if (effectiveRunId) {
+    const runDir = join(root, ".omk", "runs", effectiveRunId);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(runDir, "plan.md"), nextResult.prompt);
+  }
+
+  // Print summary
+  console.log(header("Goal Continue"));
+  console.log(label("ID", effectiveGoalId));
+  console.log(label("Status", spec.status));
+  console.log(label("Missing criteria", String(nextResult.missingCriteria.length)));
+  console.log(label("Next action", `${nextResult.suggestion.type}: ${nextResult.suggestion.description}`));
+  console.log(label("Next prompt", nextPromptPath));
+  console.log("");
+
+  // Update status to running
+  const updated = updateGoalStatus(spec, "running");
+  await persister.save(updated);
+  await persister.appendHistory(effectiveGoalId, {
+    at: new Date().toISOString(),
+    action: "continue",
+    detail: { runId: effectiveRunId, workers: options.workers },
+  });
+
+  // Delegate to orchestration with generated prompt as goal text
+  await orchestratePrompt(nextResult.prompt, {
+    sourceCommand: "goal-continue",
+    runId: effectiveRunId,
+    workers: options.workers,
+    goalId: effectiveGoalId,
+  });
 }

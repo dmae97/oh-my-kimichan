@@ -34,6 +34,11 @@ export class LiveHudRenderer implements HudRenderer {
   }
 
   render(state: RunState | null, metrics: MetricSnapshot): void {
+    if (this.renderSeq >= 10000) {
+      this.stop();
+      console.warn("[LiveHudRenderer] max render iterations exceeded (10000); stopping to prevent runaway");
+      return;
+    }
     const seq = ++this.renderSeq;
     void renderHudDashboard({ runId: state?.runId }).then((frame) => {
       if (seq !== this.renderSeq) return;
@@ -44,6 +49,11 @@ export class LiveHudRenderer implements HudRenderer {
   }
 
   private async renderFrame(): Promise<void> {
+    if (this.renderSeq >= 10000) {
+      this.stop();
+      console.warn("[LiveHudRenderer] max render iterations exceeded (10000); stopping to prevent runaway");
+      return;
+    }
     const seq = ++this.renderSeq;
     process.stdout.write("\x1b[2J\x1b[H");
     const frame = await renderHudDashboard({ runId: this.runId, footerRefreshMs: this.refreshMs });

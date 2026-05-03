@@ -1,10 +1,15 @@
-import type { RunState } from "../contracts/orchestration.js";
+import { join } from "path";
+import type { RunState, NextAction } from "../contracts/orchestration.js";
 import type { GoalSpec, GoalEvidence, MissingCriterion, NextActionSuggestion } from "../contracts/goal.js";
 import { scoreGoal } from "./scoring.js";
 import { checkGoalEvidence } from "./evidence.js";
 import { getProjectRoot } from "../util/fs.js";
+import { MemoryStore } from "../memory/memory-store.js";
+import { evaluateEnsembleDecision } from "../orchestration/ensemble-decision.js";
+import { evaluateMissingCriteria, suggestNextAction } from "./eval-criteria.js";
+import { saveEnsembleDecision } from "./ensemble-memory.js";
 
-export type NextAction = "continue" | "replan" | "block" | "handoff" | "close";
+
 
 export interface GoalProgress {
   status: GoalSpec["status"];
@@ -38,82 +43,272 @@ export async function evaluateGoalProgress(
   };
 }
 
+export interface EnsembleGoalProgress extends GoalProgress {
+  ensemble: ReturnType<typeof evaluateEnsembleDecision>;
+}
+
+export function evaluateLoopGuard(runState: RunState): { shouldStop: boolean; reason?: string } {
+  const { iterationCount, maxIterations } = runState;
+  if (
+    typeof iterationCount === "number" &&
+    typeof maxIterations === "number" &&
+    maxIterations > 0 &&
+    iterationCount > 0 &&
+    iterationCount >= maxIterations
+  ) {
+    return { shouldStop: true, reason: "max-iterations-reached" };
+  }
+  return { shouldStop: false };
+}
+
+/**
+ * Evaluate goal progress using an ensemble of decision candidates.
+ * Returns the consensus next action without requiring human STOP/CONTINUE input.
+ */
+export async function evaluateGoalProgressEnsemble(
+  goal: GoalSpec,
+  runState: RunState,
+  iterationContext?: { iterationCount: number; maxIterations: number }
+): Promise<EnsembleGoalProgress> {
+  const root = getProjectRoot();
+  const evidence = await checkGoalEvidence(goal, { root, runState });
+  const score = scoreGoal(goal, evidence);
+
+  // Loop guard check
+  const effectiveState: RunState = iterationContext
+    ? { ...runState, iterationCount: iterationContext.iterationCount, maxIterations: iterationContext.maxIterations }
+    : runState;
+  const guard = evaluateLoopGuard(effectiveState);
+  if (guard.shouldStop) {
+    const forcedNextAction: NextAction = score.overall === "fail" ? "block" : "handoff";
+    console.warn(`[goal-control-loop] Loop guard triggered: ${guard.reason}. Forcing nextAction="${forcedNextAction}".`);
+    const ensemble = evaluateEnsembleDecision(goal, runState, evidence, {
+      enabled: true,
+      quorumRatio: 0.5,
+    });
+    return {
+      status: goal.status,
+      score,
+      nextAction: forcedNextAction,
+      ensemble,
+    };
+  }
+
+  // Run ensemble decision engine
+  const ensemble = evaluateEnsembleDecision(goal, runState, evidence, {
+    enabled: true,
+    quorumRatio: 0.5,
+  });
+
+  // If ensemble has high confidence (>0.7), trust it; otherwise fall back to basic logic
+  let nextAction: NextAction;
+  if (ensemble.confidence >= 0.7) {
+    nextAction = ensemble.action;
+  } else if (score.overall === "pass") {
+    nextAction = "close";
+  } else if (score.overall === "fail") {
+    nextAction = "block";
+  } else if (runState.completedAt) {
+    nextAction = "handoff";
+  } else {
+    nextAction = "continue";
+  }
+
+  // Persist important ensemble decisions to neo4j/local memory
+  if (ensemble.confidence >= 0.5) {
+    await saveEnsembleDecision(goal, runState, ensemble, root).catch(() => {
+      // ignore persistence failures
+    });
+  }
+
+  return {
+    status: goal.status,
+    score,
+    nextAction,
+    ensemble,
+  };
+}
+
+export interface NextPromptResult {
+  prompt: string;
+  missingCriteria: MissingCriterion[];
+  suggestion: NextActionSuggestion;
+  memorySummary: string;
+  recommendedCommands: string[];
+  recommendedSkills: string[];
+  verificationGates: string[];
+}
+
+export async function recallMemoryForGoal(goal: GoalSpec, root: string): Promise<string> {
+  const memoryStore = new MemoryStore(join(root, ".omk", "memory"), {
+    projectRoot: root,
+    source: "goal-continue",
+  });
+
+  const parts: string[] = [];
+
+  try {
+    const mindmap = await memoryStore.mindmap(goal.title, 40);
+    if (mindmap && mindmap.nodes.length > 0) {
+      const relevant = mindmap.nodes
+        .filter((n) => n.type === "Goal" || n.type === "Task" || n.type === "Decision" || n.type === "Evidence")
+        .slice(0, 10)
+        .map((n) => `- ${n.label} (${n.type})`)
+        .join("\n");
+      if (relevant) {
+        parts.push("### Mindmap", relevant);
+      }
+    }
+  } catch {
+    // ignore mindmap failures
+  }
+
+  try {
+    const searchResults = await memoryStore.search(goal.objective, 10);
+    if (searchResults.length > 0) {
+      const relevant = searchResults
+        .slice(0, 5)
+        .map((r) => `- ${r.path}: ${r.content.slice(0, 120)}`)
+        .join("\n");
+      parts.push("### Search Results", relevant);
+    }
+  } catch {
+    // ignore search failures
+  }
+
+  return parts.join("\n");
+}
+
+export async function generateNextPrompt(
+  goal: GoalSpec,
+  evidence: GoalEvidence[],
+  runState?: RunState,
+  memorySummary?: string,
+  root?: string,
+): Promise<NextPromptResult> {
+  let resolvedMemorySummary = memorySummary ?? "";
+  if (!resolvedMemorySummary && root) {
+    try {
+      resolvedMemorySummary = await recallMemoryForGoal(goal, root);
+    } catch {
+      // ignore memory recall failures
+    }
+  }
+
+  const missingCriteria = evaluateMissingCriteria(goal, evidence);
+  const suggestion = suggestNextAction(goal, evidence);
+
+  const completedCriteria = goal.successCriteria.filter((c) => {
+    const ev = evidence.find((e) => e.criterionId === c.id);
+    return ev?.passed ?? false;
+  });
+
+  const failedNodes = runState?.nodes.filter((n) => n.status === "failed") ?? [];
+  const successNodes = runState?.nodes.filter((n) => n.status === "done") ?? [];
+
+  const lines: string[] = [
+    `# Goal: ${goal.title}`,
+    ``,
+    `## Objective`,
+    goal.objective,
+    ``,
+    `## Success Criteria`,
+    `### Completed (${completedCriteria.length}/${goal.successCriteria.length})`,
+    ...completedCriteria.map((c) => `- [x] ${c.description}`),
+    ``,
+    `### Missing (${missingCriteria.length})`,
+    ...missingCriteria.map((c) => `- [ ] ${c.description} (${c.requirement}, priority: ${c.priority})`),
+    ``,
+  ];
+
+  if (runState) {
+    lines.push(
+      `## Previous Run Results`,
+      `- Run ID: ${runState.runId}`,
+      `- Successful nodes: ${successNodes.length}`,
+      `- Failed nodes: ${failedNodes.length}`,
+    );
+    if (successNodes.length > 0) {
+      lines.push(`- Completed: ${successNodes.map((n) => n.name).join(", ")}`);
+    }
+    if (failedNodes.length > 0) {
+      lines.push(`- Failed: ${failedNodes.map((n) => n.name).join(", ")}`);
+    }
+    lines.push("");
+  }
+
+  if (resolvedMemorySummary) {
+    lines.push(
+      `## Related Memory`,
+      resolvedMemorySummary,
+      ``,
+    );
+  }
+
+  const recommendedCommands: string[] = [];
+  const recommendedSkills: string[] = [];
+  const verificationGates: string[] = [];
+
+  if (missingCriteria.length > 0) {
+    recommendedCommands.push("npm run check", "npm run test");
+    recommendedSkills.push("omk-quality-gate", "omk-test-debug-loop");
+    verificationGates.push("Type-check passes", "Tests pass");
+  }
+
+  if (goal.expectedArtifacts.length > 0) {
+    recommendedSkills.push("omk-code-review");
+    verificationGates.push("Expected artifacts exist");
+  }
+
+  if (goal.constraints.length > 0) {
+    recommendedSkills.push("omk-security-review");
+    verificationGates.push("Constraints satisfied");
+  }
+
+  if (resolvedMemorySummary) {
+    recommendedSkills.push("omk-context-broker", "omk-project-rules");
+    recommendedCommands.push("omk_search_memory", "omk_memory_mindmap");
+  }
+
+  lines.push(
+    `## Recommended Next Action`,
+    `- Type: ${suggestion.type}`,
+    `- Target: ${suggestion.targetId}`,
+    `- Description: ${suggestion.description}`,
+    `- Reason: ${suggestion.reason}`,
+    ``,
+    `## Recommended Commands`,
+    ...recommendedCommands.map((c) => `- \`${c}\``),
+    ``,
+    `## Recommended Skills`,
+    ...recommendedSkills.map((s) => `- ${s}`),
+    ``,
+    `## Verification Gates`,
+    ...verificationGates.map((g) => `- [ ] ${g}`),
+    ``,
+    `## Instructions`,
+    `Continue working toward the objective. Focus on the missing criteria and recommended next action.`,
+    `Run the recommended commands after making changes. Activate relevant skills for each sub-task.`,
+  );
+
+  const prompt = lines.join("\n");
+
+  return {
+    prompt,
+    missingCriteria,
+    suggestion,
+    memorySummary: resolvedMemorySummary,
+    recommendedCommands,
+    recommendedSkills,
+    verificationGates,
+  };
+}
+
 /**
  * Evaluate which success criteria still lack passing evidence.
  * Returns ordered list with required criteria first, then by weight desc.
  */
-export function evaluateMissingCriteria(
-  goalSpec: GoalSpec,
-  evidence: GoalEvidence[]
-): MissingCriterion[] {
-  const missing: MissingCriterion[] = [];
-  for (const criterion of goalSpec.successCriteria) {
-    const ev = evidence.find((e) => e.criterionId === criterion.id);
-    if (!ev || !ev.passed) {
-      missing.push({
-        criterionId: criterion.id,
-        description: criterion.description,
-        requirement: criterion.requirement,
-        priority: criterion.requirement === "required" ? 100 + criterion.weight * 10 : criterion.weight * 10,
-      });
-    }
-  }
-  missing.sort((a, b) => b.priority - a.priority);
-  return missing;
-}
 
-/**
- * Suggest the next highest-priority action based on missing evidence.
- * Can be called incrementally as evidence accumulates.
- */
-export function suggestNextAction(
-  goalSpec: GoalSpec,
-  evidence: GoalEvidence[]
-): NextActionSuggestion {
-  const missingCriteria = evaluateMissingCriteria(goalSpec, evidence);
-  if (missingCriteria.length > 0) {
-    const top = missingCriteria[0];
-    return {
-      type: "criterion",
-      targetId: top.criterionId,
-      description: top.description,
-      reason: `${top.requirement === "required" ? "Required" : "Optional"} criterion lacks passing evidence`,
-    };
-  }
-
-  // Check for missing artifact evidence
-  for (const artifact of goalSpec.expectedArtifacts) {
-    const artifactEv = evidence.find((e) => e.criterionId === `artifact:${artifact.name}`);
-    if (!artifactEv || !artifactEv.passed) {
-      return {
-        type: "artifact",
-        targetId: `artifact:${artifact.name}`,
-        description: `Produce artifact: ${artifact.name}`,
-        reason: artifactEv ? "Artifact gate failed" : "Artifact evidence is missing",
-      };
-    }
-  }
-
-  // Check constraints
-  for (const constraint of goalSpec.constraints) {
-    const constraintEv = evidence.find((e) => e.criterionId === `constraint:${constraint.id}`);
-    if (!constraintEv || !constraintEv.passed) {
-      return {
-        type: "constraint",
-        targetId: `constraint:${constraint.id}`,
-        description: constraint.description,
-        reason: "Constraint has not been verified",
-      };
-    }
-  }
-
-  return {
-    type: "close",
-    targetId: "goal",
-    description: "All criteria and artifacts are satisfied",
-    reason: "No missing evidence detected",
-  };
-}
 
 /**
  * Incremental evaluation: re-evaluate progress with current evidence.

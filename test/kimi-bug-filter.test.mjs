@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { KimiBugFilter } from "../dist/util/kimi-bug-filter.js";
+import { KimiBugFilter } from "../dist/kimi/bug-filter.js";
 
 test("Kimi bug filter passes normal prompt output without buffering forever", () => {
   const filter = new KimiBugFilter();

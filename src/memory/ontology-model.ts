@@ -93,6 +93,78 @@ export interface MemoryVersionNode extends OntologyNodeBase {
   source: string;
 }
 
+/** Goal node in the ontology graph. */
+export interface GoalNode extends OntologyNodeBase {
+  goalId: string;
+  title: string;
+  objective: string;
+  status: string;
+  riskLevel: string;
+}
+
+/** Criterion node linked to a Goal. */
+export interface CriterionNode extends OntologyNodeBase {
+  criterionId: string;
+  description: string;
+  requirement: string;
+  weight: number;
+}
+
+/** Evidence node for goal verification. */
+export interface EvidenceNode extends OntologyNodeBase {
+  evidenceId: string;
+  passed: boolean;
+  message: string;
+  checkedAt: string;
+}
+
+/** Decision node capturing project decisions. */
+export interface DecisionNode extends OntologyNodeBase {
+  decisionId: string;
+  description: string;
+  decidedAt: string;
+}
+
+/** Task node for actionable work items. */
+export interface TaskNode extends OntologyNodeBase {
+  taskId: string;
+  description: string;
+  status: string;
+  priority: string;
+}
+
+/** Risk node for tracked risks. */
+export interface RiskNode extends OntologyNodeBase {
+  riskId: string;
+  description: string;
+  level: string;
+}
+
+/** Command node for recorded commands. */
+export interface CommandNode extends OntologyNodeBase {
+  commandId: string;
+  command: string;
+  description: string;
+}
+
+/** File node for referenced files. */
+export interface FileNode extends OntologyNodeBase {
+  path: string;
+  description: string;
+}
+
+/** Skill node for available skills. */
+export interface SkillNode extends OntologyNodeBase {
+  name: string;
+  description: string;
+}
+
+/** MCP Server node for configured MCP servers. */
+export interface MCPServerNode extends OntologyNodeBase {
+  name: string;
+  description: string;
+}
+
 /** Minimal executor interface accepted by {@link createOntologyConstraints}. */
 export interface OntologyConstraintExecutor {
   executeQuery(query: string, params?: Record<string, unknown>, options?: { database?: string }): Promise<unknown>;
@@ -119,7 +191,7 @@ export async function createOntologyConstraints(
 }
 
 /** Cypher write keywords rejected by the read-only graph query guard. */
-export const MUTATION_KEYWORDS = ["CREATE", "DELETE", "SET", "REMOVE", "MERGE"];
+export const MUTATION_KEYWORDS = ["CREATE", "DELETE", "SET", "REMOVE", "MERGE", "DROP"];
 
 /**
  * Return true if the provided Cypher query contains write mutations.

@@ -39,7 +39,7 @@ function extractOutputs(description: string, explicitGate?: DagOutputGate, verif
     for (const m of fileMatches) {
       const path = m[1].trim();
       if (path.includes("/") || path.includes("\\")) {
-        outputs.push({ name: `file:${path}`, gate: explicitGate ?? "file-exists" });
+        outputs.push({ name: `file:${path}`, ref: path, gate: explicitGate ?? "file-exists" });
       }
     }
   }
@@ -49,19 +49,19 @@ function extractOutputs(description: string, explicitGate?: DagOutputGate, verif
   for (const m of fileMatches) {
     const path = m[1].trim();
     if (path.includes("/") || path.includes("\\")) {
-      outputs.push({ name: `file:${path}`, gate: explicitGate ?? "file-exists" });
+      outputs.push({ name: `file:${path}`, ref: path, gate: explicitGate ?? "file-exists" });
     }
   }
 
   // Extract test commands: `npm test`, `cargo test`, etc.
   const testCmdMatches = description.matchAll(/`((?:npm|yarn|pnpm|cargo|pytest|go)\s+test[^`]*)`/g);
   for (const m of testCmdMatches) {
-    outputs.push({ name: `test:${m[1]}`, gate: "test-pass" });
+    outputs.push({ name: `test:${m[1]}`, ref: m[1], gate: "test-pass" });
   }
 
   // Add verify command as output if present
   if (verifyCmd) {
-    outputs.push({ name: `verify:${verifyCmd}`, gate: explicitGate ?? "command-pass" });
+    outputs.push({ name: `verify:${verifyCmd}`, ref: verifyCmd, gate: explicitGate ?? "command-pass" });
   }
 
   // Deduplicate by name

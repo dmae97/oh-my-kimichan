@@ -1,4 +1,4 @@
-import { formatDuration, type UsageStats } from "./kimi-usage.js";
+import { formatDuration, type UsageStats } from "../kimi/usage.js";
 
 export interface UsageViewModel {
   accountLabel: string;

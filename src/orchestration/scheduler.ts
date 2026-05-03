@@ -1,5 +1,5 @@
 import type { Dag, DagNode, TaskStatus } from "./dag.js";
-import { skipNode } from "./dag.js";
+import { skipNode, dependsOnRequiredOutput } from "./dag.js";
 import { getTaskDagGraph } from "./task-graph.js";
 
 export interface Scheduler {
@@ -28,6 +28,9 @@ export function createScheduler(): Scheduler {
           node.status = "pending";
         } else if (node.failurePolicy?.skipOnFailure) {
           skipNode(dag, node.id);
+        } else if (node.outputs?.every((o) => o.required === false)) {
+          node.status = "skipped";
+          skipNode(dag, node.id);
         } else if (node.failurePolicy?.blockDependents !== false) {
           blockDependents(dag, node.id, `dependency failed: ${node.id}`);
         }
@@ -39,7 +42,14 @@ export function createScheduler(): Scheduler {
     },
 
     isFailed(dag: Dag): boolean {
-      return dag.nodes.some((n) => n.status === "blocked" || (n.status === "failed" && n.retries >= n.maxRetries && !n.failurePolicy?.skipOnFailure && !n.failurePolicy?.fallbackRole));
+      return dag.nodes.some((n) => {
+        if (n.status === "blocked") return true;
+        if (n.status === "failed" && n.retries >= n.maxRetries && !n.failurePolicy?.skipOnFailure && !n.failurePolicy?.fallbackRole) {
+          const allOptional = n.outputs?.every((o) => o.required === false) ?? false;
+          return !allOptional;
+        }
+        return false;
+      });
     },
 
     getNodeStatus(dag: Dag, id: string): TaskStatus | undefined {
@@ -50,20 +60,20 @@ export function createScheduler(): Scheduler {
 
 function blockDependents(dag: Dag, failedId: string, reason: string): void {
   const nodeById = new Map(dag.nodes.map((node) => [node.id, node]));
-  const queue = dag.nodes.filter((node) => node.dependsOn.includes(failedId)).map((node) => node.id);
-  const seen = new Set<string>();
+  const queue: Array<{ id: string; blockerId: string }> = dag.nodes
+    .filter((node) => node.dependsOn.includes(failedId))
+    .map((node) => ({ id: node.id, blockerId: failedId }));
 
   while (queue.length > 0) {
-    const id = queue.shift()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
+    const { id, blockerId } = queue.shift()!;
     const node = nodeById.get(id);
-    if (!node || node.status === "done" || node.status === "running") continue;
+    if (!node || node.status === "done" || node.status === "running" || node.status === "blocked") continue;
     if (node.failurePolicy?.blockDependents === false) continue;
+    if (blockerId === failedId && !dependsOnRequiredOutput(node, failedId)) continue;
     node.status = "blocked";
     node.blockedReason = reason;
     for (const child of dag.nodes) {
-      if (child.dependsOn.includes(id)) queue.push(child.id);
+      if (child.dependsOn.includes(id)) queue.push({ id: child.id, blockerId: id });
     }
   }
 }

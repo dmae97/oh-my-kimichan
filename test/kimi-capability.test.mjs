@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { parseKimiCapabilityFlags } from "../dist/util/kimi-capability.js";
+import { parseKimiCapabilityFlags } from "../dist/kimi/capability.js";
 
 test("parseKimiCapabilityFlags detects no sampling flags in v1.40.0 help", () => {
   const help = `

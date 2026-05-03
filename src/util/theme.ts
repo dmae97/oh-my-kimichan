@@ -5,7 +5,7 @@
  */
 
 import { totalmem, freemem, loadavg, cpus } from "os";
-import { KIMICHAN_SIMPLE_ASCII_ART } from "./kimichan-simple-art.js";
+import { KIMICHAN_SIMPLE_ASCII_ART } from "../kimi/simple-art.js";
 
 // ── True-color ANSI helpers ──────────────────────────────────
 const colorEnabled = process.env.FORCE_COLOR === "1"

@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";
-import { dirname } from "path";
+import { dirname, resolve } from "path";
 import {
   loadMemorySettings,
   summarizeMemorySettings,
@@ -44,7 +44,7 @@ export interface GraphQueryResult {
   data: unknown;
   extensions: {
     dialect: "omk-graphql-lite-v1" | "cypher";
-    backend: "local_graph" | "neo4j";
+    backend: "local_graph" | "neo4j" | "kuzu";
     statePath?: string;
     database?: string;
   };
@@ -86,7 +86,7 @@ interface LocalGraphEdge {
   updatedAt: string;
 }
 
-interface LocalGraphState {
+export interface LocalGraphState {
   version: 1;
   ontology: MemoryOntology;
   project: {
@@ -99,7 +99,9 @@ interface LocalGraphState {
   edges: LocalGraphEdge[];
 }
 
-interface ExtractedConcept {
+export type GraphState = LocalGraphState;
+
+export interface ExtractedConcept {
   type: string;
   label: string;
   summary: string;
@@ -111,7 +113,7 @@ interface ExtractedConcept {
   filePaths: string[];
 }
 
-const ONTOLOGY: MemoryOntology = {
+export const ONTOLOGY: MemoryOntology = {
   version: "omk-ontology-mindmap-v1",
   description:
     "Project-local ontology for Kimi/OMK memory. Memories are decomposed into mind-map nodes for goals, topics, decisions, tasks, risks, commands, files, evidence, questions, answers, constraints, and concepts.",
@@ -174,6 +176,18 @@ const GENERATED_TYPES = new Set([
   "Concept",
 ]);
 
+const CANONICAL_NODE_TYPES = new Set([
+  "File",
+  "Symbol",
+  "Decision",
+  "Risk",
+  "Evidence",
+  "Goal",
+  "Task",
+  "MCPServer",
+  "Skill",
+]);
+
 export class LocalGraphMemoryStore {
   constructor(
     private readonly settings: MemorySettings,
@@ -185,7 +199,7 @@ export class LocalGraphMemoryStore {
       ? { ...(options.env ?? process.env), OMK_SESSION_ID: options.sessionId }
       : options.env ?? process.env;
     const settings = await loadMemorySettings(options.projectRoot, env);
-    if (!usesLocalGraphBackend(settings.backend)) return null;
+    if (!usesLocalGraphBackend(settings.backend) && settings.backend !== "dual") return null;
     return new LocalGraphMemoryStore(settings, options.source ?? "omk-local-graph-memory");
   }
 
@@ -260,7 +274,7 @@ export class LocalGraphMemoryStore {
       labels: ["OmkMemory", "Memory"],
       label: path,
       path,
-      content,
+      content: truncate(content, 500),
       summary: summarize(content),
       tags: ["memory", ...pathTags(path)],
       properties: {
@@ -301,6 +315,41 @@ export class LocalGraphMemoryStore {
 
     this.replaceGeneratedMindmap(state, memoryId, content, path, now);
     await this.saveState(state);
+    if (this.settings.mirrorFiles) {
+      await this.writeMirrorFiles(state);
+    }
+  }
+
+  async writeMirrorFiles(state: LocalGraphState): Promise<void> {
+    const mirrorDir = dirname(this.settings.localGraph.path);
+    await mkdir(mirrorDir, { recursive: true });
+
+    const projectNode = state.nodes.find((n) => n.type === "Project");
+    const projectOverview = [
+      `# ${projectNode?.label ?? state.project.name ?? "Project"}`,
+      "",
+      `**Key:** ${state.project.key}`,
+      `**Root:** ${state.project.root}`,
+      `**Updated:** ${state.updatedAt}`,
+      "",
+      `## Ontology`,
+      `- Version: ${state.ontology.version}`,
+      `- Classes: ${state.ontology.classes.join(", ")}`,
+      `- Relations: ${state.ontology.relationTypes.join(", ")}`,
+      "",
+    ].join("\n");
+    await writeFile(`${mirrorDir}/project.md`, projectOverview, "utf-8");
+
+    const byType = (type: string) => state.nodes.filter((n) => n.type === type);
+    const renderNodes = (nodes: LocalGraphNode[]) =>
+      nodes
+        .map((n) => `### ${n.label}\n${n.summary ?? ""}\n- Tags: ${n.tags.join(", ")}\n`)
+        .join("\n");
+
+    await writeFile(`${mirrorDir}/goals.md`, `# Goals\n\n${renderNodes(byType("Goal"))}`, "utf-8");
+    await writeFile(`${mirrorDir}/decisions.md`, `# Decisions\n\n${renderNodes(byType("Decision"))}`, "utf-8");
+    await writeFile(`${mirrorDir}/commands.md`, `# Commands\n\n${renderNodes(byType("Command"))}`, "utf-8");
+    await writeFile(`${mirrorDir}/risks.md`, `# Risks\n\n${renderNodes(byType("Risk"))}`, "utf-8");
   }
 
   async append(path: string, content: string): Promise<void> {
@@ -456,7 +505,15 @@ export class LocalGraphMemoryStore {
 
   private async saveState(state: LocalGraphState): Promise<void> {
     await mkdir(dirname(this.settings.localGraph.path), { recursive: true });
-    await writeFile(this.settings.localGraph.path, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
+    const payload = `${JSON.stringify(state, null, 2)}\n`;
+    await writeFile(this.settings.localGraph.path, payload, "utf-8");
+
+    // Hardcoded fallback: always persist to the canonical path as the source of truth
+    const fallbackPath = resolve(this.settings.project.root, ".omk/memory/graph-state.json");
+    if (fallbackPath !== this.settings.localGraph.path) {
+      await mkdir(dirname(fallbackPath), { recursive: true });
+      await writeFile(fallbackPath, payload, "utf-8");
+    }
   }
 
   private findMemoryNode(state: LocalGraphState, path: string): LocalGraphNode | undefined {
@@ -475,7 +532,27 @@ export class LocalGraphMemoryStore {
       (edge) => !generatedIds.has(edge.from) && !generatedIds.has(edge.to) && edge.properties.generatedFrom !== memoryId
     );
 
-    const concepts = extractConcepts(content);
+    let concepts = extractConcepts(content);
+    const MAX_CONCEPTS = 50;
+    for (const concept of concepts) {
+      if (!CANONICAL_NODE_TYPES.has(concept.type)) {
+        concept.type = "Topic";
+        concept.relation = relationForType("Topic");
+      }
+    }
+    if (concepts.length > MAX_CONCEPTS) {
+      const overflowCount = concepts.length - MAX_CONCEPTS;
+      concepts = concepts.slice(0, MAX_CONCEPTS);
+      concepts.push({
+        type: "Topic",
+        label: `And ${overflowCount} more concepts…`,
+        summary: `${overflowCount} additional concepts were extracted but not stored to limit graph growth.`,
+        relation: "HAS_TOPIC",
+        tags: ["overflow", "limit"],
+        line: 0,
+        filePaths: [],
+      });
+    }
     const conceptIds = concepts.map((concept, index) => this.nodeId(concept.type, `${path}:${index}:${concept.label}`));
     const memoryFileNodes = new Map<string, string>();
     for (const [index, concept] of concepts.entries()) {
@@ -651,7 +728,7 @@ export class LocalGraphMemoryStore {
   }
 }
 
-function extractConcepts(content: string): ExtractedConcept[] {
+export function extractConcepts(content: string): ExtractedConcept[] {
   const concepts: ExtractedConcept[] = [];
   const topicStack: Array<{ level: number; index: number }> = [];
   const lines = content.split(/\r?\n/);

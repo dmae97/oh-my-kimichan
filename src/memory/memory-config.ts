@@ -2,8 +2,13 @@ import { createHash } from "crypto";
 import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { basename, join, resolve } from "path";
+import {
+  type EmbeddingConfig,
+  loadEmbeddingConfig,
+  redactEmbeddingConfig,
+} from "./embedding.js";
 
-export type MemoryBackend = "file" | "local_graph" | "neo4j" | "dual";
+export type MemoryBackend = "local_graph" | "neo4j" | "dual" | "kuzu";
 export type Neo4jAuthMode = "basic" | "none";
 
 export interface MemorySettings {
@@ -36,6 +41,7 @@ export interface MemorySettings {
     configured: boolean;
     missing: string[];
   };
+  embedding: EmbeddingConfig;
 }
 
 export interface MemoryStatus {
@@ -61,6 +67,7 @@ export interface MemoryStatus {
     auth: Neo4jAuthMode;
     missing: string[];
   };
+  embedding: Omit<EmbeddingConfig, "apiKey">;
 }
 
 type FlatToml = Record<string, string>;
@@ -73,7 +80,7 @@ export const GLOBAL_MEMORY_CONFIG_TOML = `# oh-my-kimichan global memory policy
 # Default is project-local graph memory: open-source friendly, no daemon, no secrets.
 # Optional external Neo4j credentials must stay in env vars, never in this file.
 [memory]
-backend = "local_graph"    # file | local_graph | neo4j | dual
+backend = "local_graph"    # local_graph | neo4j | dual | kuzu
 scope = "project-session"
 strict = true               # fail memory writes if the selected graph backend is unavailable
 force = true                # global policy wins over project-local backend overrides
@@ -101,7 +108,7 @@ export function getGlobalMemoryConfigPath(): string {
 }
 
 export function isGraphMemoryBackend(backend: MemoryBackend): boolean {
-  return backend === "local_graph" || backend === "neo4j" || backend === "dual";
+  return backend === "local_graph" || backend === "neo4j" || backend === "dual" || backend === "kuzu";
 }
 
 export function usesLocalGraphBackend(backend: MemoryBackend): boolean {
@@ -110,6 +117,10 @@ export function usesLocalGraphBackend(backend: MemoryBackend): boolean {
 
 export function usesExternalNeo4jBackend(backend: MemoryBackend): boolean {
   return backend === "neo4j" || backend === "dual";
+}
+
+export function usesKuzuBackend(backend: MemoryBackend): boolean {
+  return backend === "kuzu";
 }
 
 export async function loadMemorySettings(projectRoot = process.cwd(), env: Env = process.env): Promise<MemorySettings> {
@@ -130,7 +141,7 @@ export async function loadMemorySettings(projectRoot = process.cwd(), env: Env =
   };
 
   const backend = normalizeBackend(env.OMK_MEMORY_BACKEND ?? readSetting("memory.backend"));
-  const strict = parseOptionalBoolean(env.OMK_MEMORY_STRICT) ?? parseOptionalBoolean(readSetting("memory.strict")) ?? backend !== "file";
+  const strict = parseOptionalBoolean(env.OMK_MEMORY_STRICT) ?? parseOptionalBoolean(readSetting("memory.strict")) ?? true;
   const mirrorFiles = parseOptionalBoolean(env.OMK_MEMORY_MIRROR_FILES) ?? parseOptionalBoolean(readSetting("memory.mirror_files")) ?? true;
   const migrateFiles = parseOptionalBoolean(env.OMK_MEMORY_MIGRATE_FILES) ?? parseOptionalBoolean(readSetting("memory.migrate_files")) ?? true;
 
@@ -151,10 +162,15 @@ export async function loadMemorySettings(projectRoot = process.cwd(), env: Env =
   const databaseEnv = readSetting("neo4j.database_env") ?? "OMK_NEO4J_DATABASE";
   const auth = normalizeAuth(readSetting("neo4j.auth"));
 
-  const uri = env[uriEnv] ?? env.NEO4J_URI ?? readSetting("neo4j.uri") ?? "bolt://localhost:7687";
-  const username = env[usernameEnv] ?? env.NEO4J_USERNAME ?? readSetting("neo4j.username") ?? "neo4j";
+  // Neo4j credentials ONLY from environment variables — never from config files.
+  const uri = env[uriEnv] ?? env.NEO4J_URI ?? "bolt://localhost:7687";
+  const username = env[usernameEnv] ?? env.NEO4J_USERNAME ?? "neo4j";
   const password = env[passwordEnv] ?? env.NEO4J_PASSWORD;
-  const database = env[databaseEnv] ?? env.NEO4J_DATABASE ?? readSetting("neo4j.database") ?? "neo4j";
+  const database = env[databaseEnv] ?? env.NEO4J_DATABASE ?? "neo4j";
+
+  if (globalConfig["neo4j.password"] || projectConfig["neo4j.password"] || globalConfig["neo4j.username"] || projectConfig["neo4j.username"]) {
+    console.warn("[memory-config] Neo4j credentials found in config file are ignored. Use environment variables only.");
+  }
 
   const missing: string[] = [];
   if (!uri) missing.push(uriEnv);
@@ -162,6 +178,8 @@ export async function loadMemorySettings(projectRoot = process.cwd(), env: Env =
     if (!username) missing.push(usernameEnv);
     if (!password) missing.push(passwordEnv);
   }
+
+  const embedding = loadEmbeddingConfig(env);
 
   return {
     backend,
@@ -193,6 +211,7 @@ export async function loadMemorySettings(projectRoot = process.cwd(), env: Env =
       configured: missing.length === 0,
       missing,
     },
+    embedding,
   };
 }
 
@@ -220,6 +239,7 @@ export function summarizeMemorySettings(settings: MemorySettings): MemoryStatus 
       auth: settings.neo4j.auth,
       missing: settings.neo4j.missing,
     },
+    embedding: redactEmbeddingConfig(settings.embedding),
   };
 }
 
@@ -280,9 +300,8 @@ function normalizeTomlValue(value: string): string {
 }
 
 function normalizeBackend(value: string | undefined): MemoryBackend {
-  if (value === "local_graph" || value === "neo4j" || value === "dual" || value === "file") return value;
+  if (value === "local_graph" || value === "neo4j" || value === "dual" || value === "kuzu") return value;
   if (value === "graph" || value === "local-graph") return "local_graph";
-  if (value === "filesystem") return "file";
   return "local_graph";
 }
 

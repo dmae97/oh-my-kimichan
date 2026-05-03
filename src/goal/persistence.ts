@@ -9,6 +9,8 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "path";
 import type { GoalEvidence, GoalHistoryEntry, GoalSpec } from "../contracts/goal.js";
 
+const INACTIVE_STATUSES: GoalSpec["status"][] = ["done", "failed", "cancelled", "closed"];
+
 export interface GoalPersister {
   load(goalId: string): Promise<GoalSpec | null>;
   save(spec: GoalSpec): Promise<void>;
@@ -16,6 +18,7 @@ export interface GoalPersister {
   loadEvidence(goalId: string): Promise<GoalEvidence[]>;
   saveEvidence(goalId: string, evidence: GoalEvidence[]): Promise<void>;
   appendHistory(goalId: string, entry: GoalHistoryEntry): Promise<void>;
+  loadLatestActive(): Promise<GoalSpec | null>;
 }
 
 function safePath(basePath: string, inputPath: string): string {
@@ -135,6 +138,25 @@ export function createGoalPersister(basePath: string = ".omk/goals"): GoalPersis
       const filePath = join(dir, "history.jsonl");
       const line = JSON.stringify(entry) + "\n";
       await writeFile(filePath, line, { flag: "a", encoding: "utf-8" });
+    },
+
+    async loadLatestActive(): Promise<GoalSpec | null> {
+      try {
+        const entries = await readdir(basePath, { withFileTypes: true });
+        const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+        const specs = await Promise.all(
+          dirs.map(async (id) => {
+            const spec = await this.load(id);
+            return { id, spec };
+          })
+        );
+        const active = specs
+          .filter((s): s is { id: string; spec: GoalSpec } => s.spec !== null && !INACTIVE_STATUSES.includes(s.spec.status))
+          .sort((a, b) => b.spec.updatedAt.localeCompare(a.spec.updatedAt));
+        return active[0]?.spec ?? null;
+      } catch {
+        return null;
+      }
     },
   };
 }

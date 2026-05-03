@@ -1,6 +1,6 @@
 {
   "name": "oh-my-kimichan",
-  "version": "0.4.0",
+  "version": "1.0.0",
   "description": "Kimi Code CLI용 multi-agent orchestration harness. Kimi K2.6 위에 올라가는 하네스 + 팀 런타임 + 스킬/훅/워크플로 배포판",
   "type": "module",
   "bin": {
@@ -74,13 +74,13 @@
     "zod": "^3.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.0.0",
     "@types/fs-extra": "^11.0.0",
     "@types/node": "^22.0.0",
     "eslint": "^9.0.0",
-    "@eslint/js": "^9.0.0",
-    "typescript-eslint": "^8.0.0",
     "globals": "^15.0.0",
-    "tsx": "^4.0.0"
+    "tsx": "^4.0.0",
+    "typescript-eslint": "^8.0.0"
   },
   "files": [
     "dist",
@@ -112,5 +112,8 @@
   "homepage": "https://github.com/dmae97/oh-my-kimichan#readme",
   "engines": {
     "node": ">=20.0.0"
+  },
+  "optionalDependencies": {
+    "kuzu": "^0.11.3"
   }
 }

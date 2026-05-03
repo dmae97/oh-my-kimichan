@@ -39,7 +39,9 @@ export function getStarPromptStatePath(homeDir: string = homedir()): string {
   return join(homeDir, ".omk", "star-prompt.json");
 }
 
-export function isStarPromptEligible(options: Omit<StarPromptOptions, "version" | "prompt" | "openUrl" | "now"> = {}): boolean {
+export function isStarPromptEligible(
+  options: Omit<StarPromptOptions, "version" | "prompt" | "openUrl" | "now"> & { allowChat?: boolean } = {}
+): boolean {
   const env = options.env ?? process.env;
   const argv = options.argv ?? process.argv;
   const stdin = options.stdin ?? process.stdin;
@@ -49,7 +51,7 @@ export function isStarPromptEligible(options: Omit<StarPromptOptions, "version" 
   if (["0", "false", "off", "no", "never"].includes(setting ?? "")) return false;
   if (env.CI || env.GITHUB_ACTIONS) return false;
   if (!stdin.isTTY || !stdout.isTTY) return false;
-  if (options.commandName === "chat" || options.commandName === "omk") return false;
+  if (!options.allowChat && (options.commandName === "chat" || options.commandName === "omk")) return false;
   if (options.commandName === "lsp") return false;
   if (argv.some((arg) => ["--help", "-h", "--version", "-V"].includes(arg))) return false;
   return true;
@@ -68,12 +70,14 @@ export async function readStarPromptState(homeDir?: string): Promise<StarPromptS
   }
 }
 
-export async function maybeAskForGitHubStar(options: StarPromptOptions): Promise<StarPromptResult> {
+export async function maybeAskForGitHubStar(
+  options: StarPromptOptions & { allowChat?: boolean }
+): Promise<StarPromptResult> {
   const env = options.env ?? process.env;
   const force = env.OMK_STAR_PROMPT?.trim().toLowerCase() === "force";
   const repoUrl = options.repoUrl ?? OMK_REPO_URL;
 
-  if (!isStarPromptEligible(options)) return "skipped";
+  if (!isStarPromptEligible({ ...options, allowChat: options.allowChat })) return "skipped";
   if (!force && await readStarPromptState(options.homeDir)) return "seen";
 
   try {
@@ -111,6 +115,13 @@ export async function maybeAskForGitHubStar(options: StarPromptOptions): Promise
 }
 
 const POST_COMMAND_WHITELIST = new Set(["doctor", "hud", "plan", "parallel", "run"]);
+
+export async function maybeAskForGitHubStarAtChatStart(
+  options: StarPromptOptions,
+): Promise<StarPromptResult> {
+  if ((options.env ?? process.env).OMK_CHAT_COCKPIT_CHILD === "1") return "skipped";
+  return maybeAskForGitHubStar({ ...options, allowChat: true });
+}
 
 export interface StarPromptAfterCommandOptions extends StarPromptOptions {
   commandName: string;

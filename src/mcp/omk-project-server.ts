@@ -13,7 +13,11 @@ import { normalizeGoal } from "../goal/intake.js";
 import { createGoalPersister } from "../goal/persistence.js";
 import { checkGoalEvidence, checkGoalConstraints } from "../goal/evidence.js";
 import { scoreGoal } from "../goal/scoring.js";
+import { suggestNextAction, evaluateMissingCriteria } from "../goal/eval-criteria.js";
+import type { MemoryOntology, MemoryMindmap } from "../memory/local-graph-memory-store.js";
 import { createStatePersister } from "../orchestration/state-persister.js";
+import { writeTodos, type TodoItem } from "../util/todo-sync.js";
+import { listActiveSessions, readSessionMeta, type SessionMeta } from "../util/session.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -140,6 +144,10 @@ function validateMemoryWrite(content: string): void {
       throw new Error("Memory write rejected: content looks like JSON but is not valid");
     }
   }
+}
+
+function sanitizeMemoryQuery(query: string): string {
+  return query.replace(/[^\p{L}\p{N}\s\-_./:@#]/gu, "").slice(0, 200);
 }
 
 // ─── Resource handlers ──────────────────────────────────────────────────
@@ -423,6 +431,254 @@ async function handleGraphQuery(args: { query: string }): Promise<unknown> {
   return MEMORY_STORE.graphQuery(args.query);
 }
 
+// ─── Tool handlers (Memory Search / Status / Ontology / Mindmap) ─────────
+
+async function handleSearchMemory(args: { query: string; limit?: number }): Promise<{
+  results: Array<{ type: string; name: string; snippet: string }>;
+}> {
+  const query = sanitizeMemoryQuery(args.query);
+  const limit = typeof args.limit === "number" ? Math.max(1, Math.min(50, Math.floor(args.limit))) : 10;
+  const searchResults = await MEMORY_STORE.search(query, limit);
+  return {
+    results: searchResults.map((r) => ({
+      type: "Memory",
+      name: r.path,
+      snippet: r.content.slice(0, 500),
+    })),
+  };
+}
+
+async function handleMemoryStatus(): Promise<{
+  backend: string;
+  healthy: boolean;
+  nodeCounts: Record<string, number>;
+  lastSync: string | null;
+}> {
+  const status = await MEMORY_STORE.status();
+  const healthy =
+    (status.backend === "local_graph" && status.localGraph.configured) ||
+    (status.backend === "neo4j" && status.neo4j.configured) ||
+    (status.backend === "dual" && (status.localGraph.configured || status.neo4j.configured));
+
+  let nodeCounts: Record<string, number> = {};
+  const lastSync: string | null = null;
+
+  try {
+    const mindmap = await MEMORY_STORE.mindmap("", 1);
+    if (mindmap) {
+      nodeCounts = mindmap.nodes.reduce((acc, node) => {
+        acc[node.type] = (acc[node.type] ?? 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      // lastSync not available from mindmap structure; set to null
+    }
+  } catch {
+    // Fallback: node counts unavailable
+  }
+
+  return {
+    backend: status.backend,
+    healthy,
+    nodeCounts,
+    lastSync,
+  };
+}
+
+async function handleMemoryOntology(args: { nodeType?: string }): Promise<{
+  ontology: MemoryOntology | null;
+  nodeType?: string;
+}> {
+  const ontology = await MEMORY_STORE.ontology();
+  return { ontology, nodeType: args.nodeType };
+}
+
+async function handleMemoryMindmap(args: { query?: string; depth?: number }): Promise<{
+  mindmap: MemoryMindmap | null;
+}> {
+  const query = args.query ? sanitizeMemoryQuery(args.query) : undefined;
+  const limit = typeof args.depth === "number" ? Math.max(1, Math.min(250, args.depth * 20)) : 80;
+  const mindmap = await MEMORY_STORE.mindmap(query, limit);
+  return { mindmap };
+}
+
+// ─── Tool handlers (Goal Next Action) ────────────────────────────────────
+
+async function handleGoalNext(args: { goalId?: string }): Promise<{
+  goal: { goalId: string; title: string; objective: string; status: string } | null;
+  missingCriteria: Array<{
+    criterionId: string;
+    description: string;
+    requirement: string;
+    priority: number;
+  }>;
+  latestEvidence: Array<{
+    criterionId: string;
+    passed: boolean;
+    message?: string;
+    checkedAt: string;
+  }>;
+  suggestedNextAction: { type: string; targetId: string; description: string; reason: string };
+  recommendedCommands: string[];
+  recommendedSkills: string[];
+}> {
+  let goalId = args.goalId;
+  if (!goalId) {
+    const goals = await GOAL_PERSISTER.list();
+    for (const id of goals) {
+      const g = await GOAL_PERSISTER.load(id);
+      if (g && g.status !== "closed" && g.status !== "done" && g.status !== "cancelled") {
+        goalId = g.goalId;
+        break;
+      }
+    }
+  }
+  if (!goalId) {
+    throw new Error("No active goal found");
+  }
+  const goal = await GOAL_PERSISTER.load(sanitizeGoalId(goalId));
+  if (!goal) throw new Error(`Goal not found: ${goalId}`);
+
+  const evidence = await GOAL_PERSISTER.loadEvidence(goal.goalId);
+  const missingCriteria = evaluateMissingCriteria(goal, evidence);
+  const suggestion = suggestNextAction(goal, evidence);
+
+  const recommendedCommands: string[] = [];
+  const recommendedSkills: string[] = [];
+  if (goal.riskLevel === "high") {
+    recommendedCommands.push("omk_quality_gate", "omk_save_checkpoint");
+    recommendedSkills.push("omk-plan-first", "omk-quality-gate");
+  } else {
+    recommendedCommands.push("omk_quality_gate");
+    recommendedSkills.push("omk-quality-gate");
+  }
+  if (missingCriteria.some((c) => c.requirement === "required")) {
+    recommendedSkills.push("omk-test-debug-loop");
+  }
+
+  return {
+    goal: {
+      goalId: goal.goalId,
+      title: goal.title,
+      objective: goal.objective,
+      status: goal.status,
+    },
+    missingCriteria,
+    latestEvidence: evidence.slice(-10),
+    suggestedNextAction: suggestion,
+    recommendedCommands,
+    recommendedSkills,
+  };
+}
+
+// ─── Context compression with ontology grounding ─────────────────────────
+
+async function handleCompressContext(args: { query: string; limit?: number }): Promise<{
+  briefing: string;
+  sources: Array<{ type: string; label: string; content: string }>;
+}> {
+  const limit = Math.max(1, Math.min(50, args.limit ?? 20));
+  const sources: Array<{ type: string; label: string; content: string }> = [];
+
+  // 1. Pull ontology schema
+  try {
+    const ontology = await MEMORY_STORE.ontology();
+    if (ontology) {
+      sources.push({
+        type: "ontology",
+        label: `Project Ontology (${ontology.version})`,
+        content: `Classes: ${ontology.classes.join(", ")}\nRelations: ${ontology.relationTypes.join(", ")}`,
+      });
+    }
+  } catch {
+    // ignore ontology failures
+  }
+
+  // 2. Pull mindmap centered on query
+  try {
+    const mindmap = await MEMORY_STORE.mindmap(args.query, limit);
+    if (mindmap && mindmap.nodes.length > 0) {
+      const relevant = mindmap.nodes
+        .filter((n) => n.type === "Goal" || n.type === "Task" || n.type === "Decision" || n.type === "Evidence" || n.type === "Concept")
+        .slice(0, limit)
+        .map((n) => `- ${n.label} (${n.type})${n.summary ? `: ${n.summary}` : ""}`)
+        .join("\n");
+      if (relevant) {
+        sources.push({
+          type: "mindmap",
+          label: `Mindmap: ${args.query}`,
+          content: relevant,
+        });
+      }
+    }
+  } catch {
+    // ignore mindmap failures
+  }
+
+  // 3. Search memory for related facts
+  try {
+    const searchResults = await MEMORY_STORE.search(args.query, limit);
+    if (searchResults.length > 0) {
+      const relevant = searchResults
+        .slice(0, Math.min(10, limit))
+        .map((r) => `- ${r.path}: ${r.content.slice(0, 200)}`)
+        .join("\n");
+      sources.push({
+        type: "search",
+        label: `Memory Search: ${args.query}`,
+        content: relevant,
+      });
+    }
+  } catch {
+    // ignore search failures
+  }
+
+  // 4. Fetch recent ensemble decisions if query looks like a goal
+  try {
+    const { recallRecentEnsembleDecisions } = await import("../goal/ensemble-memory.js");
+    const recent = await recallRecentEnsembleDecisions(args.query, PROJECT_ROOT, 3);
+    if (recent.length > 0) {
+      const content = recent
+        .map((d) => `- [${d.timestamp}] action=${d.action}, confidence=${d.confidence.toFixed(2)}\n  ${d.candidateVotes.map((v) => `  ${v.id}: ${v.action} (weight=${v.weight}) — ${v.reason}`).join("\n")}`)
+        .join("\n");
+      sources.push({
+        type: "ensemble",
+        label: "Recent Ensemble Decisions",
+        content,
+      });
+    }
+  } catch {
+    // ignore ensemble recall failures
+  }
+
+  // 5. Build grounded briefing
+  const briefingLines = [
+    `# Ground Truth Briefing for Context Compression`,
+    ``,
+    `> Query: ${args.query}`,
+    `> Sources: ${sources.length} (ontology, mindmap, memory search, ensemble decisions)`,
+    ``,
+    `## Rules for compression`,
+    `- Preserve every class, relation, and decision listed below.`,
+    `- Do not invent nodes, files, or APIs that are not present in the sources.`,
+    `- When summarizing, anchor statements to specific source types (ontology / mindmap / search / ensemble).`,
+    ``,
+  ];
+
+  for (const src of sources) {
+    briefingLines.push(`## ${src.label} [${src.type}]`, src.content, ``);
+  }
+
+  briefingLines.push(
+    `## End of Ground Truth Briefing`,
+    `Compress the conversation context above, keeping these grounded facts as immovable anchors.`
+  );
+
+  return {
+    briefing: briefingLines.join("\n"),
+    sources,
+  };
+}
+
 // ─── Legacy tool handlers (kept for internal use, not exported) ─────────
 
 async function handleReadConfig(): Promise<{ content: string }> {
@@ -480,8 +736,10 @@ function parseRunDate(runId: string): string {
 
 async function handleReadRun(args: { runId: string }): Promise<{ goal: string; plan: string }> {
   const runDir = await safePath(args.runId, OMK_RUNS_DIR);
-  const goal = await readFile(join(runDir, "goal.md"), "utf-8").catch(() => "");
-  const plan = await readFile(join(runDir, "plan.md"), "utf-8").catch(() => "");
+  const [goal, plan] = await Promise.all([
+    readFile(join(runDir, "goal.md"), "utf-8").catch(() => ""),
+    readFile(join(runDir, "plan.md"), "utf-8").catch(() => ""),
+  ]);
   return { goal, plan };
 }
 
@@ -576,6 +834,50 @@ async function handleListCheckpoints(args: { runId?: string }): Promise<{ checkp
 
 async function handleRestoreCheckpoint(args: { checkpointId: string; runId: string }): Promise<{ success: boolean; restoredFiles: string[]; message: string }> {
   return restoreCheckpoint(args.checkpointId, args.runId);
+}
+
+// ─── Tool handlers (Session / TODO) ─────────────────────────────────────
+
+async function handleListSessions(args: { status?: string }): Promise<{ sessions: SessionMeta[] }> {
+  const status = args.status;
+  if (!status || status === "active") {
+    const sessions = await listActiveSessions();
+    return { sessions };
+  }
+
+  const runsDir = join(OMK_DIR, "runs");
+  if (!(await pathExists(runsDir))) return { sessions: [] };
+
+  const entries = await readdir(runsDir, { withFileTypes: true });
+  const sessions: SessionMeta[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const meta = await readSessionMeta(entry.name).catch(() => null);
+    if (meta && meta.status === status) {
+      sessions.push(meta);
+    }
+  }
+
+  return { sessions: sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt)) };
+}
+
+async function handleReadTodos(args: { runId: string }): Promise<{ todos: TodoItem[]; source: "todos.json" | "state.json" | null }> {
+  const { readTodos, deriveTodosFromState } = await import("../util/todo-sync.js");
+  const fromFile = await readTodos(args.runId);
+  if (fromFile && fromFile.length > 0) {
+    return { todos: fromFile, source: "todos.json" };
+  }
+  const fromState = await deriveTodosFromState(args.runId);
+  if (fromState && fromState.length > 0) {
+    return { todos: fromState, source: "state.json" };
+  }
+  return { todos: [], source: null };
+}
+
+async function handleWriteTodos(args: { runId: string; todos: TodoItem[] }): Promise<{ written: number }> {
+  await writeTodos(args.runId, args.todos);
+  return { written: args.todos.length };
 }
 
 // ─── Resource registry ──────────────────────────────────────────────────
@@ -780,7 +1082,7 @@ const TOOLS: Tool[] = [
   {
     name: "omk_graph_query",
     description:
-      "Run read-only queries over the graph memory backend. local_graph supports GraphQL-lite (ontology, memory, memories, mindmap, nodes). neo4j supports read-only Cypher queries.",
+      "Run read-only queries over the graph memory backend. local_graph supports GraphQL-lite (ontology, memory, memories, mindmap, nodes). neo4j and kuzu support read-only Cypher queries.",
     inputSchema: {
       type: "object",
       properties: {
@@ -791,6 +1093,122 @@ const TOOLS: Tool[] = [
         },
       },
       required: ["query"],
+    },
+  },
+  // ── Memory search / status / ontology / mindmap ──
+  {
+    name: "omk_search_memory",
+    description: "Search local graph memory (and Neo4j if dual mode) for nodes matching query",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query string" },
+        limit: { type: "number", description: "Max results (1-50, default 10)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "omk_memory_status",
+    description: "Return current memory backend status, connection health, node counts, and last sync timestamp",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "omk_memory_ontology",
+    description: "Return the ontology schema for the requested node type, or all node types if not specified",
+    inputSchema: {
+      type: "object",
+      properties: {
+        nodeType: { type: "string", description: "Optional node type to filter schema" },
+      },
+    },
+  },
+  {
+    name: "omk_memory_mindmap",
+    description: "Return a mindmap-style subgraph centered on the query term, or project-level root graph if no query",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional center query term" },
+        depth: { type: "number", description: "Optional exploration depth (maps to result limit)" },
+      },
+    },
+  },
+  // ── Goal next action ──
+  {
+    name: "omk_goal_next",
+    description: "Get the next recommended action for a goal. Uses the latest active goal if goalId is omitted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goalId: { type: "string", description: "Optional goal identifier" },
+      },
+    },
+  },
+  // ── Context compression with ontology grounding ──
+  {
+    name: "omk_compress_context",
+    description:
+      "Prepare a hallucination-resistant context briefing by pulling the neo4j ontology, mindmap, and recent ensemble decisions before calling ctx_compress. Returns a grounded summary that should be prepended to the ctx_compress call.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Topic or goal to center the briefing on" },
+        limit: { type: "number", description: "Max nodes to fetch (default 20)" },
+      },
+      required: ["query"],
+    },
+  },
+  // ── Session / TODO ──
+  {
+    name: "omk_list_sessions",
+    description: "List active or recent chat sessions with metadata",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", description: "Optional filter by status (active, completed, failed, idle)" },
+      },
+    },
+  },
+  {
+    name: "omk_read_todos",
+    description: "Read TODO items for a run",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", description: "Run identifier" },
+      },
+      required: ["runId"],
+    },
+  },
+  {
+    name: "omk_write_todos",
+    description: "Write or update TODO items for a run",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", description: "Run identifier" },
+        todos: {
+          type: "array",
+          description: "TODO items to write",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              status: { type: "string" },
+              agent: { type: "string" },
+              role: { type: "string" },
+              startedAt: { type: "string" },
+              completedAt: { type: "string" },
+              elapsedMs: { type: "number" },
+              evidence: { type: "string" },
+              description: { type: "string" },
+            },
+            required: ["title", "status"],
+          },
+        },
+      },
+      required: ["runId", "todos"],
     },
   },
 ];
@@ -827,6 +1245,28 @@ async function handleToolCall(name: string, args: unknown): Promise<unknown> {
     // Graph
     case "omk_graph_query":
       return handleGraphQuery(args as { query: string });
+    // Memory search / status / ontology / mindmap
+    case "omk_search_memory":
+      return handleSearchMemory(args as { query: string; limit?: number });
+    case "omk_memory_status":
+      return handleMemoryStatus();
+    case "omk_memory_ontology":
+      return handleMemoryOntology(args as { nodeType?: string });
+    case "omk_memory_mindmap":
+      return handleMemoryMindmap(args as { query?: string; depth?: number });
+    // Goal next action
+    case "omk_goal_next":
+      return handleGoalNext(args as { goalId?: string });
+    // Context compression with ontology grounding
+    case "omk_compress_context":
+      return handleCompressContext(args as { query: string; limit?: number });
+    // Session / TODO
+    case "omk_list_sessions":
+      return handleListSessions(args as { status?: string });
+    case "omk_read_todos":
+      return handleReadTodos(args as { runId: string });
+    case "omk_write_todos":
+      return handleWriteTodos(args as { runId: string; todos: TodoItem[] });
     // Legacy aliases (still callable for backward compatibility)
     case "omk_read_memory":
       return handleMemoryRead(args as { path: string });

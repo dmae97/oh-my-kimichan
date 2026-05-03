@@ -9,17 +9,28 @@ export type RunHealth = "ok" | "warn" | "blocked" | "failed";
 export interface RunViewModelWorker {
   id: string;
   label: string;
-  state: "idle" | "running" | "done" | "failed" | "blocked";
+  state: "idle" | "running" | "done" | "failed" | "blocked" | "skipped";
   elapsedMs: number;
   retryCount: number;
   currentNode?: string;
   lastEvidence?: { gate: string; passed: boolean; message?: string };
+  /** Latest thinking text from the worker (live activity). */
+  thinking?: string;
+  /** High-level phase description (e.g. "reading src/foo.ts"). */
+  phase?: string;
+  /** Milliseconds since last meaningful activity (thinking/node event). */
+  lastActivityAgeMs?: number;
 }
 
 export interface RunViewModelBlocker {
   nodeId: string;
   reason: string;
   nextAction: string;
+  evidenceMessage?: string;
+  recoverable: boolean;
+  retryCount: number;
+  maxRetries: number;
+  logHint?: string;
 }
 
 export interface RunViewModelActiveNode {
@@ -36,6 +47,15 @@ export interface RunViewModelProgress {
   running: number;
   failed: number;
   blocked: number;
+  skipped: number;
+  /** Number of nodes that are terminal (done + skipped + failed + blocked). */
+  settled: number;
+}
+
+export interface RunViewModelBlockerItem {
+  nodeId: string;
+  reason: string;
+  status: "blocked" | "failed" | "skipped";
 }
 
 export interface RunViewModel {
@@ -44,6 +64,7 @@ export interface RunViewModel {
   goalScore: number | null;
   activeNode: RunViewModelActiveNode | null;
   blocker: RunViewModelBlocker | null;
+  blockers?: RunViewModelBlockerItem[];
   nextAction: string | null;
   progress: RunViewModelProgress;
   eta: string | null;
@@ -51,12 +72,29 @@ export interface RunViewModel {
   stateError: "ok" | "missing" | "invalid" | "corrupt" | "oldSchema";
   runId: string | null;
   workers: RunViewModelWorker[];
+  /** ISO timestamp when the run started. */
+  startedAt?: string;
+  /** ISO timestamp of last meaningful activity. */
+  lastActivityAt?: string;
+  iterationCount?: number;
+  maxIterations?: number;
+  /** Confidence level of the ETA estimate. */
+  etaConfidence?: "low" | "medium" | "high";
 }
 
 export interface BuildRunViewModelOptions {
   goalTitle?: string | null;
   changedFiles?: string[];
   workerLabels?: Record<string, string>;
+}
+
+const SECRET_PATTERN = /\b(apiKey|token|password|secret|authorization|bearer|key)\s*[:=]\s*["']?[^\s"']{8,}["']?/gi;
+
+export function sanitizeForDisplay(text: string): string {
+  return text.replace(SECRET_PATTERN, (match) => {
+    const key = match.match(/\b(apiKey|token|password|secret|authorization|bearer|key)/i)?.[0] ?? "secret";
+    return `${key}: ***REDACTED***`;
+  });
 }
 
 export function parseRunStateResult(content: string): { state: RunState | null; error: RunViewModel["stateError"] } {
@@ -110,7 +148,7 @@ export function formatEtaMs(ms: number | undefined): string {
 
 export function renderRunSummary(vm: RunViewModel): string {
   const goal = vm.goalTitle ?? "--";
-  const progress = `${vm.progress.done}/${vm.progress.total}`;
+  const progress = `${vm.progress.settled}/${vm.progress.total}`;
   const health = vm.health.toUpperCase();
   const next = vm.nextAction ?? "--";
   const blocker = vm.blocker ? `${vm.blocker.reason} (${vm.blocker.nodeId})` : "none";
@@ -129,7 +167,7 @@ export function buildRunViewModel(
       activeNode: null,
       blocker: null,
       nextAction: null,
-      progress: { percent: 0, done: 0, total: 0, running: 0, failed: 0, blocked: 0 },
+      progress: { percent: 0, done: 0, total: 0, running: 0, failed: 0, blocked: 0, skipped: 0, settled: 0 },
       eta: null,
       changedFiles: options.changedFiles ?? [],
       stateError: "missing",
@@ -143,15 +181,17 @@ export function buildRunViewModel(
   const done = nodes.filter((n) => n.status === "done");
   const failed = nodes.filter((n) => n.status === "failed");
   const blocked = nodes.filter((n) => n.status === "blocked");
-  const pending = nodes.filter((n) => n.status === "pending");
+  const skipped = nodes.filter((n) => n.status === "skipped");
 
   const total = nodes.length;
-  const percent = total > 0 ? Math.round((done.length / total) * 100) : 0;
+  const settled = done.length + skipped.length + failed.length + blocked.length;
+  const percent = total > 0 ? Math.round((settled / total) * 100) : 0;
 
   let health: RunHealth = "ok";
   if (failed.length > 0) health = "failed";
   else if (blocked.length > 0) health = "blocked";
-  else if (running.length > 0 && pending.length === 0 && done.length > 0) health = "warn";
+  // Note: running with no pending is normal progress, not a warning.
+  // Stale-worker detection is handled in the cockpit renderer via lastActivityAgeMs.
 
   const activeNode = running[0]
     ? {
@@ -163,43 +203,95 @@ export function buildRunViewModel(
     : null;
 
   const blockerNode = failed[0] ?? blocked[0];
-  const blocker: RunViewModelBlocker | null = blockerNode
-    ? {
-        nodeId: blockerNode.id,
-        reason: blockerNode.status === "failed" ? "Node failed" : "Node blocked",
-        nextAction: `omk verify --run ${state.runId}`,
-      }
-    : null;
+  let blocker: RunViewModelBlocker | null = null;
+  if (blockerNode) {
+    const lastEvidence = blockerNode.evidence?.length
+      ? blockerNode.evidence[blockerNode.evidence.length - 1]
+      : undefined;
+    const isBlocked = blockerNode.status === "blocked";
+    const retryCount = blockerNode.attempts?.length ?? blockerNode.retries ?? 0;
+    const maxRetries = blockerNode.maxRetries;
+    const recoverable = retryCount < maxRetries;
+    const rawReason = isBlocked
+      ? (blockerNode.blockedReason ?? "Node blocked")
+      : (lastEvidence?.message ?? "Node failed");
+    const reason = sanitizeForDisplay(rawReason);
+    const nextAction = recoverable
+      ? "Retrying..."
+      : `omk goal continue ${state.goalId ?? state.runId}`;
+    blocker = {
+      nodeId: blockerNode.id,
+      reason,
+      nextAction,
+      evidenceMessage: lastEvidence?.message ? sanitizeForDisplay(lastEvidence.message) : undefined,
+      recoverable,
+      retryCount,
+      maxRetries,
+      logHint: `Check .omk/runs/${state.runId}/logs/${blockerNode.id}.log`,
+    };
+  }
+
+  const blockers: RunViewModelBlockerItem[] = [
+    ...failed.map((n) => {
+      const lastEvidence = n.evidence?.length ? n.evidence[n.evidence.length - 1] : undefined;
+      return {
+        nodeId: n.id,
+        reason: sanitizeForDisplay(lastEvidence?.message ?? "Node failed"),
+        status: "failed" as const,
+      };
+    }),
+    ...blocked.map((n) => ({
+      nodeId: n.id,
+      reason: sanitizeForDisplay(n.blockedReason ?? "Node blocked"),
+      status: "blocked" as const,
+    })),
+  ];
 
   const nextAction =
     blocker?.nextAction ??
-    (activeNode ? `Waiting for ${activeNode.name}` : done.length === total ? "Run complete" : "Ready");
+    (activeNode ? `Waiting for ${activeNode.name}` : settled === total ? "Run complete" : "Ready");
 
   const isLifecycleNode = (n: (typeof nodes)[0]) =>
     n.id === "bootstrap" || n.id === "root-coordinator" || n.id === "review-merge";
 
+  const now = Date.now();
+  const lastActivityMs = state.lastActivityAt ? Date.parse(state.lastActivityAt) : 0;
+
   const workers = nodes
     .filter((n) => !isLifecycleNode(n))
     .map((n) => {
-      const elapsed = n.durationMs ?? (n.startedAt ? Date.now() - new Date(n.startedAt).getTime() : 0);
+      const elapsed = n.durationMs ?? (n.startedAt ? now - new Date(n.startedAt).getTime() : 0);
       const lastEvidence = n.evidence?.length ? n.evidence[n.evidence.length - 1] : undefined;
+      const stateValue: RunViewModelWorker["state"] =
+        n.status === "pending" ? "idle" :
+        n.status === "skipped" ? "skipped" :
+        n.status ?? "idle";
+      const nodeLastActivityMs = n.startedAt ? Math.max(lastActivityMs, new Date(n.startedAt).getTime()) : lastActivityMs;
+      const lastActivityAgeMs = n.status === "running" && nodeLastActivityMs > 0
+        ? now - nodeLastActivityMs
+        : undefined;
+      const thinking = n.status === "running" ? n.thinking : undefined;
+      const phase = thinking ? sanitizeForDisplay(thinking) : undefined;
       return {
         id: n.id,
         label: options.workerLabels?.[n.id] ?? n.name ?? n.id,
-        state: ((n.status === "pending" ? "idle" : n.status) as RunViewModelWorker["state"]) ?? "idle",
+        state: stateValue,
         elapsedMs: Math.max(0, elapsed),
         retryCount: n.attempts?.length ?? 0,
         currentNode: n.status === "running" ? (n.name || n.id) : undefined,
         lastEvidence: lastEvidence
-          ? { gate: lastEvidence.gate, passed: lastEvidence.passed, message: lastEvidence.message }
+          ? { gate: lastEvidence.gate, passed: lastEvidence.passed, message: lastEvidence.message ? sanitizeForDisplay(lastEvidence.message) : undefined }
           : undefined,
+        thinking,
+        phase,
+        lastActivityAgeMs,
       };
     });
 
   return {
     health,
     goalTitle: options.goalTitle ?? null,
-    goalScore: total > 0 ? Math.round((done.length / total) * 100) : null,
+    goalScore: total > 0 ? Math.round((settled / total) * 100) : null,
     activeNode,
     blocker,
     nextAction,
@@ -210,11 +302,19 @@ export function buildRunViewModel(
       running: running.length,
       failed: failed.length,
       blocked: blocked.length,
+      skipped: skipped.length,
+      settled,
     },
     eta: state.estimate?.estimatedRemainingMs != null ? formatEtaMs(state.estimate.estimatedRemainingMs) : null,
+    etaConfidence: state.estimate?.confidence,
     changedFiles: options.changedFiles ?? [],
     stateError: "ok",
     runId: state.runId,
     workers,
+    blockers,
+    startedAt: state.startedAt,
+    lastActivityAt: state.lastActivityAt,
+    iterationCount: state.iterationCount,
+    maxIterations: state.maxIterations,
   };
 }

@@ -22,6 +22,36 @@ export interface RunOptions {
   nodeTimeoutMs?: number;
 }
 
+export type TaskType =
+  | "explore"
+  | "implement"
+  | "bugfix"
+  | "refactor"
+  | "research"
+  | "review"
+  | "plan"
+  | "test"
+  | "document"
+  | "migrate"
+  | "security"
+  | "general";
+
+export type NextAction = "continue" | "replan" | "block" | "handoff" | "close";
+
+export interface UserIntent {
+  taskType: TaskType;
+  complexity: "simple" | "moderate" | "complex";
+  estimatedWorkers: number;
+  requiredRoles: string[];
+  isReadOnly: boolean;
+  needsResearch: boolean;
+  needsSecurityReview: boolean;
+  needsTesting: boolean;
+  needsDesignReview: boolean;
+  parallelizable: boolean;
+  rationale: string;
+}
+
 export type EstimateConfidence = "low" | "medium" | "high";
 
 export interface RunProgressEstimate {
@@ -55,6 +85,16 @@ export interface RunState {
   startedAt: string;
   completedAt?: string;
   estimate?: RunProgressEstimate;
+  iterationCount?: number;
+  maxIterations?: number;
+  /** ISO timestamp of the last time this state was persisted (activity or commit). */
+  updatedAt?: string;
+  /** ISO timestamp of the last meaningful worker activity (thinking update, node start/complete). */
+  lastActivityAt?: string;
+  /** ISO timestamp of the last heartbeat emit (may be more frequent than persist). */
+  lastHeartbeatAt?: string;
+  /** Monotonically-increasing sequence number for activity ordering. */
+  activitySeq?: number;
 }
 
 export interface RunResult {

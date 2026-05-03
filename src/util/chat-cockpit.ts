@@ -48,8 +48,9 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
   }
 
   // 2. Build commands
-  const leftCmd = buildLeftPaneCommand({ nodeCmd, cliCmd, runId, brand, session });
-  const rightCmd = `${nodeCmd} ${cliCmd} cockpit --run-id ${shellQuote(runId)} --watch --refresh 1500`;
+  const leftCmd = buildLeftPaneCommand({ nodeCmd, cliCmd, runId, brand });
+  const rightTopCmd = `${nodeCmd} ${cliCmd} cockpit --run-id ${shellQuote(runId)} --watch --refresh 1500`;
+  const rightBottomCmd = `${nodeCmd} ${cliCmd} runs --watch --limit 15 --refresh 5000`;
 
   // 3. Create detached tmux session with left-pane command already running
   const createResult = await runShell(
@@ -58,9 +59,8 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
     { cwd, timeout: 10000 }
   );
   if (createResult.failed) {
-    const msg = `Failed to create tmux session: ${createResult.stderr || createResult.stdout}`;
-    console.error(msg);
-    throw new Error(msg);
+    console.warn(`Failed to create tmux session: ${createResult.stderr || createResult.stdout}`);
+    return;
   }
 
   // 4. Get the original pane ID before splitting (works with any pane-base-index)
@@ -70,9 +70,8 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
     { cwd, timeout: 5000 }
   );
   if (originalPanesResult.failed) {
-    const msg = `Failed to list panes: ${originalPanesResult.stderr || originalPanesResult.stdout}`;
-    console.error(msg);
-    throw new Error(msg);
+    console.warn(`Failed to list panes: ${originalPanesResult.stderr || originalPanesResult.stdout}`);
+    return;
   }
   const originalPaneIds = originalPanesResult.stdout
     .trim()
@@ -87,23 +86,64 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
   // Use -P -F #{pane_id} to capture the new pane ID regardless of pane-base-index.
   let splitResult = await runShell(
     "tmux",
-    ["split-window", "-h", "-P", "-F", "#{pane_id}", "-t", `${session}:chat`, "-l", "35%", rightCmd],
+    ["split-window", "-h", "-P", "-F", "#{pane_id}", "-t", `${session}:chat`, "-l", "35%", rightTopCmd],
     { cwd, timeout: 5000 }
   );
   if (splitResult.failed) {
     splitResult = await runShell(
       "tmux",
-      ["split-window", "-h", "-P", "-F", "#{pane_id}", "-t", `${session}:chat`, "-p", "35", rightCmd],
+      ["split-window", "-h", "-P", "-F", "#{pane_id}", "-t", `${session}:chat`, "-p", "35", rightTopCmd],
       { cwd, timeout: 5000 }
     );
   }
-  if (splitResult.failed) {
+  let rightTopPaneId: string | undefined;
+  if (!splitResult.failed) {
+    rightTopPaneId = splitResult.stdout.trim().split(/\r?\n/).filter((s) => s.length > 0)[0];
+  } else {
     const msg = `Failed to split tmux window: ${splitResult.stderr || splitResult.stdout}`;
-    console.error(msg);
-    throw new Error(msg);
+    console.warn(msg);
   }
 
-  // 6. Set a hook so the session is destroyed when the chat pane dies
+  // 6. Split right pane horizontally for bottom history pane (50% height)
+  if (rightTopPaneId) {
+    let bottomSplitResult = await runShell(
+      "tmux",
+      ["split-window", "-v", "-P", "-F", "#{pane_id}", "-t", rightTopPaneId, "-l", "50%", rightBottomCmd],
+      { cwd, timeout: 5000 }
+    );
+    if (bottomSplitResult.failed) {
+      bottomSplitResult = await runShell(
+        "tmux",
+        ["split-window", "-v", "-P", "-F", "#{pane_id}", "-t", rightTopPaneId, "-p", "50", rightBottomCmd],
+        { cwd, timeout: 5000 }
+      );
+    }
+    if (bottomSplitResult.failed) {
+      console.warn(`Failed to split bottom pane: ${bottomSplitResult.stderr || bottomSplitResult.stdout}`);
+    }
+  }
+
+  // 7. Enable mouse mode so scrolling shows output history, not shell input history
+  const mouseResult = await runShell(
+    "tmux",
+    ["set-option", "-t", session, "mouse", "on"],
+    { cwd, timeout: 5000 }
+  );
+  if (mouseResult.failed) {
+    console.warn(`Failed to enable tmux mouse mode: ${mouseResult.stderr || mouseResult.stdout}`);
+  }
+
+  // Increase scrollback history so previous code edits remain accessible
+  const historyResult = await runShell(
+    "tmux",
+    ["set-option", "-t", session, "history-limit", "10000"],
+    { cwd, timeout: 5000 }
+  );
+  if (historyResult.failed) {
+    console.warn(`Failed to set tmux history limit: ${historyResult.stderr || historyResult.stdout}`);
+  }
+
+  // 8. Set a hook so the session is destroyed when the chat pane dies
   const hookResult = await runShell(
     "tmux",
     ["set-hook", "-t", session, "pane-died", `kill-session -t ${session}`],
@@ -111,20 +151,17 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
   );
   if (hookResult.failed) {
     const msg = `Failed to set tmux hook: ${hookResult.stderr || hookResult.stdout}`;
-    console.error(msg);
-    throw new Error(msg);
+    console.warn(msg);
   }
 
-  // 7. Select the left pane
+  // 8. Select the left pane
   const selectResult = await runShell(
     "tmux",
     ["select-pane", "-t", leftPaneId],
     { cwd, timeout: 5000 }
   );
   if (selectResult.failed) {
-    const msg = `Failed to select left pane: ${selectResult.stderr || selectResult.stdout}`;
-    console.error(msg);
-    throw new Error(msg);
+    console.warn(`Failed to select left pane: ${selectResult.stderr || selectResult.stdout}`);
   }
 
   // 8. Attach to the session (avoid nested-session warning when already inside tmux)
@@ -140,7 +177,6 @@ export function buildLeftPaneCommand(options: {
   cliCmd: string;
   runId: string;
   brand: string;
-  session: string;
 }): string {
   const { nodeCmd, cliCmd, runId, brand } = options;
   return `${nodeCmd} ${cliCmd} chat --layout plain --run-id ${shellQuote(runId)} --brand ${shellQuote(brand)}`;

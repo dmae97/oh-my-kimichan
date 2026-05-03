@@ -16,13 +16,15 @@ async function checkCriterion(
   criterion: SuccessCriterion,
   _context: GoalEvidenceContext
 ): Promise<GoalEvidence> {
-  // V1: map node-level evidence to criterion when possible
-  // Full artifact gate checking in Phase 3.x
+  // No node-level evidence found → treat as missing/incomplete
   const checkedAt = new Date().toISOString();
+  const isRequired = criterion.requirement === "required";
   return {
     criterionId: criterion.id,
-    passed: true, // stub: assume pass until full gate integration
-    message: `V1 stub check for: ${criterion.description}`,
+    passed: false,
+    message: isRequired
+      ? `Required criterion missing evidence: ${criterion.description}`
+      : `Optional criterion missing evidence: ${criterion.description}`,
     checkedAt,
     evidenceType: "criterion",
   };
@@ -59,7 +61,7 @@ async function checkArtifactGate(
       return { passed: true, message: `Summary gate deferred to node evidence: ${artifact.name}` };
     }
     default:
-      return { passed: true, message: `Unknown gate type for ${artifact.name}` };
+      return { passed: false, message: `Unknown gate type for ${artifact.name}` };
   }
 }
 
@@ -85,10 +87,56 @@ export async function checkGoalEvidence(
         checkedAt,
         evidenceType: "criterion",
       });
-    } else {
-      const result = await checkCriterion(criterion, context);
-      evidence.push(result);
+      continue;
     }
+
+    // Fallback 1: look for a node whose id or output name matches the criterion
+    const matchingNode = context.runState.nodes.find(
+      (n) => n.id === criterion.id || n.outputs?.some((o) => o.name === criterion.id)
+    );
+    const fallbackEvidence = matchingNode?.evidence?.find((e) => e.passed);
+    if (fallbackEvidence) {
+      evidence.push({
+        criterionId: criterion.id,
+        passed: true,
+        message: fallbackEvidence.message,
+        ref: fallbackEvidence.ref,
+        checkedAt,
+        evidenceType: "criterion",
+      });
+      continue;
+    }
+
+    // Fallback 2: semantic match — map criterion description to nodes with related roles/names
+    const desc = criterion.description.toLowerCase();
+    const semanticNode = context.runState.nodes.find((n) => {
+      if (n.status !== "done") return false;
+      const role = (n.role ?? "").toLowerCase();
+      const name = (n.name ?? "").toLowerCase();
+      if (desc.includes("test") && (role.includes("qa") || role.includes("test") || name.includes("test"))) return true;
+      if (desc.includes("build") && (role.includes("build") || name.includes("build"))) return true;
+      if (desc.includes("lint") && (role.includes("qa") || role.includes("lint") || name.includes("lint"))) return true;
+      if (desc.includes("typecheck") && (role.includes("qa") || name.includes("typecheck") || name.includes("type-check"))) return true;
+      if (desc.includes("review") && (role.includes("review") || name.includes("review"))) return true;
+      if (desc.includes("deploy") && (role.includes("deploy") || name.includes("deploy"))) return true;
+      if (desc.includes("evidence") && n.evidence && n.evidence.length > 0) return true;
+      return false;
+    });
+    const semanticEvidence = semanticNode?.evidence?.find((e) => e.passed);
+    if (semanticEvidence) {
+      evidence.push({
+        criterionId: criterion.id,
+        passed: true,
+        message: semanticEvidence.message,
+        ref: semanticEvidence.ref,
+        checkedAt,
+        evidenceType: "criterion",
+      });
+      continue;
+    }
+
+    const result = await checkCriterion(criterion, context);
+    evidence.push(result);
   }
 
   // Check expected artifacts

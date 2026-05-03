@@ -9,6 +9,7 @@ import {
   isStarPromptEligible,
   maybeAskForGitHubStar,
   maybeAskForGitHubStarAfterCommand,
+  maybeAskForGitHubStarAtChatStart,
   parseGitHubRepoSlug,
   readStarPromptState,
 } from "../dist/util/first-run-star.js";
@@ -302,4 +303,71 @@ test("OMK version footer reads package version", () => {
   assert.match(getOmkVersionSync(), /^\d+\.\d+\.\d+/);
   assert.match(formatOmkVersionFooter(), /omk v\d+\.\d+\.\d+/);
   assert.match(formatOmkVersionFooter(), /github\.com\/dmae97\/oh-my-kimichan/);
+});
+
+test("maybeAskForGitHubStarAtChatStart skips cockpit child", async () => {
+  const result = await maybeAskForGitHubStarAtChatStart({
+    version: "1.2.3",
+    env: { OMK_CHAT_COCKPIT_CHILD: "1", OMK_STAR_PROMPT: "force" },
+    stdin: { isTTY: true },
+    stdout: { isTTY: true },
+    argv: ["node", "omk", "chat"],
+    commandName: "chat",
+    prompt: async () => true,
+  });
+  assert.equal(result, "skipped");
+});
+
+test("maybeAskForGitHubStarAtChatStart allows chat when TTY and no prior state", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "omk-star-chat-start-"));
+  const starred = [];
+  try {
+    const result = await maybeAskForGitHubStarAtChatStart({
+      version: "1.2.3",
+      homeDir,
+      env: { OMK_STAR_PROMPT: "force" },
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      argv: ["node", "omk", "chat"],
+      commandName: "chat",
+      prompt: async () => true,
+      starRepo: async (url) => { starred.push(url); },
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+    });
+    assert.equal(result, "yes");
+    assert.deepEqual(starred, [OMK_REPO_URL]);
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("maybeAskForGitHubStarAtChatStart returns seen when prior state exists", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "omk-star-chat-seen-"));
+  try {
+    await maybeAskForGitHubStarAtChatStart({
+      version: "1.2.3",
+      homeDir,
+      env: { OMK_STAR_PROMPT: "force" },
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      argv: ["node", "omk", "chat"],
+      commandName: "chat",
+      prompt: async () => false,
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+    });
+
+    const result = await maybeAskForGitHubStarAtChatStart({
+      version: "1.2.3",
+      homeDir,
+      env: {},
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      argv: ["node", "omk", "chat"],
+      commandName: "chat",
+      prompt: async () => true,
+    });
+    assert.equal(result, "seen");
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
 });

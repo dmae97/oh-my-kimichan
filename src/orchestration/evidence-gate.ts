@@ -1,11 +1,27 @@
 import { access } from "fs/promises";
 import { constants } from "fs";
+import { resolve } from "path";
 import type { DagNodeEvidence } from "./dag.js";
 import { runShell } from "../util/shell.js";
 
 /** Allowlist pattern reused from quality-gate.ts */
 const SCRIPT_NAME_PATTERN = /^[A-Za-z0-9:_-]+$/;
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+
+export const SUMMARY_ALIASES = [
+  "## Summary",
+  "## Evidence",
+  "## Results",
+  "## Output",
+  "## Conclusion",
+  "## Findings",
+  "### Summary",
+  "### Evidence",
+  "### Results",
+  "### Output",
+  "### Conclusion",
+  "### Findings",
+];
 
 function resolveSafeCommand(command: string): { cmd: string; args: string[] } | null {
   const trimmed = command.trim();
@@ -27,6 +43,7 @@ export interface EvidenceGate {
   path?: string;
   command?: string;
   summaryMarker?: string;
+  severity?: "required" | "warn";
 }
 
 export interface EvidenceCheckContext {
@@ -38,17 +55,29 @@ export interface EvidenceCheckContext {
 export async function checkEvidenceGates(
   gates: EvidenceGate[],
   context: EvidenceCheckContext
-): Promise<{ passed: boolean; evidence: DagNodeEvidence[] }> {
+): Promise<{ passed: boolean; evidence: DagNodeEvidence[]; warnings: DagNodeEvidence[] }> {
   const evidence: DagNodeEvidence[] = [];
+  const warnings: DagNodeEvidence[] = [];
   let allPassed = true;
 
   for (const gate of gates) {
     const result = await checkSingleGate(gate, context);
-    evidence.push(result);
-    if (!result.passed) allPassed = false;
+    const severity = gate.severity ?? "required";
+
+    if (!result.passed && severity === "warn") {
+      warnings.push(result);
+      evidence.push({
+        ...result,
+        passed: true,
+        message: `(warn-only) ${result.message ?? ""}`,
+      });
+    } else {
+      evidence.push(result);
+      if (!result.passed) allPassed = false;
+    }
   }
 
-  return { passed: allPassed, evidence };
+  return { passed: allPassed, evidence, warnings };
 }
 
 async function checkSingleGate(
@@ -64,20 +93,21 @@ async function checkSingleGate(
           message: `Missing "path" for file-exists gate`,
         };
       }
+      const resolvedPath = resolve(context.cwd, gate.path);
       try {
-        await access(gate.path, constants.F_OK);
+        await access(resolvedPath, constants.F_OK);
         return {
           gate: gate.type,
           passed: true,
-          ref: gate.path,
-          message: `File exists: ${gate.path}`,
+          ref: resolvedPath,
+          message: `File exists: ${resolvedPath}`,
         };
       } catch {
         return {
           gate: gate.type,
           passed: false,
-          ref: gate.path,
-          message: `File does not exist: ${gate.path}`,
+          ref: resolvedPath,
+          message: `File does not exist: ${resolvedPath}`,
         };
       }
     }
@@ -144,15 +174,28 @@ async function checkSingleGate(
     }
 
     case "summary-present": {
-      const marker = gate.summaryMarker ?? "## Summary";
-      const present = context.stdout.includes(marker);
+      const stdout = context.stdout;
+      const matchedAlias = SUMMARY_ALIASES.find((a) => stdout.includes(a));
+      if (matchedAlias) {
+        return {
+          gate: gate.type,
+          passed: true,
+          ref: matchedAlias,
+          message: `Summary marker present: ${matchedAlias}`,
+        };
+      }
+      const len = stdout.trim().length;
+      if (len >= 200) {
+        return {
+          gate: gate.type,
+          passed: true,
+          message: `No explicit summary heading, but output is substantial (${len} chars)`,
+        };
+      }
       return {
         gate: gate.type,
-        passed: present,
-        ref: marker,
-        message: present
-          ? `Summary marker present: ${marker}`
-          : `Summary marker missing: ${marker}`,
+        passed: false,
+        message: `Summary marker missing and output is too short (${len} chars)`,
       };
     }
 

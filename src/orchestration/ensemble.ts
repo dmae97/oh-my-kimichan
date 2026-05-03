@@ -236,16 +236,18 @@ async function copyWorktreeBase(baseCwd: string, targetWorktree: string): Promis
   async function walk(srcDir: string, destDir: string): Promise<void> {
     await ensureDir(destDir);
     const entries = await readdir(srcDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (SKIP_DIRS.has(entry.name)) continue;
-      const srcPath = join(srcDir, entry.name);
-      const destPath = join(destDir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(srcPath, destPath);
-      } else {
-        await copyFile(srcPath, destPath);
-      }
-    }
+    await Promise.all(
+      entries.map(async (entry) => {
+        if (SKIP_DIRS.has(entry.name)) return;
+        const srcPath = join(srcDir, entry.name);
+        const destPath = join(destDir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(srcPath, destPath);
+        } else {
+          await copyFile(srcPath, destPath);
+        }
+      })
+    );
   }
   await walk(baseCwd, targetWorktree);
 }
@@ -309,38 +311,40 @@ async function mergeWinnerWorktree(winnerWorktree: string, baseCwd: string): Pro
 
   async function walk(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (SKIP_DIRS.has(entry.name)) continue;
-      const winnerPath = join(dir, entry.name);
-      const relPath = relative(winnerWorktree, winnerPath);
-      const basePath = join(baseCwd, relPath);
+    await Promise.all(
+      entries.map(async (entry) => {
+        if (SKIP_DIRS.has(entry.name)) return;
+        const winnerPath = join(dir, entry.name);
+        const relPath = relative(winnerWorktree, winnerPath);
+        const basePath = join(baseCwd, relPath);
 
-      if (entry.isDirectory()) {
-        await walk(winnerPath);
-        continue;
-      }
+        if (entry.isDirectory()) {
+          await walk(winnerPath);
+          return;
+        }
 
-      try {
-        const winnerContent = await readFile(winnerPath);
-        let shouldCopy = false;
         try {
-          const baseContent = await readFile(basePath);
-          if (Buffer.compare(winnerContent, baseContent) !== 0) {
+          const winnerContent = await readFile(winnerPath);
+          let shouldCopy = false;
+          try {
+            const baseContent = await readFile(basePath);
+            if (Buffer.compare(winnerContent, baseContent) !== 0) {
+              shouldCopy = true;
+            }
+          } catch {
             shouldCopy = true;
           }
-        } catch {
-          shouldCopy = true;
-        }
 
-        if (shouldCopy) {
-          await ensureDir(dirname(basePath));
-          await copyFile(winnerPath, basePath);
-          mergedFiles.push(relPath);
+          if (shouldCopy) {
+            await ensureDir(dirname(basePath));
+            await copyFile(winnerPath, basePath);
+            mergedFiles.push(relPath);
+          }
+        } catch (err) {
+          errors.push(`${relPath}: ${err instanceof Error ? err.message : String(err)}`);
         }
-      } catch (err) {
-        errors.push(`${relPath}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
+      })
+    );
   }
 
   await walk(winnerWorktree);
@@ -380,11 +384,11 @@ async function aggregateCandidateResults(
       mergeErrors.push(String(err));
     }
 
-    for (const item of results) {
-      if (item.worktree && item.worktree !== baseCwd) {
-        await cleanupWorktree(item.worktree);
-      }
-    }
+    await Promise.all(
+      results
+        .filter((item) => item.worktree && item.worktree !== baseCwd)
+        .map((item) => cleanupWorktree(item.worktree!))
+    );
   }
 
   return {

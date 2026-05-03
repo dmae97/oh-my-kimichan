@@ -122,7 +122,14 @@ export class BannerReplacer {
     let rest = data;
 
     while (rest.length > 0) {
-      const setupMatch = rest.match(/^(\x1b\[(?:\?1049[hl]|\?25[hl]|[0-9;]*[Hf]|[0-9;]*[JK]|2K))/);
+      const altScreenMatch = rest.match(/^(\x1b\[\?1049[hl])/);
+      if (altScreenMatch) {
+        // Drop alternate-screen-buffer sequences so the terminal
+        // scrollback remains visible instead of being hidden.
+        rest = rest.slice(altScreenMatch[1].length);
+        continue;
+      }
+      const setupMatch = rest.match(/^(\x1b\[(?:\?25[hl]|[0-9;]*[Hf]|[0-9;]*[JK]|2K))/);
       const resetMatch = rest.match(/^(\x1bc)/);
       const charsetMatch = rest.match(/^(\x1b\([A-Za-z0-9])/);
       const match = setupMatch ?? resetMatch ?? charsetMatch;

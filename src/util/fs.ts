@@ -17,7 +17,7 @@ import { execSync } from "child_process";
 import { GLOBAL_MEMORY_CONFIG_TOML, getGlobalMemoryConfigPath } from "../memory/memory-config.js";
 import { SyncManifestEntry, sha256, simpleDiff } from "./sync-manifest.js";
 import { getOmkResourceSettings, type OmkRuntimeScope } from "./resource-profile.js";
-import { getKimiCapabilities } from "./kimi-capability.js";
+import { getKimiCapabilities } from "../kimi/capability.js";
 import { resolveRuntimeProfile, buildProfileArgs } from "./runtime-profile.js";
 
 export async function ensureDir(path: string): Promise<void> {
@@ -66,7 +66,7 @@ export async function readManifest(): Promise<SyncManifestEntry[]> {
 export async function writeManifest(entries: SyncManifestEntry[]): Promise<void> {
   const path = getManifestPath();
   await ensureDir(dirname(path));
-  await writeFile(path, JSON.stringify(entries, null, 2), "utf-8");
+  await writeFile(path, JSON.stringify(entries, null, 2) + "\n", "utf-8");
 }
 
 export async function backupFile(sourcePath: string, backupDir: string, relativePath: string): Promise<string> {
@@ -308,7 +308,7 @@ export async function syncKimiMcpGlobal(
 
   // 병합: 글로벌 먼저, 프로젝트가 같은 키 덮어씀
   const finalServers = { ...(globalParsed.mcpServers ?? {}), ...mergedServers };
-  const newContent = JSON.stringify({ mcpServers: finalServers }, null, 2);
+  const newContent = JSON.stringify({ mcpServers: finalServers }, null, 2) + "\n";
 
   if (previousContent === newContent) return false;
 
@@ -580,8 +580,12 @@ export async function collectMcpConfigs(scope: OmkRuntimeScope = "project"): Pro
     // can confuse Kimi CLI into loading only the last (or first) file.
     if (await pathExists(globalMcp)) configs.push(globalMcp);
   } else {
-    if (await pathExists(omkMcp)) configs.push(omkMcp);
-    if (await pathExists(kimiMcp)) configs.push(kimiMcp);
+    const [omkMcpExists, kimiMcpExists] = await Promise.all([
+      pathExists(omkMcp),
+      pathExists(kimiMcp),
+    ]);
+    if (omkMcpExists) configs.push(omkMcp);
+    if (kimiMcpExists) configs.push(kimiMcp);
   }
   return configs;
 }
@@ -723,14 +727,18 @@ export async function injectKimiGlobals(
 
   const globalSkillsDir = join(homedir(), ".kimi", "skills");
   const projectSkillsDir = getKimiSkillsDir();
-  if (skillsScope === "all" && await pathExists(globalSkillsDir)) args.push("--skills-dir", globalSkillsDir);
-  if (skillsScope !== "none" && await pathExists(projectSkillsDir)) args.push("--skills-dir", projectSkillsDir);
+  const [globalSkillsExists, projectSkillsExists] = await Promise.all([
+    skillsScope === "all" ? pathExists(globalSkillsDir) : Promise.resolve(false),
+    skillsScope !== "none" ? pathExists(projectSkillsDir) : Promise.resolve(false),
+  ]);
+  if (globalSkillsExists) args.push("--skills-dir", globalSkillsDir);
+  if (projectSkillsExists) args.push("--skills-dir", projectSkillsDir);
 
   if (process.env.OMK_DEBUG === "1") {
     const mcpFiles = await collectMcpConfigs(mcpScope);
     const skillDirs: string[] = [];
-    if (skillsScope === "all" && await pathExists(globalSkillsDir)) skillDirs.push(globalSkillsDir);
-    if (skillsScope !== "none" && await pathExists(projectSkillsDir)) skillDirs.push(projectSkillsDir);
+    if (globalSkillsExists) skillDirs.push(globalSkillsDir);
+    if (projectSkillsExists) skillDirs.push(projectSkillsDir);
     const modelIdx = args.indexOf("--model");
     const effectiveModel = modelIdx >= 0 ? args[modelIdx + 1] : null;
     console.error("[OMK_DEBUG] injectKimiGlobals:", {

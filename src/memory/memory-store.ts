@@ -4,8 +4,6 @@ import { getProjectRoot } from "../util/fs.js";
 import {
   loadMemorySettings,
   summarizeMemorySettings,
-  usesExternalNeo4jBackend,
-  usesLocalGraphBackend,
   type MemorySettings,
   type MemoryStatus,
 } from "./memory-config.js";
@@ -15,6 +13,7 @@ import type {
   MemoryOntology,
   MemorySearchResult,
 } from "./local-graph-memory-store.js";
+import type { MemoryBackend } from "./memory-config.js";
 
 export interface MemoryStoreOptions {
   projectRoot?: string;
@@ -23,13 +22,140 @@ export interface MemoryStoreOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+export interface UnifiedMemoryStore {
+  readonly status: MemoryStatus;
+  readonly strict: boolean;
+  readonly mirrorFiles: boolean;
+  readonly migrateFiles: boolean;
+  read(path: string): Promise<string>;
+  write(path: string, content: string): Promise<void>;
+  append(path: string, content: string): Promise<void>;
+  search(query: string, limit?: number): Promise<MemorySearchResult[]>;
+  ontology?: () => Promise<MemoryOntology | null>;
+  mindmap?: (query?: string, limit?: number) => Promise<MemoryMindmap | null>;
+  graphQuery?: (query: string) => Promise<GraphQueryResult>;
+}
+
+export async function createMemoryStore(
+  backend: MemoryBackend,
+  options: MemoryStoreOptions = {}
+): Promise<UnifiedMemoryStore | null> {
+  if (backend === "local_graph") {
+    const { LocalGraphMemoryStore } = await import("./local-graph-memory-store.js");
+    return LocalGraphMemoryStore.create(options);
+  }
+  if (backend === "neo4j") {
+    const { Neo4jMemoryStore } = await import("./neo4j-memory-store.js");
+    return Neo4jMemoryStore.create(options);
+  }
+  if (backend === "kuzu") {
+    const { KuzuMemoryStore } = await import("./kuzu-memory-store.js");
+    return KuzuMemoryStore.create(options);
+  }
+  if (backend === "dual") {
+    const [{ LocalGraphMemoryStore }, { Neo4jMemoryStore }] = await Promise.all([
+      import("./local-graph-memory-store.js"),
+      import("./neo4j-memory-store.js"),
+    ]);
+    const [local, neo4jStore] = await Promise.all([
+      LocalGraphMemoryStore.create(options),
+      Neo4jMemoryStore.create(options),
+    ]);
+    if (!local || !neo4jStore) return null;
+    return new DualMemoryStore(local, neo4jStore);
+  }
+  return null;
+}
+
+class DualMemoryStore implements UnifiedMemoryStore {
+  constructor(
+    private readonly local: UnifiedMemoryStore,
+    private readonly neo4j: UnifiedMemoryStore
+  ) {}
+
+  get status(): MemoryStatus {
+    return this.local.status;
+  }
+
+  get strict(): boolean {
+    return this.local.strict;
+  }
+
+  get mirrorFiles(): boolean {
+    return this.local.mirrorFiles;
+  }
+
+  get migrateFiles(): boolean {
+    return this.local.migrateFiles;
+  }
+
+  async read(path: string): Promise<string> {
+    return this.local.read(path);
+  }
+
+  async write(path: string, content: string): Promise<void> {
+    const results = await Promise.allSettled([
+      this.local.write(path, content),
+      this.neo4j.write(path, content),
+    ]);
+    const firstError = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (firstError) throw firstError.reason;
+  }
+
+  async append(path: string, content: string): Promise<void> {
+    const results = await Promise.allSettled([
+      this.local.append(path, content),
+      this.neo4j.append(path, content),
+    ]);
+    const firstError = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (firstError) throw firstError.reason;
+  }
+
+  async search(query: string, limit?: number): Promise<MemorySearchResult[]> {
+    return this.local.search(query, limit);
+  }
+
+  async ontology(): Promise<MemoryOntology | null> {
+    return this.local.ontology?.() ?? null;
+  }
+
+  async mindmap(query?: string, limit?: number): Promise<MemoryMindmap | null> {
+    return this.local.mindmap?.(query, limit) ?? null;
+  }
+
+  async graphQuery(query: string): Promise<GraphQueryResult> {
+    if (this.local.graphQuery) {
+      return this.local.graphQuery(query);
+    }
+    if (this.neo4j.graphQuery) {
+      return this.neo4j.graphQuery(query);
+    }
+    throw new Error("omk_graph_query requires a graph memory backend (local_graph or neo4j)");
+  }
+}
+
 export class MemoryStore {
   private readonly basePath: string;
   private settingsPromise?: Promise<MemorySettings>;
-  private graphStorePromise?: Promise<GraphMemoryStore | null>;
+  private graphStorePromise?: Promise<UnifiedMemoryStore | null>;
+  private graphStatePromise?: Promise<void>;
 
   constructor(basePath: string, private readonly options: MemoryStoreOptions = {}) {
     this.basePath = resolve(basePath);
+  }
+
+  public async ensureGraphState(): Promise<void> {
+    this.graphStatePromise ??= (async () => {
+      const graph = await this.getGraphStore();
+      if (!graph) return;
+      const settings = await this.getSettings();
+      try {
+        await graph.write("project", JSON.stringify({ key: settings.project.key, name: settings.project.name }));
+      } catch (err) {
+        if (graph.strict) throw err;
+      }
+    })();
+    return this.graphStatePromise;
   }
 
   private safePath(inputPath: string): string {
@@ -66,6 +192,7 @@ export class MemoryStore {
   }
 
   async write(path: string, content: string): Promise<void> {
+    await this.ensureGraphState();
     const full = this.safePath(path);
     const graph = await this.getGraphStore();
     if (graph) {
@@ -106,6 +233,7 @@ export class MemoryStore {
   }
 
   async writeRunMemory(runId: string, path: string, content: string): Promise<void> {
+    await this.ensureGraphState();
     const { full, graphPath } = this.safeRunPath(runId, path);
     const graph = await this.getGraphStore();
     if (graph) {
@@ -184,38 +312,16 @@ export class MemoryStore {
     return this.settingsPromise;
   }
 
-  private async getGraphStore(): Promise<GraphMemoryStore | null> {
+  private async getGraphStore(): Promise<UnifiedMemoryStore | null> {
     this.graphStorePromise ??= (async () => {
       const settings = await this.getSettings();
-      const options = {
+      return createMemoryStore(settings.backend, {
         projectRoot: this.options.projectRoot,
         sessionId: this.options.sessionId,
         source: this.options.source,
         env: this.options.env,
-      };
-      if (usesLocalGraphBackend(settings.backend)) {
-        const { LocalGraphMemoryStore } = await import("./local-graph-memory-store.js");
-        return LocalGraphMemoryStore.create(options);
-      }
-      if (usesExternalNeo4jBackend(settings.backend)) {
-        const { Neo4jMemoryStore } = await import("./neo4j-memory-store.js");
-        return Neo4jMemoryStore.create(options);
-      }
-      return null;
+      });
     })();
     return this.graphStorePromise;
   }
-}
-
-interface GraphMemoryStore {
-  readonly status: MemoryStatus;
-  readonly strict: boolean;
-  readonly mirrorFiles: boolean;
-  readonly migrateFiles: boolean;
-  read(path: string): Promise<string>;
-  write(path: string, content: string): Promise<void>;
-  search(query: string, limit?: number): Promise<MemorySearchResult[]>;
-  ontology?: () => Promise<MemoryOntology>;
-  mindmap?: (query?: string, limit?: number) => Promise<MemoryMindmap>;
-  graphQuery?: (query: string) => Promise<GraphQueryResult>;
 }

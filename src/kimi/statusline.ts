@@ -1,6 +1,6 @@
-import { style } from "./theme.js";
-import { formatKimiUsageInline, getKimiUsage, type UsageStats } from "./kimi-usage.js";
-import { buildUsageViewModel } from "./usage-view-model.js";
+import { style } from "../util/theme.js";
+import { formatKimiUsageInline, getKimiUsage, type UsageStats } from "./usage.js";
+import { buildUsageViewModel } from "../util/usage-view-model.js";
 
 function miniGauge(percent: number, width = 6): string {
   const safePercent = Math.min(100, Math.max(0, percent));
@@ -40,7 +40,7 @@ export function formatKimiUsageGauges(stats: UsageStats): string {
 const STATUS_VALUE = String.raw`[^\s|\r\n]+`;
 const CONTEXT_BASE = String.raw`context:\s*\d+(?:\.\d+)?%\s*(?:\([^\r\n)]*\))?`;
 const CONTEXT_WITH_TOKENS_RE = new RegExp(String.raw`${CONTEXT_BASE}\s*\|\s*in:${STATUS_VALUE}\s+out:${STATUS_VALUE}`, "g");
-const CONTEXT_BASE_ONLY_RE = new RegExp(String.raw`${CONTEXT_BASE}(?!\s*(?:\(|\|\s*(?:in:|omk:)))`, "g");
+const CONTEXT_BASE_ONLY_RE = new RegExp(String.raw`${CONTEXT_BASE}(?!\s*(?:\(|\|\s*(?:in:|context:)))`, "g");
 
 export interface KimiStatusLineEnhancerOptions {
   refreshMs?: number;
@@ -51,11 +51,11 @@ export interface KimiStatusLineEnhancerOptions {
 
 export function enhanceKimiContextStatusLine(data: string, inlineUsage: string, colorize = true): string {
   if (!inlineUsage || !data.includes("context:")) return data;
-  const segment = colorize ? style.mint(`omk:${inlineUsage}`) + style.gray(" | ") : `omk:${inlineUsage} | `;
+  const segment = colorize ? style.mint(`context:${inlineUsage}`) + style.gray(" | ") : `context:${inlineUsage} | `;
   const appendOnce = (match: string, offset: number, full: string): string => {
     const lineStart = full.lastIndexOf("\n", offset - 1) + 1;
     const lineHead = full.slice(lineStart, offset);
-    return /omk:/.test(lineHead) ? match : `${segment}${match}`;
+    return /context:/.test(lineHead) ? match : `${segment}${match}`;
   };
   return data
     .replace(CONTEXT_WITH_TOKENS_RE, appendOnce)
@@ -64,11 +64,11 @@ export function enhanceKimiContextStatusLine(data: string, inlineUsage: string, 
 
 export function enhanceKimiContextStatusLineWithGauges(data: string, gauges: string, colorize = true): string {
   if (!gauges || !data.includes("context:")) return data;
-  const segment = colorize ? style.mint(`omk:${gauges}`) + style.gray(" | ") : `omk:${gauges} | `;
+  const segment = colorize ? style.mint(`context:${gauges}`) + style.gray(" | ") : `context:${gauges} | `;
   const appendOnce = (match: string, offset: number, full: string): string => {
     const lineStart = full.lastIndexOf("\n", offset - 1) + 1;
     const lineHead = full.slice(lineStart, offset);
-    return /omk:/.test(lineHead) ? match : `${segment}${match}`;
+    return /context:/.test(lineHead) ? match : `${segment}${match}`;
   };
   return data
     .replace(CONTEXT_WITH_TOKENS_RE, appendOnce)
@@ -117,7 +117,7 @@ export class KimiStatusLineEnhancer {
   }
 
   dispose(): void {
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
   }
 

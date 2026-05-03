@@ -19,12 +19,12 @@ import {
   buildRunViewModel,
   type RunViewModel,
   type RunViewModelWorker,
-} from "./run-view-model.js";
+} from "../util/run-view-model.js";
 import {
   style,
   roleColor,
   padEndAnsi,
-} from "./theme.js";
+} from "../util/theme.js";
 
 let stdoutLock: Promise<void> = Promise.resolve();
 async function lockedStdoutWrite(data: string): Promise<void> {
@@ -119,8 +119,10 @@ function formatStateShort(state: string): string {
       return style.pinkBold("failed");
     case "blocked":
       return style.orangeBold("blocked");
+    case "skipped":
+      return style.gray("⊘ skipped");
     default:
-      return style.gray("idle");
+      return style.gray("□ idle");
   }
 }
 
@@ -168,8 +170,13 @@ function renderParallelTable(vm: RunViewModel): string {
     let evidence = "--";
     if (w.lastEvidence) {
       evidence = w.lastEvidence.passed ? "✓" : `✕ ${w.lastEvidence.gate}`;
+      if (!w.lastEvidence.passed && w.lastEvidence.message) {
+        evidence += ` — ${truncate(w.lastEvidence.message, 40)}`;
+      }
     } else if (w.state === "done") {
       evidence = "⚠";
+    } else if (w.state === "failed" || w.state === "blocked") {
+      evidence = w.state === "failed" ? "✕ failed" : "⊘ blocked";
     }
 
     rows.push(
@@ -219,8 +226,8 @@ export function renderParallelCockpit(
   const conf = etaConfidence(vm);
   const etaText = vm.eta ?? "--";
   lines.push(`Progress  ${buildBar(vm.progress.percent)} ${vm.progress.percent}%  ·  ETA ${etaText} · ${conf.text}`);
-  const pending = vm.progress.total - vm.progress.done - vm.progress.running - vm.progress.failed - vm.progress.blocked;
-  lines.push(`${vm.progress.done} done · ${vm.progress.running} running · ${vm.progress.failed} failed · ${vm.progress.blocked} blocked · ${pending} pending`);
+  const pending = vm.progress.total - vm.progress.settled - vm.progress.running;
+  lines.push(`${vm.progress.settled} settled · ${vm.progress.done} done · ${vm.progress.running} running · ${vm.progress.failed} failed · ${vm.progress.blocked} blocked · ${vm.progress.skipped} skipped · ${pending} pending`);
   lines.push("");
 
   // Section 3 — Workers
@@ -271,19 +278,30 @@ export function renderParallelCockpit(
 
       const row = `  ${padEndAnsi(roleCol, roleW)} ${padEndAnsi(nodeCol, nodeW)} ${padEndAnsi(stateCol, stateW)} ${padEndAnsi(elapsedCol, elapsedW)} ${padEndAnsi(retryCol, retryW)} ${evidenceCol}`;
       lines.push(row);
+      if (w.state === "running" && w.phase) {
+        lines.push(`    ${style.gray("→")} ${truncate(w.phase, nodeW)}`);
+      }
     }
     lines.push("");
   }
 
   // Section 4 — Action
   const hasBlockers = vm.blocker != null || vm.progress.failed > 0 || vm.progress.blocked > 0;
-  const allSettled = vm.progress.running === 0 && vm.progress.total > 0;
+  const allSettled = vm.progress.settled === vm.progress.total && vm.progress.total > 0;
 
   if (hasBlockers) {
     lines.push(style.pinkBold("▸ Blockers"));
     if (vm.blocker) {
-      lines.push(`  ${style.red("Node:")} ${style.creamBold(vm.blocker.nodeId)}`);
+      const recoverableIcon = vm.blocker.recoverable ? "🔄" : "❌";
+      lines.push(`  ${style.red("Node:")} ${style.creamBold(vm.blocker.nodeId)} ${recoverableIcon}`);
       lines.push(`  ${style.gray("Reason:")} ${vm.blocker.reason}`);
+      if (vm.blocker.evidenceMessage) {
+        lines.push(`  ${style.gray("Evidence:")} ${style.gray(truncate(vm.blocker.evidenceMessage, termWidth - 14))}`);
+      }
+      lines.push(`  ${style.gray("Retry:")} ${vm.blocker.retryCount}/${vm.blocker.maxRetries}`);
+      if (vm.blocker.logHint) {
+        lines.push(`  ${style.gray("Log:")} ${style.gray(vm.blocker.logHint)}`);
+      }
       lines.push(`  ${style.gray("Next:")} ${style.cream(vm.blocker.nextAction)}`);
     } else {
       lines.push(`  ${style.gray("Some nodes are failed or blocked. Review the worker grid above.")}`);
@@ -340,9 +358,12 @@ export function renderParallelFrame(
 
 function buildCompactParallelFrame(vm: RunViewModel, mode: string, termWidth: number): string {
   const parts: string[] = ["OMK parallel"];
-  parts.push(`· ${vm.progress.done}/${vm.progress.total} done`);
+  parts.push(`· ${vm.progress.settled}/${vm.progress.total} settled`);
   if (vm.progress.running > 0) {
     parts.push(`· ${vm.progress.running} running`);
+  }
+  if (vm.progress.skipped > 0) {
+    parts.push(`· ${vm.progress.skipped} skipped`);
   }
   const eta = vm.eta ?? "--";
   parts.push(`· ETA ${eta}`);

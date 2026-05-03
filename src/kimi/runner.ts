@@ -1,17 +1,18 @@
 import pty from "node-pty";
-import { BannerReplacer } from "./kimi-banner.js";
-import { KimiBugFilter } from "./kimi-bug-filter.js";
-import { kimichanBanner, style } from "./theme.js";
-import { ensureDir, injectKimiGlobals, getProjectRoot, pathExists } from "./fs.js";
-import { readClipboardImage } from "./clipboard-image.js";
+import { BannerReplacer } from "./banner.js";
+import { KimiBugFilter } from "./bug-filter.js";
+import { kimichanBanner, style } from "../util/theme.js";
+import { ensureDir, injectKimiGlobals, getProjectRoot, pathExists } from "../util/fs.js";
+import { readClipboardImage } from "../util/clipboard-image.js";
 import { join, resolve } from "path";
 import { spawn } from "child_process";
 import type { TaskRunner, TaskResult } from "../contracts/orchestration.js";
 import type { DagNode } from "../orchestration/dag.js";
-import { runShellStreaming } from "./shell.js";
-import { getOmkResourceSettings, type OmkRuntimeScope } from "./resource-profile.js";
-import { KimiStatusLineEnhancer } from "./kimi-statusline.js";
-import { formatOmkVersionFooter } from "./version.js";
+import { runShellStreaming } from "../util/shell.js";
+import { getOmkResourceSettings, type OmkRuntimeScope } from "../util/resource-profile.js";
+import { KimiStatusLineEnhancer } from "./statusline.js";
+import { formatOmkVersionFooter } from "../util/version.js";
+import { prepareIsolatedKimiHome, cleanupIsolatedKimiHome } from "./isolated-home.js";
 
 export async function runKimiInteractive(
   args: string[],
@@ -37,9 +38,10 @@ export async function runKimiInteractive(
   const statusLine = await KimiStatusLineEnhancer.create();
   const originalRawMode = process.stdin.isTTY ? process.stdin.isRaw : undefined;
 
+  const tmpHome = await prepareIsolatedKimiHome();
   const env = options?.env
-    ? { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile, ...options.env }
-    : { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile };
+    ? { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile, HOME: tmpHome, ...options.env }
+    : { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile, HOME: tmpHome };
 
   const ptyProcess = pty.spawn("kimi", args, {
     name: "xterm-256color",
@@ -92,6 +94,15 @@ export async function runKimiInteractive(
   // stdout → 터미널 (버그 필터 → 배너 필터링 적용)
   ptyProcess.onData((data) => {
     options?.onData?.(data);
+    // Strip terminal sequences that break scrollback / native mouse scrolling:
+    // - alternate-screen buffer enter/exit (1049, legacy 47)
+    // - mouse tracking (1000, 1002, 1006)
+    // - scroll-region setting (r) — prevents partial-screen redraws that confuse scrollback
+    data = data
+      .replace(/\x1b\[\?1049[hl]/g, "")
+      .replace(/\x1b\[\?47[hl]/g, "")
+      .replace(/\x1b\[\?(1000|1002|1003|1006)[hl]/g, "")
+      .replace(/\x1b\[\d+;\d+[r]/g, "");
     const bugResult = bugFilter.process(data);
     if (bugResult.sendEnter) {
       ptyProcess.write("\n");
@@ -155,7 +166,8 @@ export async function runKimiInteractive(
       return;
     }
 
-    ptyProcess.write(text);
+    const sanitized = text.replace(/\x1b\[[AB]/g, "");
+    ptyProcess.write(sanitized);
   });
 
   // 터미널 리사이즈 → pty 동기화
@@ -178,8 +190,11 @@ export async function runKimiInteractive(
       // Do NOT process.exit here — the caller should decide when to exit.
       // Returning the exit code via resolve is enough for the wrapper to handle.
       if (exitCode !== 0) {
-        process.stderr.write(style.red(`[omk] kimi exited with code ${exitCode}\n`));
+        const runId = options?.env?.OMK_RUN_ID;
+        const resumeHint = runId ? ` • resume: omk resume ${runId}` : "";
+        process.stderr.write(style.red(`[omk] kimi exited with code ${exitCode}${resumeHint}\n`));
       }
+      void cleanupIsolatedKimiHome(tmpHome);
       resolve(exitCode);
     });
   });
@@ -268,7 +283,8 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
     },
 
     async run(node: DagNode, nodeEnv: Record<string, string>): Promise<TaskResult> {
-      const mergedEnv = { ...env, ...nodeEnv };
+      const tmpHome = await prepareIsolatedKimiHome();
+      const mergedEnv: Record<string, string> = { ...env, ...nodeEnv, HOME: tmpHome };
       const args: string[] = [];
       await injectKimiGlobals(args, { mcpScope, skillsScope, role: node.role });
 
@@ -293,13 +309,18 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
 
       const thinkingHandler = createLiveThinkingHandler(currentOnThinking);
 
-      const result = await runShellStreaming("kimi", args, {
-        cwd: worktree,
-        timeout,
-        env: mergedEnv,
-        logPath,
-        onStdout: thinkingHandler,
-      });
+      let result: Awaited<ReturnType<typeof runShellStreaming>>;
+      try {
+        result = await runShellStreaming("kimi", args, {
+          cwd: worktree,
+          timeout,
+          env: mergedEnv,
+          logPath,
+          onStdout: thinkingHandler,
+        });
+      } finally {
+        await cleanupIsolatedKimiHome(tmpHome);
+      }
 
       // Debug: log runner result so we can diagnose unexpected failures
       if (result.failed || result.exitCode !== 0) {
@@ -307,6 +328,14 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
         process.stderr.write(
           `[omk-debug] node=${node.id} exitCode=${result.exitCode} failed=${result.failed} stdoutLen=${result.stdout.length} stderrLen=${result.stderr.length} stderrPreview=${stderrPreview}\n`
         );
+        if (result.stderr.includes("Failed to connect MCP servers")) {
+          process.stderr.write(
+            style.red(
+              `[omk] MCP server connection failure detected in node ${node.id}.\n` +
+                `      Run 'omk doctor' to check MCP status, or disable the failing server in ~/.kimi/mcp.json.\n`
+            )
+          );
+        }
       }
 
       const prefix = `[${node.id}:${node.role}] `;
@@ -319,12 +348,15 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
         .map((line) => (line.trim() ? prefix + line : line))
         .join("\n");
 
-      // Kimi CLI (--print) may return exit code 1 when an MCP server fails to
-      // connect, even though it produced meaningful stdout. Treat non-empty
-      // stdout as success so the DAG can continue.
-      const hasOutput = result.stdout.trim().length > 0;
+      // Known MCP soft-failure: Kimi CLI may return exit code 1 when an MCP
+      // server fails to connect, even though it produced meaningful stdout.
+      // Only allow this specific exception; all other non-zero exits are failures.
+      const isMcpSoftFailure =
+        result.exitCode !== 0 &&
+        result.stderr.includes("Failed to connect MCP servers") &&
+        result.stdout.trim().length > 0;
       return {
-        success: (!result.failed && result.exitCode === 0) || hasOutput,
+        success: (!result.failed && result.exitCode === 0) || isMcpSoftFailure,
         exitCode: result.exitCode,
         stdout: prefixStdout,
         stderr: prefixStderr,

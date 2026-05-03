@@ -1,8 +1,12 @@
-import { getOmkPath, getProjectRoot, pathExists, injectKimiGlobals } from "../util/fs.js";
-import { style, status } from "../util/theme.js";
+import { getOmkPath, getProjectRoot, pathExists, injectKimiGlobals, collectMcpConfigs, getKimiSkillsDir } from "../util/fs.js";
+import { style, status, box, label, separator } from "../util/theme.js";
 import { runShell } from "../util/shell.js";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, writeFile, readdir } from "fs/promises";
 import { dirname, join, isAbsolute, relative } from "path";
+import { homedir } from "os";
+import { orchestratePrompt } from "../orchestration/orchestrate-prompt.js";
+import { writeTodos, readTodos, parseSetTodoListFromOutput, type TodoItem } from "../util/todo-sync.js";
+import { writeSessionMeta, readSessionMeta, createOmkSessionEnv, createOmkSessionId } from "../util/session.js";
 
 export async function ensureChatRunState(root: string, runId: string): Promise<void> {
   const runDir = join(root, ".omk", "runs", runId);
@@ -29,6 +33,14 @@ export async function ensureChatRunState(root: string, runId: string): Promise<v
       updatedAt: new Date().toISOString(),
     };
     await writeFile(statePath, JSON.stringify(state, null, 2));
+    // Write initial session metadata and empty todos
+    try {
+      const now = new Date().toISOString();
+      await writeSessionMeta(runDir, { runId, type: "chat", status: "active", startedAt: now, updatedAt: now, todoCount: 0, todoDoneCount: 0 });
+      await writeTodos(runDir, []);
+    } catch {
+      // ignore initialization failures
+    }
   }
 }
 
@@ -89,11 +101,43 @@ export async function finalizeChatRunState(root: string, runId: string, success:
   } catch {
     // ignore finalize failures
   }
+  // Update session.json
+  try {
+    const runDir = join(root, ".omk", "runs", runId);
+    const meta = await readSessionMeta(runDir).catch(() => null);
+    const now = new Date().toISOString();
+    if (meta) {
+      meta.status = success ? "completed" : "failed";
+      meta.endedAt = now;
+      meta.updatedAt = now;
+      await writeSessionMeta(runDir, meta);
+    } else {
+      await writeSessionMeta(runDir, { runId, type: "chat", status: success ? "completed" : "failed", startedAt: now, updatedAt: now, todoCount: 0, todoDoneCount: 0 });
+    }
+  } catch {
+    // ignore session finalize failures
+  }
 }
+
+function mergeTodos(existing: TodoItem[], incoming: TodoItem[]): TodoItem[] {
+  const map = new Map<string, TodoItem>();
+  for (const t of existing) {
+    map.set(t.title, t);
+  }
+  for (const t of incoming) {
+    const current = map.get(t.title);
+    if (current) {
+      map.set(t.title, { ...current, status: t.status });
+    } else {
+      map.set(t.title, t);
+    }
+  }
+  return Array.from(map.values());
+}
+
 import YAML from "yaml";
 import { initCommand } from "./init.js";
-import { runKimiInteractive } from "../util/kimi-runner.js";
-import { createOmkSessionEnv, createOmkSessionId } from "../util/session.js";
+import { runKimiInteractive } from "../kimi/runner.js";
 import { t } from "../util/i18n.js";
 import { detectTmux, launchChatCockpit, isCockpitChild } from "../util/chat-cockpit.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
@@ -154,6 +198,25 @@ function renderChatIntro(
   return lines.join("\n");
 }
 
+async function collectUserPrompt(): Promise<string> {
+  if (!process.stdin.isTTY) {
+    const chunks: Buffer[] = [];
+    process.stdin.on("data", (chunk) => chunks.push(chunk));
+    return new Promise((resolve, reject) => {
+      process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8").trim()));
+      process.stdin.on("error", reject);
+    });
+  }
+  const { createInterface } = await import("readline");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(style.purpleBold("🌸 What would you like to do? ") + "\n> ", (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
 export async function chatCommand(options: {
   agentFile?: string;
   runId?: string;
@@ -163,6 +226,7 @@ export async function chatCommand(options: {
   brand?: ChatBrand;
 }): Promise<void> {
   const root = getProjectRoot();
+  const hasExplicitAgentFile = options.agentFile !== undefined;
   const agentFile = options.agentFile ?? getOmkPath("agents/root.yaml");
   const sessionId = createOmkSessionId("chat");
   const runId = options.runId;
@@ -175,6 +239,15 @@ export async function chatCommand(options: {
     console.log(status.warn(t("chat.notInitialized")));
     await initCommand({ profile: "default" });
     console.log(status.ok(t("chat.autoInitComplete")));
+  }
+
+  // ── Star prompt at chat start (parent only, skipped in cockpit child) ──
+  try {
+    const { maybeAskForGitHubStarAtChatStart } = await import("../util/first-run-star.js");
+    const { getOmkVersionSync } = await import("../util/version.js");
+    await maybeAskForGitHubStarAtChatStart({ version: getOmkVersionSync() });
+  } catch {
+    // Swallow star prompt errors so chat entry is preserved.
   }
 
   // ── tmux layout: delegate to cockpit launcher ──
@@ -234,28 +307,74 @@ export async function chatCommand(options: {
     }
   }
 
-  const args: string[] = [];
-  args.push("--agent-file", agentFile);
-  await injectKimiGlobals(args);
-  if (process.env.OMK_DEBUG === "1") {
-    console.error("[OMK_DEBUG] chat args:", args);
+  // ── Print recent run history so users can scroll back to see past work ──
+  if (!isPlain) {
+    try {
+      const { listRunCandidates } = await import("./hud.js");
+      const { getOmkPath, pathExists } = await import("../util/fs.js");
+      const { readFile } = await import("fs/promises");
+      const { join } = await import("path");
+      const runsDir = getOmkPath("runs");
+      if (await pathExists(runsDir)) {
+        const candidates = await listRunCandidates(runsDir);
+        const sorted = candidates
+          .filter((c) => c.name !== effectiveRunId)
+          .sort((a, b) => b.stateUpdatedAtMs - a.stateUpdatedAtMs)
+          .slice(0, 5);
+        if (sorted.length > 0) {
+          console.log("");
+          console.log(style.purpleBold("📜 Recent Work History"));
+          for (const c of sorted) {
+            let statusStr = style.gray("unknown");
+            try {
+              const statePath = join(runsDir, c.name, "state.json");
+              const raw = await readFile(statePath, "utf-8");
+              const state = JSON.parse(raw) as Record<string, unknown>;
+              const st = String(state.status ?? "unknown");
+              if (st === "done") statusStr = style.mint(st);
+              else if (st === "running") statusStr = style.purple(st);
+              else if (st === "failed") statusStr = style.red(st);
+              else statusStr = style.gray(st);
+            } catch { /* ignore */ }
+            let goalTitle = "";
+            try {
+              const goalRaw = await readFile(join(runsDir, c.name, "goal.md"), "utf-8");
+              const firstLine = goalRaw.split(/\r?\n/)[0]?.trim() ?? "";
+              goalTitle = firstLine.replace(/^#+\s*/, "").slice(0, 30);
+            } catch { /* ignore */ }
+            const date = new Date(c.stateUpdatedAtMs);
+            const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+            const markers = [c.hasGoal ? "📝" : "", c.hasPlan ? "📐" : ""].join("");
+            const name = c.name.length > 34 ? c.name.slice(0, 31) + "…" : c.name;
+            const titlePart = goalTitle ? style.gray(` → ${goalTitle}`) : "";
+            console.log(`  ${style.gray("•")} ${style.cream(name)} ${statusStr} ${style.gray(dateStr)} ${markers}${titlePart}`);
+          }
+          console.log(style.gray(`  Run ${style.cream("omk runs")} for full history`));
+        }
+      }
+    } catch {
+      // Ignore recent-run rendering failure
+    }
   }
-
-  const env = createOmkSessionEnv(root, sessionId);
-  if (options.workers) {
-    env.OMK_WORKERS = options.workers;
-  }
-  if (options.maxStepsPerTurn) {
-    args.push("--max-steps-per-turn", options.maxStepsPerTurn);
-  }
-
-  env.OMK_RUN_ID = effectiveRunId;
 
   await ensureChatRunState(root, effectiveRunId);
 
+  // ── Resume: show existing TODO summary if resuming ──
+  if (!isPlain) {
+    try {
+      const runDir = join(root, ".omk", "runs", effectiveRunId);
+      const existingTodos = await readTodos(runDir).catch(() => null);
+      if (existingTodos && existingTodos.length > 0) {
+        const doneCount = existingTodos.filter((t) => t.status === "done").length;
+        console.log(style.gray(`📋 Resuming with ${existingTodos.length} todos (${doneCount} done)`));
+      }
+    } catch {
+      // ignore resume check failures
+    }
+  }
+
   // ── Live heartbeat: keep state.json fresh while chat is active ──
   const HEARTBEAT_MS = 2000;
-  let lastThinking = "";
   const pendingUpdates = new Set<Promise<void>>();
   function track(p: Promise<void>): void {
     pendingUpdates.add(p);
@@ -265,40 +384,259 @@ export async function chatCommand(options: {
     track(updateChatHeartbeat(root, effectiveRunId).catch(() => {}));
   }, HEARTBEAT_MS);
 
-  let exitCode = 0;
+  if (hasExplicitAgentFile) {
+    // ── Fallback: direct Kimi interactive session ──
+    const args: string[] = [];
+    args.push("--agent-file", agentFile);
+    await injectKimiGlobals(args);
+    if (process.env.OMK_DEBUG === "1") {
+      console.error("[OMK_DEBUG] chat args:", args);
+    }
+
+    const env = createOmkSessionEnv(root, sessionId);
+    if (options.workers) {
+      env.OMK_WORKERS = options.workers;
+    }
+    if (options.maxStepsPerTurn) {
+      args.push("--max-steps-per-turn", options.maxStepsPerTurn);
+    }
+
+    env.OMK_RUN_ID = effectiveRunId;
+
+    let lastThinking = "";
+    let exitCode = 0;
+
+    // ── Debounced TODO sync ──
+    let pendingTodoSync: Promise<void> | null = null;
+    let todoSyncTimer: ReturnType<typeof setTimeout> | null = null;
+    let accumulatedTodos: TodoItem[] = [];
+
+    function flushTodoSync(): void {
+      if (todoSyncTimer) {
+        clearTimeout(todoSyncTimer);
+        todoSyncTimer = null;
+      }
+      if (accumulatedTodos.length === 0) return;
+      const todosToSync = accumulatedTodos;
+      accumulatedTodos = [];
+      const p = (async () => {
+        const runDir = join(root, ".omk", "runs", effectiveRunId);
+        const existing = await readTodos(runDir).catch(() => [] as TodoItem[]) ?? [];
+        const merged = mergeTodos(existing, todosToSync);
+        await writeTodos(runDir, merged);
+        const doneCount = merged.filter((t) => t.status === "done").length;
+        const now2 = new Date().toISOString();
+        await writeSessionMeta(runDir, {
+          runId: effectiveRunId,
+          type: "chat",
+          status: "active",
+          startedAt: now2,
+          updatedAt: now2,
+          todoCount: merged.length,
+          todoDoneCount: doneCount,
+        });
+      })().catch(() => {});
+      track(p);
+      pendingTodoSync = p;
+    }
+
+    function scheduleTodoSync(newTodos: TodoItem[]): void {
+      accumulatedTodos = mergeTodos(accumulatedTodos, newTodos);
+      if (todoSyncTimer) clearTimeout(todoSyncTimer);
+      todoSyncTimer = setTimeout(flushTodoSync, 500); // 500ms debounce
+    }
+
+    try {
+      exitCode = await runKimiInteractive(args, {
+        cwd: root,
+        env,
+        onData: (data) => {
+          // Lightweight activity sampling: extract short tool/thinking snippets
+          const lines = data.split("\n");
+          for (const raw of lines) {
+            const line = raw.trim();
+            if (!line || line.length < 3) continue;
+            if (/read_file|write_file|edit_file|search_files|glob|grep|ctx_read/i.test(line)) {
+              const m = line.match(/["']([^"']{1,60})["']/);
+              lastThinking = m ? `📄 ${m[1].split("/").pop() ?? m[1]}` : `🔧 ${line.slice(0, 60)}`;
+              track(updateChatThinking(root, effectiveRunId, lastThinking).catch(() => {}));
+              continue;
+            }
+            const explicit = line.match(/^<think(?:ing)?>[\s:]*(.+?)(?:<\/think(?:ing)?>)?$/i);
+            if (explicit) {
+              lastThinking = `🧠 ${explicit[1].trim().slice(0, 100)}`;
+              track(updateChatThinking(root, effectiveRunId, lastThinking).catch(() => {}));
+              continue;
+            }
+          }
+
+          // Parse SetTodoList from output and schedule debounced sync
+          const newTodos = parseSetTodoListFromOutput(data);
+          if (newTodos && newTodos.length > 0) {
+            scheduleTodoSync(newTodos);
+          }
+        },
+      });
+    } finally {
+      clearInterval(heartbeat);
+      flushTodoSync();
+      if (pendingTodoSync) {
+        pendingUpdates.add(pendingTodoSync);
+      }
+      await Promise.all(pendingUpdates);
+      await finalizeChatRunState(root, effectiveRunId, exitCode === 0);
+      await printChatExitBanner({
+        runId: effectiveRunId,
+        sessionId,
+        workers: options.workers,
+        root,
+      });
+      if (isCockpitChild()) {
+        const sanitized = effectiveRunId.replace(/[^a-zA-Z0-9]/g, "-");
+        const session = `omk-chat-${sanitized}`;
+        await runShell("tmux", ["kill-session", "-t", session], { cwd: root, timeout: 5000 }).catch(() => {});
+      }
+    }
+    return;
+  }
+
+  // ── Orchestrated path: collect prompt and route through orchestratePrompt ──
+  let success = true;
   try {
-    exitCode = await runKimiInteractive(args, {
-      cwd: root,
-      env,
-      onData: (data) => {
-        // Lightweight activity sampling: extract short tool/thinking snippets
-        const lines = data.split("\n");
-        for (const raw of lines) {
-          const line = raw.trim();
-          if (!line || line.length < 3) continue;
-          if (/read_file|write_file|edit_file|search_files|glob|grep|ctx_read/i.test(line)) {
-            const m = line.match(/["']([^"']{1,60})["']/);
-            lastThinking = m ? `📄 ${m[1].split("/").pop() ?? m[1]}` : `🔧 ${line.slice(0, 60)}`;
-            track(updateChatThinking(root, effectiveRunId, lastThinking).catch(() => {}));
-            continue;
-          }
-          const explicit = line.match(/^<think(?:ing)?>[\s:]*(.+?)(?:<\/think(?:ing)?>)?$/i);
-          if (explicit) {
-            lastThinking = `🧠 ${explicit[1].trim().slice(0, 100)}`;
-            track(updateChatThinking(root, effectiveRunId, lastThinking).catch(() => {}));
-            continue;
-          }
-        }
-      },
+    const rawPrompt = await collectUserPrompt();
+    if (!rawPrompt) {
+      console.log(style.gray("No prompt provided. Exiting."));
+      return;
+    }
+    await orchestratePrompt(rawPrompt, {
+      sourceCommand: "chat",
+      runId: effectiveRunId,
+      workers: options.workers,
     });
+
+    // Derive TODOs from run state after orchestration
+    try {
+      const runDir = join(root, ".omk", "runs", effectiveRunId);
+      const statePath = join(runDir, "state.json");
+      const raw = await readFile(statePath, "utf8");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const state = JSON.parse(raw) as any;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const nodes = (state.nodes ?? []) as any[];
+      const derivedTodos: TodoItem[] = nodes.map((n: Record<string, unknown>) => ({
+        title: String(n.name ?? n.id ?? "unknown"),
+        status: n.status === "done" ? "done" : n.status === "failed" ? "failed" : "in_progress",
+      }));
+      await writeTodos(runDir, derivedTodos);
+      const doneCount = derivedTodos.filter((t) => t.status === "done").length;
+      const now3 = new Date().toISOString();
+      await writeSessionMeta(runDir, {
+        runId: effectiveRunId,
+        type: "chat",
+        status: "active",
+        startedAt: now3,
+        updatedAt: now3,
+        todoCount: derivedTodos.length,
+        todoDoneCount: doneCount,
+      });
+    } catch {
+      // ignore derivation failure
+    }
+  } catch (err) {
+    success = false;
+    process.exitCode = 1;
+    console.error(status.error(String(err)));
   } finally {
     clearInterval(heartbeat);
     await Promise.all(pendingUpdates);
-    await finalizeChatRunState(root, effectiveRunId, exitCode === 0);
+    await finalizeChatRunState(root, effectiveRunId, success);
+    await printChatExitBanner({
+      runId: effectiveRunId,
+      sessionId,
+      workers: options.workers,
+      root,
+    });
     if (isCockpitChild()) {
       const sanitized = effectiveRunId.replace(/[^a-zA-Z0-9]/g, "-");
       const session = `omk-chat-${sanitized}`;
       await runShell("tmux", ["kill-session", "-t", session], { cwd: root, timeout: 5000 }).catch(() => {});
     }
   }
+}
+
+async function getActiveMcpNames(scope: "all" | "project" | "none"): Promise<string[]> {
+  if (scope === "none") return [];
+  const configs = await collectMcpConfigs(scope);
+  const results = await Promise.all(
+    configs.map(async (cfg) => {
+      try {
+        const raw = await readFile(cfg, "utf-8");
+        const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
+        return parsed.mcpServers ? Object.keys(parsed.mcpServers) : [];
+      } catch {
+        return [];
+      }
+    })
+  );
+  return [...new Set(results.flat())];
+}
+
+async function getActiveSkillNames(skillsScope: "all" | "project" | "none"): Promise<string[]> {
+  if (skillsScope === "none") return [];
+  const dirs: string[] = [];
+  const projectDir = getKimiSkillsDir();
+  if (await pathExists(projectDir)) dirs.push(projectDir);
+  if (skillsScope === "all") {
+    const globalDir = join(homedir(), ".kimi", "skills");
+    if (await pathExists(globalDir)) dirs.push(globalDir);
+  }
+  const results = await Promise.all(
+    dirs.map(async (dir) => {
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+        return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+      } catch {
+        return [];
+      }
+    })
+  );
+  return [...new Set(results.flat())];
+}
+
+async function printChatExitBanner(options: {
+  runId: string;
+  sessionId: string;
+  workers?: string;
+  root: string;
+}): Promise<void> {
+  const { runId, sessionId, workers } = options;
+  const { getOmkResourceSettings } = await import("../util/resource-profile.js");
+  const resources = await getOmkResourceSettings();
+
+  // Parallel discovery of MCP + skills
+  const [mcpNames, skillNames] = await Promise.all([
+    getActiveMcpNames(resources.mcpScope),
+    getActiveSkillNames(resources.skillsScope),
+  ]);
+
+  const mcpText = mcpNames.length > 0 ? mcpNames.join(", ") : style.gray("none");
+  const skillText = skillNames.length > 0 ? skillNames.join(", ") : style.gray("none");
+  const workersText = workers ?? resources.maxWorkers.toString();
+
+  const lines: string[] = [
+    "",
+    style.purpleBold("  🌸 Session Ended"),
+    separator(50),
+    label("Run ID", runId),
+    label("Session", sessionId),
+    label("Resume", `omk resume ${runId}`),
+    label("Workers", workersText),
+    label("MCP", mcpText),
+    label("Skills", skillText),
+    separator(50),
+    style.gray(`  Run ${style.cream("omk hud")} for dashboard, ${style.cream("omk runs")} for history.`),
+    "",
+  ];
+
+  console.log(box(lines));
 }

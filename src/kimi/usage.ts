@@ -330,7 +330,12 @@ async function fetchKimiQuota(
     if (!response.ok) {
       return { rows: [], error: `usage endpoint HTTP ${response.status}` };
     }
-    const payload = await response.json() as unknown;
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return { rows: [], error: "invalid JSON response" };
+    }
     const rows = parseQuotaPayload(payload);
     return {
       fetchedAt: new Date(options.nowMs ?? Date.now()).toISOString(),
@@ -347,6 +352,7 @@ async function fetchKimiQuota(
 }
 
 function parseQuotaPayload(payload: unknown): KimiQuotaRow[] {
+  if (payload == null || typeof payload !== "object") return [];
   if (!isObject(payload)) return [];
   const rows: KimiQuotaRow[] = [];
   if (isObject(payload.usage)) {

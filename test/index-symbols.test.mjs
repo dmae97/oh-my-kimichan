@@ -33,8 +33,8 @@ describe("omk index --symbols", () => {
     assert.strictEqual(typeof entry.exported, "boolean", "exported should be a boolean");
 
     // Spot-check: this file itself should contain known exported functions
-    const ownSymbols = index.symbols.filter((s) => s.file === "src/commands/index.ts");
-    assert.ok(ownSymbols.length > 0, "should index src/commands/index.ts");
+    const ownSymbols = index.symbols.filter((s) => s.file === "src/commands/project-index.ts");
+    assert.ok(ownSymbols.length > 0, "should index src/commands/project-index.ts");
 
     const buildSymbolIndex = ownSymbols.find((s) => s.name === "buildSymbolIndex");
     assert.ok(buildSymbolIndex, "should find buildSymbolIndex function");

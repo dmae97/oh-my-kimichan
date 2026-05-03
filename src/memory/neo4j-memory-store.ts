@@ -12,6 +12,7 @@ import {
   createOntologyConstraints,
   containsMutation,
 } from "./ontology-model.js";
+import { extractConcepts } from "./local-graph-memory-store.js";
 
 interface Neo4jRecordLike {
   keys: string[];
@@ -167,13 +168,187 @@ export class Neo4jMemoryStore {
         memoryKey,
         versionKey,
         path,
-        content,
+        content: content.length <= 1000 ? content : `${content.slice(0, 999)}…`,
         now,
         source: this.source,
         workspaceRootHash: rootHash,
         schemaVersion: ONTOLOGY_SCHEMA_VERSION,
       }
     );
+    await this.writeConcepts(path, content, now);
+  }
+
+  private async writeConcepts(path: string, content: string, now: string): Promise<void> {
+    const allConcepts = extractConcepts(content);
+    const MAX_CONCEPTS = 50;
+    const concepts = allConcepts.slice(0, MAX_CONCEPTS);
+    if (concepts.length === 0 && allConcepts.length === 0) return;
+
+    const memoryKey = this.memoryKey(path);
+    const rootHash = hash(this.settings.project.root);
+    const projectKey = this.settings.project.key;
+
+    for (const concept of concepts) {
+      const conceptId = hash(`${projectKey}:${path}:${concept.line}:${concept.label}`);
+      const label = `Omk${concept.type}`;
+      const relation = `HAS_${concept.type.toUpperCase()}`;
+
+      const baseProps: Record<string, unknown> = {
+        id: conceptId,
+        projectId: projectKey,
+        workspaceRootHash: rootHash,
+        schemaVersion: ONTOLOGY_SCHEMA_VERSION,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      switch (concept.type) {
+        case "Goal":
+          baseProps.goalId = conceptId;
+          baseProps.title = concept.label;
+          baseProps.objective = concept.summary;
+          baseProps.status = "open";
+          baseProps.riskLevel = "low";
+          break;
+        case "Criterion":
+          baseProps.criterionId = conceptId;
+          baseProps.description = concept.summary;
+          baseProps.requirement = concept.label;
+          baseProps.weight = 1.0;
+          break;
+        case "Evidence":
+          baseProps.evidenceId = conceptId;
+          baseProps.passed = true;
+          baseProps.message = concept.summary;
+          baseProps.checkedAt = now;
+          break;
+        case "Decision":
+          baseProps.decisionId = conceptId;
+          baseProps.description = concept.summary;
+          baseProps.decidedAt = now;
+          break;
+        case "Task":
+          baseProps.taskId = conceptId;
+          baseProps.description = concept.summary;
+          baseProps.status = "open";
+          baseProps.priority = "medium";
+          break;
+        case "Risk":
+          baseProps.riskId = conceptId;
+          baseProps.description = concept.summary;
+          baseProps.level = "medium";
+          break;
+        case "Command":
+          baseProps.commandId = conceptId;
+          baseProps.command = concept.label;
+          baseProps.description = concept.summary;
+          break;
+        case "Skill":
+          baseProps.name = concept.label;
+          baseProps.description = concept.summary;
+          break;
+        case "MCPServer":
+          baseProps.name = concept.label;
+          baseProps.description = concept.summary;
+          break;
+        default:
+          continue;
+      }
+
+      const propSets = Object.entries(baseProps)
+        .map(([k]) => `n.${k} = $${k}`)
+        .join(",\n             ");
+
+      await this.execute(
+        `MATCH (m:OmkMemory {key: $memoryKey})
+         MERGE (n:${label} {id: $id, projectId: $projectId})
+         ON CREATE SET n.createdAt = $createdAt
+         SET ${propSets}
+         MERGE (m)-[:${relation}]->(n)`,
+        { ...baseProps, memoryKey }
+      );
+    }
+
+    // Parent-child relationships among concepts
+    for (const concept of concepts) {
+      if (concept.parentIndex === undefined) continue;
+      const parentConcept = concepts[concept.parentIndex];
+      if (!parentConcept) continue;
+
+      const parentId = hash(`${projectKey}:${path}:${parentConcept.line}:${parentConcept.label}`);
+      const childId = hash(`${projectKey}:${path}:${concept.line}:${concept.label}`);
+      const parentLabel = `Omk${parentConcept.type}`;
+      const childLabel = `Omk${concept.type}`;
+
+      // Skip if parent or child type wasn't written (e.g., File, generic Concept)
+      if (parentConcept.type === "File" || concept.type === "File") continue;
+      if (parentConcept.type === "Concept" || concept.type === "Concept") continue;
+
+      await this.execute(
+        `MATCH (parent:${parentLabel} {id: $parentId, projectId: $projectId})
+         MATCH (child:${childLabel} {id: $childId, projectId: $projectId})
+         MERGE (child)-[:PART_OF]->(parent)`,
+        { parentId, childId, projectId: projectKey }
+      );
+    }
+
+    // File nodes from extracted file paths
+    const seenFiles = new Set<string>();
+    for (const concept of concepts) {
+      for (const filePath of concept.filePaths) {
+        if (seenFiles.has(filePath)) continue;
+        seenFiles.add(filePath);
+        const fileId = hash(`${projectKey}:${path}:${filePath}`);
+        await this.execute(
+          `MATCH (m:OmkMemory {key: $memoryKey})
+           MERGE (f:OmkFile {id: $id, projectId: $projectId})
+           ON CREATE SET f.createdAt = $now
+           SET f.path = $path,
+               f.description = $description,
+               f.updatedAt = $now,
+               f.workspaceRootHash = $workspaceRootHash,
+               f.schemaVersion = $schemaVersion
+           MERGE (m)-[:HAS_FILE]->(f)`,
+          {
+            memoryKey,
+            id: fileId,
+            projectId: projectKey,
+            path: filePath,
+            description: `Referenced by ${path}`,
+            now,
+            workspaceRootHash: rootHash,
+            schemaVersion: ONTOLOGY_SCHEMA_VERSION,
+          }
+        );
+      }
+    }
+
+    // Overflow node when concepts exceed limit
+    if (allConcepts.length > MAX_CONCEPTS) {
+      const overflowCount = allConcepts.length - MAX_CONCEPTS;
+      const overflowId = hash(`${projectKey}:${path}:overflow:${overflowCount}`);
+      await this.execute(
+        `MATCH (m:OmkMemory {key: $memoryKey})
+         MERGE (n:OmkTopic {id: $id, projectId: $projectId})
+         ON CREATE SET n.createdAt = $now
+         SET n.label = $label,
+             n.description = $description,
+             n.updatedAt = $now,
+             n.workspaceRootHash = $workspaceRootHash,
+             n.schemaVersion = $schemaVersion
+         MERGE (m)-[:HAS_TOPIC]->(n)`,
+        {
+          memoryKey,
+          id: overflowId,
+          projectId: projectKey,
+          label: `And ${overflowCount} more concepts…`,
+          description: `${overflowCount} additional concepts were extracted but not stored to limit graph growth.`,
+          now,
+          workspaceRootHash: rootHash,
+          schemaVersion: ONTOLOGY_SCHEMA_VERSION,
+        }
+      );
+    }
   }
 
   async append(path: string, content: string): Promise<void> {

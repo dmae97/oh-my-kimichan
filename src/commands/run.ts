@@ -1,18 +1,13 @@
 import { mkdir, writeFile, readdir, readFile } from "fs/promises";
 import { join } from "path";
 
-import { getOmkPath, getProjectRoot, pathExists, readTextFile } from "../util/fs.js";
-import { style, header, status, label, kimichanCliHero, bullet } from "../util/theme.js";
-import { createKimiTaskRunner } from "../util/kimi-runner.js";
-import { createOmkSessionEnv } from "../util/session.js";
+import { getOmkPath, getProjectRoot, pathExists } from "../util/fs.js";
+import { style, header, status, label } from "../util/theme.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { t } from "../util/i18n.js";
-import { createRoutedRunState, refreshRunStateEstimate, routeRunState, createExecutableDagFromState } from "../orchestration/run-state.js";
-import { createExecutor } from "../orchestration/executor.js";
-import { createStatePersister } from "../orchestration/state-persister.js";
-import { formatOmkVersionFooter } from "../util/version.js";
+import { createRoutedRunState, refreshRunStateEstimate } from "../orchestration/run-state.js";
 import type { RunState } from "../contracts/orchestration.js";
-
+import { orchestratePrompt } from "../orchestration/orchestrate-prompt.js";
 
 export async function runCommand(
   flow: string | undefined,
@@ -29,7 +24,6 @@ export async function runCommand(
   let runDir: string;
   let startedAt: string;
   let isResume = false;
-  let runState: RunState | undefined;
   let goalSnapshot: RunState["goalSnapshot"] | undefined;
 
   // Load goal if --goal is provided
@@ -65,8 +59,10 @@ export async function runCommand(
       process.exit(1);
     }
 
-    const existingGoal = await readFile(join(runDir, "goal.md"), "utf-8").catch(() => null);
-    const existingPlan = await readFile(join(runDir, "plan.md"), "utf-8").catch(() => null);
+    const [existingGoal, existingPlan] = await Promise.all([
+      readFile(join(runDir, "goal.md"), "utf-8").catch(() => null),
+      readFile(join(runDir, "plan.md"), "utf-8").catch(() => null),
+    ]);
     const flowMatch = existingPlan?.match(/Flow:\s*(.+)/);
     const existingFlow = flowMatch ? flowMatch[1].trim() : null;
 
@@ -82,14 +78,6 @@ export async function runCommand(
     }
 
     startedAt = new Date().toISOString();
-
-    const existingState = await readFile(join(runDir, "state.json"), "utf-8")
-      .then((content) => JSON.parse(content) as RunState)
-      .catch(() => null);
-    if (existingState) {
-      runState = routeRunState(existingState, workerCount);
-      await writeFile(join(runDir, "state.json"), JSON.stringify(runState, null, 2));
-    }
 
     // Update files if new flow/goal provided during resume
     if (goal) {
@@ -109,7 +97,7 @@ export async function runCommand(
     await mkdir(runDir, { recursive: true });
     await writeFile(join(runDir, "goal.md"), `# Goal\n\n${resolvedGoal}\n`);
     await writeFile(join(runDir, "plan.md"), `# Plan\n\nFlow: ${resolvedFlow}\nWorkers: ${workerCount}\nResource profile: ${resources.profile}\n`);
-    runState = createInteractiveRunState({
+    const runState = createInteractiveRunState({
       runId,
       flow: resolvedFlow,
       goal: resolvedGoal,
@@ -162,93 +150,24 @@ export async function runCommand(
   console.log(label("Workers", String(workerCount)));
   console.log(label("Resource profile", `${resources.profile} (${resources.reason})`) + "\n");
 
-  const agentFile = getOmkPath("agents/root.yaml");
+  // Delegate execution to orchestratePrompt
+  const rawPrompt = resolvedGoal ?? "";
+  if (!rawPrompt) {
+    console.error(status.error("No goal text available for orchestration."));
+    process.exit(1);
+  }
 
-  const flowContent = await readTextFile(resolvedFlowPath);
-  if (!runState) {
-    runState = createInteractiveRunState({
+  try {
+    await orchestratePrompt(rawPrompt, {
+      sourceCommand: "run",
       runId,
-      flow: resolvedFlow,
-      goal: resolvedGoal ?? "Resume run",
-      workerCount,
-      startedAt,
+      workers: String(workerCount),
+      goalId: options.goalId,
     });
-    await writeFile(join(runDir, "state.json"), JSON.stringify(runState, null, 2));
-  }
-  const promptLines = [
-    `Flow: ${resolvedFlow}`,
-    `Goal: ${resolvedGoal ?? ""}`,
-    `Run ID: ${runId}`,
-    `Resource profile: ${resources.profile}`,
-    `Worker budget: ${workerCount}`,
-  ];
-  if (isResume) {
-    promptLines.push(``, `⚠️ ${t("run.resumeWarning")}`);
-  }
-  promptLines.push(
-    ``,
-    t("run.planPrompt"),
-    ``,
-    `SKILLS & MCP USAGE (MANDATORY):`,
-    `- Activate relevant skills from the routing hints for each node.`,
-    `- Use MCP servers (omk-project, memory, quality-gate, etc.) when they fit the task.`,
-    `- Prefer omk-project MCP tools for checkpoint, memory, and run-state operations.`,
-    `- Use SearchWeb / FetchURL for external docs, official APIs, or citations.`,
-    ``,
-    flowContent,
-  );
-  const promptText = promptLines.join("\n");
-
-  const statePath = join(runDir, "state.json");
-  const routedState = routeRunState(runState, workerCount);
-  await writeFile(statePath, JSON.stringify(routedState, null, 2));
-
-  const dag = createExecutableDagFromState(routedState);
-  const executor = createExecutor({ persister: createStatePersister(join(root, ".omk", "runs")) });
-  const previousStatuses = new Map<string, string>();
-  executor.onStateChange((stateSnapshot) => logRunStateTransitions(stateSnapshot, previousStatuses));
-
-  console.log(kimichanCliHero(formatOmkVersionFooter()));
-  console.log(style.purpleBold(t("run.dagForced")));
-  console.log(style.gray(t("run.mcpSkillsForced")));
-  console.log(style.gray(t("run.runInfoSaved", runId)));
-
-  const runner = createKimiTaskRunner({
-    cwd: root,
-    timeout: 0,
-    agentFile,
-    promptPrefix: promptText,
-    mcpScope: resources.mcpScope,
-    skillsScope: resources.skillsScope,
-    roleAgentFiles: true,
-    env: {
-      ...createOmkSessionEnv(root, runId),
-      OMK_RUN_ID: runId,
-      OMK_FLOW: resolvedFlow,
-      OMK_GOAL: resolvedGoal ?? "",
-      OMK_WORKERS: String(workerCount),
-      OMK_DAG_ROUTING: "1",
-      OMK_DAG_STATE_PATH: statePath,
-      OMK_MCP_SCOPE: resources.mcpScope,
-      OMK_SKILLS_SCOPE: resources.skillsScope,
-    },
-  });
-
-  const approvalPolicy = await loadApprovalPolicy(root);
-  const result = await executor.execute(dag, runner, {
-    runId,
-    workers: workerCount,
-    approvalPolicy,
-  });
-
-  console.log("");
-  if (result.success) {
-    console.log(status.ok("DAG run complete"));
-  } else {
-    console.log(status.error("DAG run failed"));
+  } catch (err) {
+    console.error(status.error(String(err)));
     process.exitCode = 1;
   }
-  console.log(label("State", statePath));
 }
 
 function normalizeWorkerCount(value: string | undefined, fallback: number): number {
@@ -324,38 +243,4 @@ function createInteractiveRunState(input: {
     coordinator.startedAt = input.startedAt;
   }
   return refreshRunStateEstimate(state, input.workerCount);
-}
-
-function logRunStateTransitions(stateSnapshot: RunState, previousStatuses: Map<string, string>): void {
-  for (const node of stateSnapshot.nodes) {
-    const previous = previousStatuses.get(node.id);
-    previousStatuses.set(node.id, node.status);
-    if (previous === node.status) continue;
-    if (previous === undefined && node.status === "pending") continue;
-    console.log(renderNodeTransition(node.id, node.name, node.status));
-  }
-}
-
-function renderNodeTransition(id: string, name: string, nodeStatus: string): string {
-  const text = `${id}: ${name}`;
-  if (nodeStatus === "running") return bullet(`running  ${text}`, "purple");
-  if (nodeStatus === "done") return bullet(`done     ${text}`, "mint");
-  if (nodeStatus === "failed") return bullet(`failed   ${text}`, "pink");
-  if (nodeStatus === "blocked") return bullet(`blocked   ${text}`, "skin");
-  return bullet(`${nodeStatus}  ${text}`, "blue");
-}
-
-async function loadApprovalPolicy(root: string): Promise<"interactive" | "auto" | "yolo" | "block"> {
-  const configPath = join(root, ".omk", "config.toml");
-  try {
-    const content = await readFile(configPath, "utf-8");
-    const match = content.match(/^approval_policy\s*=\s*["']([^"']+)["']/m);
-    const value = match?.[1]?.trim().toLowerCase();
-    if (value === "interactive" || value === "auto" || value === "yolo" || value === "block") {
-      return value;
-    }
-  } catch {
-    // ignore missing config
-  }
-  return "interactive"; // safe default
 }

@@ -20,6 +20,24 @@ const en: Record<string, string> = {
   "hud.liveRefresh": "Live HUD: auto-refreshes every {0}ms, Ctrl+C to exit",
   "hud.noRunHistory": "No run history yet.",
 
+  // Runs command
+  "cmd.runsDesc": "[Stable] List past OMK runs with status and dates",
+  "cmd.runsLimitOption": "Maximum number of runs to display",
+  "cmd.runsWatchOption": "Auto-refresh run list",
+  "cmd.runsRefreshOption": "Refresh interval in milliseconds",
+  "cmd.runsStatusOption": "Filter by run status (done | running | failed | unknown)",
+  "cmd.runsSearchOption": "Search run ID or goal title",
+  "cmd.runsSinceOption": "Show runs updated on or after this ISO date",
+  "cmd.runsUntilOption": "Show runs updated on or before this ISO date",
+  "cmd.runsExportOption": "Export run list to a Markdown file",
+  "cmd.historyDesc": "Alias for omk runs — quick history lookup",
+  "runs.noRunsDir": "No .omk/runs directory found.",
+  "runs.noRuns": "No runs found.",
+  "runs.header": "Recent OMK Runs",
+  "runs.footerHint": "Tip: omk hud --watch  |  omk cockpit --watch",
+  "runs.statsHeader": "Run Statistics",
+  "runs.insightsHeader": "Run Insights",
+
   // CLI main menu / help
   "cli.availableCommands": "✨ Available Commands",
   "cli.initDesc": "Project scaffold (AGENTS.md, DESIGN.md, .omk/)",
@@ -406,6 +424,24 @@ const ko: Record<string, string> = {
   "hud.merge": "병합",
   "hud.liveRefresh": "Live HUD: {0}ms마다 자동 갱신, Ctrl+C 종료",
   "hud.noRunHistory": "아직 실행 기록이 없습니다.",
+
+  // Runs command
+  "cmd.runsDesc": "[Stable] 과거 OMK 실행 목록 및 상태 표시",
+  "cmd.runsLimitOption": "표시할 최대 실행 수",
+  "cmd.runsWatchOption": "실행 목록 자동 갱신",
+  "cmd.runsRefreshOption": "갱신 주기 (밀리초)",
+  "cmd.runsStatusOption": "상태로 필터링 (done | running | failed | unknown)",
+  "cmd.runsSearchOption": "run ID 또는 goal 제목 검색",
+  "cmd.runsSinceOption": "이 ISO 날짜 이후에 업데이트된 실행 표시",
+  "cmd.runsUntilOption": "이 ISO 날짜 이전에 업데이트된 실행 표시",
+  "cmd.runsExportOption": "실행 목록을 Markdown 파일로 납품",
+  "cmd.historyDesc": "omk runs 별칭 — 빠른 히스토리 조회",
+  "runs.noRunsDir": ".omk/runs 디렉터리를 찾을 수 없습니다.",
+  "runs.noRuns": "실행 기록이 없습니다.",
+  "runs.header": "최근 OMK 실행",
+  "runs.footerHint": "Tip: omk hud --watch  |  omk cockpit --watch",
+  "runs.statsHeader": "실행 통계",
+  "runs.insightsHeader": "실행 인사이트",
 
   // CLI main menu / help
   "cli.availableCommands": "✨ 사용 가능한 명령어",

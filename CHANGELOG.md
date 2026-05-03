@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.0.0 — Kimi-native orchestration & chat harness (2025-05-03)
+
+OMK reaches 1.0 as a stable Kimi CLI orchestration and chat harness.
+
+### New
+
+- **`omk chat`** — Interactive Kimi session with full orchestration support
+  - Session exit banner showing Run ID, Session ID, resume command, active Workers, MCP servers, and Skills
+  - Chat-dedicated first-run GitHub star prompt (`maybeAskForGitHubStarAtChatStart`)
+  - Cockpit child detection (`OMK_CHAT_COCKPIT_CHILD`) to prevent duplicate prompts
+- **Parallel I/O optimization** across the entire codebase
+  - `cockpit.ts`: parallel `state.json` + `sessionMeta` reads; per-run-dir `pathExists` + `fsStat`
+  - `doctor.ts`: parallel checks in `projectChecks`, `omkChecks` agent loop, `mcpSkillsChecks`, `memoryChecks`
+  - `hud.ts` / `run-view-model.ts`: parallel `goal.md` + `plan.md` existence checks
+  - `ensemble.ts`: parallel `cleanupWorktree` loop; parallel winner/base file reads in `mergeWinnerWorktree`
+  - `dag.ts`: parallel `goal.md` + `plan.md` text loading
+  - `run.ts`: parallel `existingGoal` + `existingPlan` reads
+  - `mcp/omk-project-server.ts`: parallel `goal` + `plan` reads
+  - `fs.ts`: parallel `collectMcpConfigs` and `injectKimiGlobals` `pathExists` checks
+
+### Improved
+
+- `omk cockpit` rendering performance via `Promise.all`-based I/O batching
+- `omk hud` candidate listing and snapshot loading parallelism
+- `omk dag` replay goal/plan loading speed
+- First-run star prompt eligibility now supports `allowChat` option for chat-specific entrypoints
+- Runner exit handler includes resume hint (`omk resume <runId>`) on non-zero exit
+
+### Fixed
+
+- `allowChat` option propagation chain (`maybeAskForGitHubStarAtChatStart` → `maybeAskForGitHubStar` → `isStarPromptEligible`) fixed to prevent test regressions
+- `doctor.ts` agent loop parallelization avoids shared-state race conditions via result-array aggregation
+
 ## v0.4.0 — Spec-driven Kimi orchestration (2025-05-02)
 
 OMK now connects Spec Kit-style planning with Kimi-native DAG execution.

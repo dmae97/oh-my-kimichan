@@ -2,6 +2,7 @@ import { mkdir, writeFile, readFile, copyFile, readdir } from "fs/promises";
 import { join, dirname } from "path";
 import { fileURLToPath } from "node:url";
 import { getProjectRoot, pathExists } from "../util/fs.js";
+import { getOmkVersionSync } from "../util/version.js";
 
 import { style, header, status } from "../util/theme.js";
 import { defaultLspConfigJson } from "../lsp/default-config.js";
@@ -154,10 +155,11 @@ agent:
 `,
 };
 
-const DESIGN_MD = `---
+function getDesignMd(version: string): string {
+  return `---
 title: "Design System"
 description: "Project visual identity and design system"
-version: "1.0"
+version: "${version}"
 ---
 
 # DESIGN.md
@@ -183,6 +185,7 @@ Project visual identity and design system.
 - Use tokens before inventing new values.
 - Keep components compact and status-aware.
 `;
+}
 
 const GEMINI_MD = `# GEMINI.md
 
@@ -529,7 +532,7 @@ build = "auto"
 [memory]
 # Project-local ontology graph is the default source of truth for project/session memory.
 # Optional external Neo4j credentials must stay in env vars or a secret manager.
-backend = "local_graph"    # file | local_graph | neo4j | dual
+backend = "local_graph"    # file | local_graph | neo4j | dual | kuzu
 scope = "project-session"
 strict = true               # fail memory writes if the selected graph backend is unavailable
 mirror_files = true         # keep .omk/memory/*.md as readable mirrors
@@ -670,10 +673,13 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   // 8. Write configs
   await writeFile(join(root, ".omk/config.toml"), CONFIG_TOML);
   await writeFile(join(root, ".omk/kimi.config.toml"), KIMI_CONFIG_TOML);
-  await writeFile(join(root, ".omk/mcp.json"), JSON.stringify(MCP_JSON, null, 2));
+  await writeFile(join(root, ".omk/mcp.json"), JSON.stringify(MCP_JSON, null, 2) + "\n");
   const kimiMcpJsonPath = join(root, ".kimi/mcp.json");
   if (!(await pathExists(kimiMcpJsonPath))) {
-    await writeFile(kimiMcpJsonPath, JSON.stringify({ mcpServers: {} }, null, 2));
+    await writeFile(
+      kimiMcpJsonPath,
+      JSON.stringify({ _comment: "SearchWeb and FetchURL are built-in Kimi tools.", mcpServers: {} }, null, 2) + "\n"
+    );
   }
   await writeFile(join(root, ".omk/lsp.json"), defaultLspConfigJson());
 
@@ -714,7 +720,7 @@ export async function initCommand(options: { profile: string }): Promise<void> {
 
   // 10. Write project docs (skip if already exist)
   const docs: Record<string, string> = {
-    "DESIGN.md": DESIGN_MD,
+    "DESIGN.md": getDesignMd(getOmkVersionSync()),
     "GEMINI.md": GEMINI_MD,
     "CLAUDE.md": CLAUDE_MD,
     "ROADMAP.md": ROADMAP_MD,
@@ -750,6 +756,7 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   console.log("- Subagents are required for non-trivial work.");
   console.log("- Skills are auto-discovered.");
   console.log("- MCP tools are used when configured.");
+  console.log("- Built-in tools: SearchWeb, FetchURL (no config required).");
 
   // Global ~/.kimi/ sync is opt-in only for open-source safety.
   // Users can run `omk sync --global` explicitly after init if they want global config.

@@ -89,9 +89,9 @@ export async function agentListCommand(): Promise<void> {
 export async function agentShowCommand(id: string): Promise<void> {
   const meta = await loadAgentMeta(id);
   if (!meta) {
-    console.error(status.error(`Agent "${id}" not found.`));
-    console.error(style.gray(`  Run "omk agent list" to see available agents.`));
-    process.exit(1);
+    console.warn(status.warn(`Agent "${id}" not found.`));
+    console.warn(style.gray(`  Run "omk agent list" to see available agents.`));
+    return;
   }
 
   console.log(header(`Agent: ${meta.id}`));
@@ -120,15 +120,15 @@ export async function agentCreateCommand(name: string, options: { from?: string 
   const destPath = getOmkPath(`agents/roles/${name}.yaml`);
 
   if (await pathExists(destPath)) {
-    console.error(status.error(`Agent "${name}" already exists.`));
-    console.error(style.gray(`  ${destPath}`));
-    process.exit(1);
+    console.warn(status.warn(`Agent "${name}" already exists.`));
+    console.warn(style.gray(`  ${destPath}`));
+    return;
   }
 
   if (!(await pathExists(templatePath))) {
-    console.error(status.error(`Template "${templateId}" not found.`));
-    console.error(style.gray(`  Run "omk agent list" to see available agents.`));
-    process.exit(1);
+    console.warn(status.warn(`Template "${templateId}" not found.`));
+    console.warn(style.gray(`  Run "omk agent list" to see available agents.`));
+    return;
   }
 
   const templateContent = await readFile(templatePath, "utf-8");

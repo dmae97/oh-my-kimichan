@@ -7,7 +7,7 @@ import { createStatePersister } from "../orchestration/state-persister.js";
 import { checkEvidenceGates } from "../orchestration/evidence-gate.js";
 import { createExecutor } from "../orchestration/executor.js";
 import { createExecutableDagFromState, routeRunState } from "../orchestration/run-state.js";
-import { createKimiTaskRunner } from "../util/kimi-runner.js";
+import { createKimiTaskRunner } from "../kimi/runner.js";
 import { createOmkSessionEnv } from "../util/session.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { listWorktrees } from "../util/worktree.js";
@@ -186,10 +186,12 @@ export async function dagReplayCommand(
   }
 
   // ── DAG replay ──
-  const goalText = await readFile(join(runDir, "goal.md"), "utf-8")
-    .then((c) => c.replace(/^# Goal\n\n?/, "").trim())
-    .catch(() => "");
-  const planText = await readFile(join(runDir, "plan.md"), "utf-8").catch(() => "");
+  const [goalText, planText] = await Promise.all([
+    readFile(join(runDir, "goal.md"), "utf-8")
+      .then((c) => c.replace(/^# Goal\n\n?/, "").trim())
+      .catch(() => ""),
+    readFile(join(runDir, "plan.md"), "utf-8").catch(() => ""),
+  ]);
   const flowMatch = planText.match(/Flow:\s*(.+)/m);
   const flow = flowMatch ? flowMatch[1].trim() : null;
   const workersMatch = planText.match(/Workers:\s*(\d+)/m);

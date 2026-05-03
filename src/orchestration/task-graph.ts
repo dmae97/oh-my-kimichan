@@ -1,4 +1,4 @@
-import type { Dag, DagNode } from "./dag.js";
+import { dependsOnRequiredOutput, type Dag, type DagNode } from "./dag.js";
 
 export class TaskDagGraph {
   private readonly nodeById = new Map<string, DagNode>();
@@ -61,7 +61,19 @@ export class TaskDagGraph {
   runnableNodes(): DagNode[] {
     return this.topologicalOrder()
       .filter((node) => (
-        node.status === "pending" && this.predecessors(node.id).every((dep) => dep.status === "done" || dep.status === "skipped")
+        node.status === "pending" && this.predecessors(node.id).every((dep) => {
+          if (dep.status === "done") return true;
+          if (dep.status === "skipped") {
+            return !dependsOnRequiredOutput(node, dep.id);
+          }
+          if (dep.status === "failed") {
+            return dep.failurePolicy?.blockDependents === false ||
+                   dep.outputs?.every((o) => o.required === false) ||
+                   node.failurePolicy?.blockDependents === false ||
+                   !dependsOnRequiredOutput(node, dep.id);
+          }
+          return false;
+        })
       ))
       .sort((a, b) => this.compareRunnable(a.id, b.id));
   }

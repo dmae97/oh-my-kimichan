@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { BannerReplacer } from "../dist/util/kimi-banner.js";
+import { BannerReplacer } from "../dist/kimi/banner.js";
 
 test("Kimi banner replacement waits through terminal setup-only chunks", async () => {
   const originalWrite = process.stdout.write;

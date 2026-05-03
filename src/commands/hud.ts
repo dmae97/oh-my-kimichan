@@ -4,7 +4,7 @@ import { uptime } from "os";
 import { execFile, execSync } from "child_process";
 import { promisify } from "util";
 import { getOmkPath, pathExists, getProjectRoot } from "../util/fs.js";
-import { getKimiUsage, type UsageStats } from "../util/kimi-usage.js";
+import { getKimiUsage, type UsageStats } from "../kimi/usage.js";
 import { buildUsageViewModel } from "../util/usage-view-model.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { formatBytes } from "../util/output-buffer.js";
@@ -22,7 +22,6 @@ import {
 import {
   style,
   status,
-  bullet,
   panel,
   gauge,
   stat,
@@ -33,6 +32,8 @@ import {
   padEndAnsi,
   sanitizeTerminalText,
 } from "../util/theme.js";
+import { loadTodos, type TodoItem } from "../util/todo-sync.js";
+import { readSessionMeta, type SessionMeta } from "../util/session.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -44,6 +45,8 @@ export interface HudGitChange {
 export interface HudRunCandidate {
   name: string;
   mtimeMs: number;
+  /** Most recent activity timestamp from state.json (updatedAt) or file mtime fallback. */
+  stateUpdatedAtMs: number;
   hasState: boolean;
   hasGoal: boolean;
   hasPlan: boolean;
@@ -152,8 +155,9 @@ function statusRank(statusValue: string): number {
     case "pending": return 1;
     case "blocked": return 2;
     case "failed": return 3;
-    case "done": return 4;
-    default: return 5;
+    case "skipped": return 4;
+    case "done": return 5;
+    default: return 6;
   }
 }
 
@@ -163,6 +167,7 @@ function todoMarker(statusValue: string): string {
     case "done": return style.mintBold("✓");
     case "failed": return style.red("✕");
     case "blocked": return style.orange("■");
+    case "skipped": return style.gray("⊘");
     default: return style.gray("□");
   }
 }
@@ -189,6 +194,28 @@ function healthColor(health: RunHealth): (s: string) => string {
     case "warn": return style.orange;
     case "blocked": return style.orange;
     case "failed": return style.red;
+    default: return style.gray;
+  }
+}
+
+function todoItemMarker(statusValue: TodoItem["status"]): string {
+  switch (statusValue) {
+    case "in_progress": return style.purpleBold("▶");
+    case "done": return style.mintBold("✓");
+    case "failed": return style.red("✕");
+    case "blocked": return style.orange("■");
+    case "skipped": return style.gray("⊘");
+    case "pending": return style.gray("□");
+    default: return style.gray("□");
+  }
+}
+
+function sessionStatusColor(statusValue: SessionMeta["status"]): (s: string) => string {
+  switch (statusValue) {
+    case "active": return style.mint;
+    case "completed": return style.mintBold;
+    case "failed": return style.red;
+    case "idle": return style.gray;
     default: return style.gray;
   }
 }
@@ -298,16 +325,22 @@ export function buildHudSidebar(
 
   if (vm) {
     lines.push(`  ${style.gray("run")} ${style.creamBold(truncateText(vm.runId ?? "--", 34))}`);
-    lines.push(`  ${style.gray("progress")} ${style.mintBold(`${vm.progress.done}/${vm.progress.total}`)} ${style.gray(`done, ${vm.progress.running} active`)}`);
+    lines.push(`  ${style.gray("progress")} ${style.mintBold(`${vm.progress.settled}/${vm.progress.total}`)} ${style.gray(`settled, ${vm.progress.running} active`)}`);
+    if (vm.progress.skipped > 0) {
+      lines.push(`  ${style.gray("skipped")} ${style.gray(`${vm.progress.skipped}`)}`);
+    }
     if (vm.health !== "ok") {
       lines.push(`  ${style.gray("health")} ${healthColor(vm.health)(vm.health.toUpperCase())}`);
     }
     lines.push("");
   } else if (state) {
     const done = nodes.filter((node) => node.status === "done").length;
+    const skipped = nodes.filter((node) => node.status === "skipped").length;
+    const failed = nodes.filter((node) => node.status === "failed").length;
+    const blocked = nodes.filter((node) => node.status === "blocked").length;
     const active = nodes.filter((node) => node.status === "running").length;
     lines.push(`  ${style.gray("run")} ${style.creamBold(truncateText(state.runId, 34))}`);
-    lines.push(`  ${style.gray("progress")} ${style.mintBold(`${done}/${nodes.length}`)} ${style.gray(`done, ${active} active`)}`);
+    lines.push(`  ${style.gray("progress")} ${style.mintBold(`${done + skipped + failed + blocked}/${nodes.length}`)} ${style.gray(`settled, ${active} active`)}`);
     lines.push("");
   }
 
@@ -426,6 +459,8 @@ export function selectLatestRunName(candidates: HudRunCandidate[]): string | nul
 
   return [...valid]
     .sort((a, b) => {
+      const activity = (b.stateUpdatedAtMs ?? b.mtimeMs ?? 0) - (a.stateUpdatedAtMs ?? a.mtimeMs ?? 0);
+      if (activity !== 0) return activity;
       const mtime = b.mtimeMs - a.mtimeMs;
       if (mtime !== 0) return mtime;
       const score = runCandidateScore(b) - runCandidateScore(a);
@@ -440,26 +475,47 @@ export async function listRunCandidates(runsDir: string): Promise<HudRunCandidat
   return Promise.all(dirs.map(async (entry) => {
     const runDir = join(runsDir, entry.name);
     const info = await fsStat(runDir).catch(() => null);
+    const statePath = join(runDir, "state.json");
     const [hasState, hasGoal, hasPlan] = await Promise.all([
-      pathExists(join(runDir, "state.json")),
+      pathExists(statePath),
       pathExists(join(runDir, "goal.md")),
       pathExists(join(runDir, "plan.md")),
     ]);
     let schemaVersion: number | undefined;
+    let stateUpdatedAtMs = info?.mtimeMs ?? 0;
     if (hasState) {
       try {
-        const stateContent = await readFile(join(runDir, "state.json"), "utf-8");
-        const parsed = JSON.parse(stateContent) as { schemaVersion?: number };
-        if (parsed && typeof parsed === "object" && typeof parsed.schemaVersion === "number") {
-          schemaVersion = parsed.schemaVersion;
+        const stateContent = await readFile(statePath, "utf-8");
+        const parsed = JSON.parse(stateContent) as { schemaVersion?: number; updatedAt?: string };
+        if (parsed && typeof parsed === "object") {
+          if (typeof parsed.schemaVersion === "number") {
+            schemaVersion = parsed.schemaVersion;
+          }
+          if (typeof parsed.updatedAt === "string") {
+            const parsedTime = Date.parse(parsed.updatedAt);
+            if (!Number.isNaN(parsedTime)) {
+              stateUpdatedAtMs = parsedTime;
+            }
+          }
         }
       } catch {
-        // ignore parse errors
+        // ignore parse errors; fall back to directory mtime
+      }
+      // If state.json exists but updatedAt is missing, use the file's own mtime
+      // so long-running runs with an old directory mtime still rank correctly.
+      if (stateUpdatedAtMs === (info?.mtimeMs ?? 0)) {
+        try {
+          const stateStat = await fsStat(statePath);
+          stateUpdatedAtMs = stateStat.mtimeMs;
+        } catch {
+          // ignore
+        }
       }
     }
     return {
       name: entry.name,
       mtimeMs: info?.mtimeMs ?? 0,
+      stateUpdatedAtMs,
       hasState,
       hasGoal,
       hasPlan,
@@ -534,17 +590,35 @@ async function buildProjectStatusPanel(gitChangesResult: HudGitChange[] | null):
     `  ${style.purple("🌿 Git")}      ${gitChangesResult === null ? status.warn("unavailable") : gitChanges.length === 0 ? status.ok("clean") : status.warn(`${gitChanges.length} changes`)}`
   );
 
-  const omkExists = await pathExists(join(root, ".omk"));
+  const [omkExists, agentsMdExists, designMdExists] = await Promise.all([
+    pathExists(join(root, ".omk")),
+    pathExists(join(root, "AGENTS.md")),
+    pathExists(join(root, "DESIGN.md")),
+  ]);
   projLines.push(`  ${style.purple("📁 OMK")}      ${omkExists ? status.ok("initialized") : status.warn("omk init needed")}`);
-
-  const agentsMdExists = await pathExists(join(root, "AGENTS.md"));
   projLines.push(`  ${style.purple("📝 AGENTS")}   ${agentsMdExists ? status.ok("exists") : status.warn("missing")}`);
-
-  const designMdExists = await pathExists(join(root, "DESIGN.md"));
   projLines.push(`  ${style.purple("🎨 DESIGN")}   ${designMdExists ? status.ok("exists") : status.info("optional")}`);
 
   projLines.push("");
   return panel(projLines, gradient("Project Status"));
+}
+
+function workerLiveness(ageMs?: number): { label: string; color: (s: string) => string } {
+  if (ageMs === undefined) return { label: "active", color: style.mint };
+  if (ageMs > 180_000) return { label: "stale", color: style.red };
+  if (ageMs > 90_000) return { label: "quiet", color: style.orange };
+  if (ageMs > 30_000) return { label: "slow", color: style.cream };
+  return { label: "active", color: style.mint };
+}
+
+function formatDurationMs(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }
 
 async function buildLatestRunPanel(
@@ -552,7 +626,9 @@ async function buildLatestRunPanel(
   vm: RunViewModel,
   stateError: RunViewModel["stateError"],
   _gitChanges: HudGitChange[],
-  maxWidth?: number
+  maxWidth?: number,
+  sessionMeta?: SessionMeta | null,
+  todos?: TodoItem[] | null,
 ): Promise<string> {
   const runsDir = getOmkPath("runs");
   let runLines: string[] = [];
@@ -587,21 +663,40 @@ async function buildLatestRunPanel(
         }
       }
 
-      const goalMd = await readFile(join(runDir, "goal.md"), "utf-8").catch(() => null);
-      const plan = await readFile(join(runDir, "plan.md"), "utf-8").catch(() => null);
+      const [goalMd, plan] = await Promise.all([
+        readFile(join(runDir, "goal.md"), "utf-8").catch(() => null),
+        readFile(join(runDir, "plan.md"), "utf-8").catch(() => null),
+      ]);
 
       if (!goalTitle && goalMd) {
         goalTitle = goalMd.replace(/# Goal\n\n?/, "").split("\n")[0].trim();
       }
       if (!goalTitle) goalTitle = "N/A";
 
+      // ── Top summary bar: Run / Goal / Health / Progress / ETA / Stale count ──
+      const staleWorkers = vm.workers.filter((w) => w.state === "running" && (w.lastActivityAgeMs ?? 0) > 90_000).length;
+      const chatBadge = sessionMeta?.type === "chat" ? ` ${style.cream("💬 Chat")}` : "";
       runLines = [
         "",
-        `  ${style.gray("Run ID:")}   ${style.creamBold(latestRunName)}`,
-        `  ${style.gray("Goal:")}     ${style.cream(goalTitle)}`,
-        `  ${style.gray("Plan:")}     ${plan ? style.mint("✔ generated") : style.gray("none")}`,
-        "",
+        `  ${style.gray("Run:")}    ${style.creamBold(latestRunName)}${chatBadge}`,
+        `  ${style.gray("Goal:")}    ${style.cream(goalTitle)}`,
+        `  ${style.gray("Health:")}  ${healthColor(vm.health)(vm.health.toUpperCase())}`,
+        `  ${style.gray("Progress:")} ${style.mintBold(`${vm.progress.settled}/${vm.progress.total}`)} ${style.gray(`(${vm.progress.percent}%)`)}`,
       ];
+      if (vm.eta) {
+        runLines.push(`  ${style.gray("ETA:")}     ${style.cream(vm.eta)}`);
+      }
+      if (staleWorkers > 0) {
+        runLines.push(`  ${style.gray("Stale:")}   ${style.redBold(`${staleWorkers} worker${staleWorkers > 1 ? "s" : ""}`)}`);
+      }
+      if (sessionMeta) {
+        const statusColor = sessionStatusColor(sessionMeta.status);
+        runLines.push(`  ${style.gray("Session:")} ${statusColor(sessionMeta.status.toUpperCase())}`);
+        if (sessionMeta.todoCount > 0) {
+          runLines.push(`  ${style.gray("Todos:")}   ${style.mintBold(`${sessionMeta.todoDoneCount}/${sessionMeta.todoCount}`)} ${style.gray("completed")}`);
+        }
+      }
+      runLines.push("");
 
       if (goalData) {
         if (goalData.status) {
@@ -613,38 +708,66 @@ async function buildLatestRunPanel(
         if (goalData.firstUnmet) {
           runLines.push(`  ${style.gray("Next Up:")}    ${style.orange(truncateText(goalData.firstUnmet.description, 50))}`);
         }
-        if (goalData.latestEvidenceAt) {
-          runLines.push(`  ${style.gray("Evidence:")}   ${style.gray(new Date(goalData.latestEvidenceAt).toLocaleString())}`);
-        }
         runLines.push("");
       } else if (vm.goalTitle) {
-        runLines.push(`  ${style.gray("Goal:")}     ${style.cream(vm.goalTitle ?? "N/A")}`);
         if (vm.goalScore != null) {
           runLines.push(`  ${style.gray("Score:")}     ${style.mintBold(`${vm.goalScore}%`)}`);
         }
         runLines.push("");
       }
 
-      if (vm.eta || vm.progress.total > 0) {
-        runLines.push(
-          `  ${style.pinkBold("ETA:")}      ${style.cream(vm.eta ?? "--")}`,
-          `  ${style.gray("Progress:")} ${style.mintBold(`${vm.progress.done}/${vm.progress.total}`)} ${style.gray(`${vm.progress.percent}%`)}`,
-          "",
-        );
+      // ── Worker table ──
+      if (vm.workers.length > 0) {
+        runLines.push(`  ${style.pinkBold("Workers")}`);
+        for (const w of vm.workers) {
+          const live = workerLiveness(w.lastActivityAgeMs);
+          const stateTag = w.state === "running"
+            ? `${live.color("▶")} ${live.color(w.state)}`
+            : w.state === "done"
+            ? `${style.mintBold("✓")} ${style.mint(w.state)}`
+            : w.state === "failed"
+            ? `${style.red("✕")} ${style.red(w.state)}`
+            : w.state === "skipped"
+            ? `${style.gray("⊘")} ${style.gray(w.state)}`
+            : `${style.gray("□")} ${style.gray(w.state)}`;
+          const elapsed = w.elapsedMs > 0 ? style.gray(` · ${formatDurationMs(w.elapsedMs)}`) : "";
+          const activity = w.lastActivityAgeMs != null
+            ? style.gray(` · activity ${formatDurationMs(w.lastActivityAgeMs)} ago`)
+            : "";
+          const phaseLine = w.phase ? style.gray(` · ${truncateText(w.phase, 50)}`) : "";
+          runLines.push(`    ${stateTag}${elapsed}${activity}${phaseLine}`);
+          runLines.push(`      ${style.gray(truncateText(w.label, 40))}`);
+        }
+        runLines.push("");
       }
 
-      const worktreesDir = getOmkPath(`worktrees/${latestRunName}`);
-      if (await pathExists(worktreesDir)) {
-        const workers = await readdir(worktreesDir, { withFileTypes: true }).then((e) =>
-          e.filter((d) => d.isDirectory()).map((d) => d.name)
-        );
-        if (workers.length > 0) {
-          runLines.push(`  ${style.pinkBold("Workers:")}`);
-          for (const w of workers) {
-            runLines.push(bullet(w, "mint"));
-          }
-          runLines.push("");
+      // ── Blockers / Next Action ──
+      if (vm.blocker) {
+        runLines.push(`  ${style.redBold("Blocker:")} ${style.red(vm.blocker.reason)}`);
+        runLines.push(`  ${style.gray("Action:")}  ${style.cream(vm.blocker.nextAction)}`);
+        runLines.push("");
+      } else if (vm.nextAction && vm.nextAction !== "Ready") {
+        runLines.push(`  ${style.gray("Next:")}    ${style.cream(vm.nextAction)}`);
+        runLines.push("");
+      }
+
+      if (plan) {
+        runLines.push(`  ${style.gray("Plan:")}    ${style.mint("✔ generated")}`);
+        runLines.push("");
+      }
+
+      // ── TODO mini-section ──
+      if (!options.compact && todos && todos.length > 0) {
+        runLines.push(`  ${style.pinkBold("TODOs")}`);
+        for (const todo of todos.slice(0, 5)) {
+          const marker = todoItemMarker(todo.status);
+          const title = truncateText(todo.title, 50);
+          runLines.push(`    ${marker} ${title}`);
         }
+        if (todos.length > 5) {
+          runLines.push(`    ${style.gray(`… ${todos.length - 5} more`)}`);
+        }
+        runLines.push("");
       }
     }
   }
@@ -688,6 +811,13 @@ async function renderCompactDashboard(options: HudRenderOptions): Promise<string
     }
   }
 
+  let sessionMeta: SessionMeta | null = null;
+  let todos: TodoItem[] | null = null;
+  if (latestRunName) {
+    sessionMeta = await readSessionMeta(latestRunName).catch(() => null);
+    todos = await loadTodos(latestRunName).catch(() => null);
+  }
+
   const goalTitle = vm.goalTitle ?? null;
   const output: string[] = [];
 
@@ -701,7 +831,7 @@ async function renderCompactDashboard(options: HudRenderOptions): Promise<string
   output.push(`${style.gray("CPU:")}${usage.cpuPercent}% ${style.gray("MEM:")}${usage.memPercent}% ${style.gray("LOAD:")}${usage.loadAvg[0].toFixed(1)}`);
   output.push("");
 
-  const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges, effectiveWidth);
+  const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges, effectiveWidth, sessionMeta, todos);
   output.push(runPanel);
   output.push("");
 
@@ -749,6 +879,13 @@ async function renderMediumDashboard(options: HudRenderOptions): Promise<string>
     }
   }
 
+  let sessionMeta: SessionMeta | null = null;
+  let todos: TodoItem[] | null = null;
+  if (latestRunName) {
+    sessionMeta = await readSessionMeta(latestRunName).catch(() => null);
+    todos = await loadTodos(latestRunName).catch(() => null);
+  }
+
   const goalTitle = vm.goalTitle ?? null;
   const summary = buildSummaryBar(vm, stateError, goalTitle, width - 4);
   output.push(summary);
@@ -757,7 +894,7 @@ async function renderMediumDashboard(options: HudRenderOptions): Promise<string>
   const projPanel = await buildProjectStatusPanel(gitChangesResult);
   mainPanels.push(projPanel);
 
-  const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges);
+  const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges, undefined, sessionMeta, todos);
   mainPanels.push(runPanel);
 
   if (stateError !== "ok" && latestRunName) {
@@ -803,6 +940,13 @@ async function renderFullDashboard(options: HudRenderOptions): Promise<string> {
     }
   }
 
+  let sessionMeta: SessionMeta | null = null;
+  let todos: TodoItem[] | null = null;
+  if (latestRunName) {
+    sessionMeta = await readSessionMeta(latestRunName).catch(() => null);
+    todos = await loadTodos(latestRunName).catch(() => null);
+  }
+
   const goalTitle = vm.goalTitle ?? null;
   const summary = buildSummaryBar(vm, stateError, goalTitle, width - 4);
   output.push(summary);
@@ -812,7 +956,7 @@ async function renderFullDashboard(options: HudRenderOptions): Promise<string> {
   mainPanels.push(await buildKimiUsagePanel(options.kimiUsage));
   mainPanels.push(await buildProjectStatusPanel(gitChangesResult));
 
-  const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges);
+  const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges, undefined, sessionMeta, todos);
   mainPanels.push(runPanel);
 
   if (stateError !== "ok" && latestRunName) {
@@ -857,6 +1001,13 @@ async function renderSectionDashboard(options: HudRenderOptions): Promise<string
     }
   }
 
+  let sessionMeta: SessionMeta | null = null;
+  let todos: TodoItem[] | null = null;
+  if (latestRunName) {
+    sessionMeta = await readSessionMeta(latestRunName).catch(() => null);
+    todos = await loadTodos(latestRunName).catch(() => null);
+  }
+
   const goalTitle = vm.goalTitle ?? null;
   const summary = buildSummaryBar(vm, stateError, goalTitle, width - 4);
   output.push(summary);
@@ -864,7 +1015,7 @@ async function renderSectionDashboard(options: HudRenderOptions): Promise<string
 
   switch (options.section) {
     case "run": {
-      const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges);
+      const runPanel = await buildLatestRunPanel(options, vm, stateError, gitChanges, undefined, sessionMeta, todos);
       output.push(runPanel);
       output.push("");
       if (stateError !== "ok" && latestRunName) {

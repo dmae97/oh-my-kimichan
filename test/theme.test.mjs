@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { kimichanCliHero, sanitizeTerminalText } from "../dist/util/theme.js";
-import { KIMICHAN_SIMPLE_ASCII_ART } from "../dist/util/kimichan-simple-art.js";
+import { KIMICHAN_SIMPLE_ASCII_ART } from "../dist/kimi/simple-art.js";
 
 test("Kimichan CLI hero uses the compact mascot theme", () => {
   const hero = kimichanCliHero();
