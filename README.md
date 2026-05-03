@@ -9,7 +9,7 @@
   <sub>Turn your Kimi into a meme-tier multi-agent coding team — DESIGN.md-aware UI, live quality gates, AGENTS.md compatible</sub>
 </p>
 
-> ⚠️ <strong>Alpha Software</strong> — v0.4.0 is early-stage. Core commands are solid, but <code>parallel</code>, <code>run</code>, <code>sync</code>, and <code>goal</code> may change without notice. Not production-grade yet. Use at your own risk (and fun).
+> ✅ <strong>Stable Release</strong> — v1.0.0 is ready for daily use. Core orchestration, chat harness, and quality gates are solid. Some advanced features (<code>parallel</code>, <code>goal</code>) may still evolve.
 
 
 <p>
@@ -58,7 +58,20 @@
 
 ## GitHub Release Snapshot
 
-> **Current GitHub-ready version:** `0.4.0`
+> **Current GitHub-ready version:** `1.0.0`
+
+### What's New in v1.0.0
+
+| **Area** | **GitHub-visible update** | **Why it matters** |
+|----------|---------------------------|--------------------|
+| **Chat Harness** | `omk chat` — Interactive Kimi session with orchestrated path, exit banner (Run ID, resume, workers, MCP, skills), and cockpit/tmux support | Turn Kimi CLI into a persistent, resumable chat session with full OMK context |
+| **Chat Harness** | Chat-dedicated first-run star prompt (`OMK_STAR_PROMPT`) with cockpit-child deduplication | Polished onboarding without duplicate prompts in tmux splits |
+| **Performance** | Parallel I/O optimization across `cockpit`, `doctor`, `hud`, `ensemble`, `dag`, `run`, and MCP server | Faster dashboard refresh and lower latency on every command |
+| **UI/UX** | `omk cockpit` — Real-time compact dashboard with parallel TODO/agent rendering, git changes, and history | Monitor your multi-agent run from a tmux side panel |
+| **UI/UX** | `omk hud` — Full terminal dashboard with goal scoring, ETA estimation, and state-error recovery hints | Understand run health at a glance and know the next action |
+| **Safety & Quality** | Strict lint, typecheck, 155 tests, smoke test, package audit, and secret scan all green | Production-grade reliability for daily use |
+| **Orchestration** | DAG scheduler with retry, skip-on-failure, fallback roles, evidence gates, and ensemble candidates | Robust multi-agent execution with failure recovery |
+| **Memory** | Local graph memory (default), optional Neo4j, and optional Kuzu backends | Choose the right graph store for your project size |
 
 ### What's New in v0.4.0
 
