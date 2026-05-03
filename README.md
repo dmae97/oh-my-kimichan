@@ -168,7 +168,7 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 
 <h2 id="korean">Korean</h2>
 
-> Kimi Code CLI를 <strong>worktree 기반 코딩 팀</strong>으로 변환하세요. DESIGN.md 기반 UI 생성, AGENTS.md 호환성, 실시간 품질 게이트를 제공합니다.
+> ✅ <strong>Stable Release v1.0.0</strong> — Kimi Code CLI를 <strong>worktree 기반 코딩 팀</strong>으로 변환하세요. DESIGN.md 기반 UI 생성, AGENTS.md 호환성, 실시간 품질 게이트, 병렬 HUD를 제공합니다.
 
 ### Features
 
@@ -181,12 +181,23 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 | Multi-Agent Compatible | AGENTS.md / GEMINI.md / CLAUDE.md 동시 지원 |
 | Quality Gates | 완료 전 자동 lint, typecheck, test, build 검증 |
 | Built-in LSP | `omk lsp typescript`로 번들 TypeScript language server 실행 |
-| Live HUD | System Usage / Kimi Usage gauges / Project Status / Latest Run / TODO & Changed Files 사이드바를 포함한 실시간 대시보드 |
+| Parallel HUD | `omk hud` / `omk cockpit` — 병렬 에이전트 실행 실시간 모니터링 (System Usage, Kimi Usage, Project Status, Latest Run, TODO / Changed Files 사이드바) |
 | MCP Integration | 다양한 MCP 서버와의 원활한 연동 |
 | Local Graph Memory | 프로젝트/세션별 기억을 `.omk/memory/graph-state.json` 온톨로지 그래프로 저장하고 mindmap/GraphQL-lite 제공 |
 | OAuth Usage Badge | Kimi `context:` 상태줄 옆에 masked 계정, 5h/weekly quota 표시; `OMK_KIMI_STATUS_GAUGES=1`로 시각적 게이지 활성화 |
 | Approval Policy | 기본값은 `approval_policy = "auto"` (안전 모드); 필요시 `yolo`로 전환 가능 |
 | Safety Hooks | yolo mode에서도 파괴적 명령어 및 비밀 유출 방지 기본 제공 |
+
+### 🆕 v1.0.0 Highlights (Stable)
+
+- **`omk chat`** — 오케스트레이션 경로, 퇴장 배너(Run ID, 재개, workers, MCP, skills), cockpit/tmux 지원이 포함된 인터랙티브 Kimi 세션
+- **Chat 전용 first-run star prompt** (`OMK_STAR_PROMPT`) — cockpit 자식 프로세스 중복 제거
+- **성능** — `cockpit`, `doctor`, `hud`, `ensemble`, `dag`, `run`, MCP 서버 전반에 병렬 I/O 최적화 적용
+- **`omk cockpit`** — 병렬 TODO/에이전트 렌더링, git 변경사항, 히스토리를 포함한 실시간 컴팩트 대시보드
+- **`omk hud`** — 목표 점수, ETA 예측, 상태 오류 복구 힌트가 포함한 풀 터미널 대시보드
+- **안전 및 품질** — 엄격한 lint, typecheck, 155개 테스트, smoke test, 패키지 감사, 시크릿 스캔 전부 통과
+- **오케스트레이션** — 재시도, 실패 시 건너뛰기, 폴백 역할, 증거 게이트, 앙상블 후보가 포함된 DAG 스케줄러
+- **메모리** — 로컬 그래프 메모리(기본값), 선택적 Neo4j, 선택적 Kuzu 백엔드
 
 ### 🆕 v0.4.0 Highlights
 
@@ -443,7 +454,7 @@ omk lsp typescript
 
 <h2 id="english">English</h2>
 
-> Turn Kimi Code CLI into a <strong>meme-tier multi-agent coding team</strong>. This is a Kimi-native wrapper — not a generic AI tool. DESIGN.md-aware UI, live quality gates, AGENTS.md compatible. Still alpha; expect sharp edges and breaking changes.
+> ✅ <strong>Stable Release v1.0.0</strong> — Turn Kimi Code CLI into a <strong>meme-tier multi-agent coding team</strong>. This is a Kimi-native wrapper — not a generic AI tool. DESIGN.md-aware UI, live quality gates, parallel HUD, AGENTS.md compatible.
 
 ### Features
 
@@ -455,11 +466,22 @@ omk lsp typescript
 | DESIGN.md Integration | UI generation based on Google DESIGN.md standard |
 | Multi-Agent Compatible | Simultaneous support for AGENTS.md / GEMINI.md / CLAUDE.md |
 | Quality Gates | Automated lint, typecheck, test, build verification before completion |
-| Live HUD | Real-time dashboard with System Usage, Kimi Usage gauges, Project Status, Latest Run, and TODO / Changed Files sidebar |
+| Parallel HUD | `omk hud` / `omk cockpit` — Real-time monitoring of parallel agent execution (System Usage, Kimi Usage gauges, Project Status, Latest Run, TODO / Changed Files sidebar) |
 | MCP Integration | Seamless connection with various MCP servers |
 | Local Graph Memory | Stores project/session memory in `.omk/memory/graph-state.json` as an ontology graph with mindmap/GraphQL-lite tools |
 | Parallel DAG | `omk parallel <goal>` (alpha) runs coordinator → worker fan-out → reviewer with live UI and ETA tracking |
 | Safety Hooks | Default protection against destructive commands and secret leakage |
+
+### 🆕 v1.0.0 Highlights (Stable)
+
+- **`omk chat`** — Interactive Kimi session with orchestrated path, exit banner (Run ID, resume, workers, MCP, skills), and cockpit/tmux support
+- **Chat-dedicated first-run star prompt** (`OMK_STAR_PROMPT`) with cockpit-child deduplication
+- **Performance** — Parallel I/O optimization across `cockpit`, `doctor`, `hud`, `ensemble`, `dag`, `run`, and MCP server
+- **`omk cockpit`** — Real-time compact dashboard with parallel TODO/agent rendering, git changes, and history
+- **`omk hud`** — Full terminal dashboard with goal scoring, ETA estimation, and state-error recovery hints
+- **Safety & Quality** — Strict lint, typecheck, 155 tests, smoke test, package audit, and secret scan all green
+- **Orchestration** — DAG scheduler with retry, skip-on-failure, fallback roles, evidence gates, and ensemble candidates
+- **Memory** — Local graph memory (default), optional Neo4j, and optional Kuzu backends
 
 ### 🆕 v0.4.0 Highlights
 
@@ -656,7 +678,7 @@ Default hooks block destructive commands and secret leakage:
 
 <h2 id="chinese">Chinese</h2>
 
-> 将 Kimi Code CLI 转变为一个<strong>基于 worktree 的编码团队</strong>。支持 DESIGN.md 感知 UI 生成、AGENTS.md 兼容性以及实时质量门禁。
+> ✅ <strong>Stable Release v1.0.0</strong> — 将 Kimi Code CLI 转变为一个<strong>基于 worktree 的编码团队</strong>。支持 DESIGN.md 感知 UI 生成、AGENTS.md 兼容性、实时质量门禁以及并行 HUD。
 
 ### Features
 
@@ -668,11 +690,22 @@ Default hooks block destructive commands and secret leakage:
 | DESIGN.md 集成 | 基于 Google DESIGN.md 标准的 UI 生成 |
 | 多 Agent 兼容 | 同时支持 AGENTS.md / GEMINI.md / CLAUDE.md |
 | 质量门禁 | 完成前自动执行 lint、typecheck、test、build 验证 |
-| 实时 HUD | 实时仪表盘：系统用量、Kimi 配额条、项目状态、最新运行、TODO / 变更文件侧边栏 |
+| 并行 HUD | `omk hud` / `omk cockpit` — 并行 Agent 执行实时监控（系统用量、Kimi 配额条、项目状态、最新运行、TODO / 变更文件侧边栏） |
 | MCP 集成 | 与多种 MCP 服务器无缝连接 |
 | Local Graph Memory | 将项目/会话记忆存入 `.omk/memory/graph-state.json` 本地本体图，并提供 mindmap/GraphQL-lite |
 | 并行 DAG | `omk parallel <goal>` (alpha) 执行 coordinator → worker 扇出 → reviewer，带实时 UI 与 ETA 追踪 |
 | 安全钩子 | 默认防止破坏性命令与密钥泄漏 |
+
+### 🆕 v1.0.0 更新亮点 (Stable)
+
+- **`omk chat`** — 带编排路径、退出横幅（Run ID、恢复、workers、MCP、skills）及 cockpit/tmux 支持的交互式 Kimi 会话
+- **Chat 专用首次运行 star prompt** (`OMK_STAR_PROMPT`) — cockpit 子进程去重
+- **性能** — 对 `cockpit`、`doctor`、`hud`、`ensemble`、`dag`、`run` 及 MCP 服务器进行并行 I/O 优化
+- **`omk cockpit`** — 实时紧凑仪表盘，支持并行 TODO/Agent 渲染、git 变更与历史记录
+- **`omk hud`** — 完整终端仪表盘，支持目标评分、ETA 估算与状态错误恢复提示
+- **安全与质量** — 严格的 lint、typecheck、155 项测试、smoke test、包审计、密钥扫描全部通过
+- **编排** — 支持重试、失败跳过、回退角色、证据门控与候选集成的 DAG 调度器
+- **记忆** — 本地图记忆（默认）、可选 Neo4j、可选 Kuzu 后端
 
 ### 🆕 v0.4.0 更新亮点
 
@@ -869,7 +902,7 @@ graph TD
 
 <h2 id="japanese">Japanese</h2>
 
-> Kimi Code CLI を <strong>worktree ベースのコーディングチーム</strong>に変換します。DESIGN.md 対応の UI 生成、AGENTS.md 互換性、ライブ品質ゲートを提供します。
+> ✅ <strong>Stable Release v1.0.0</strong> — Kimi Code CLI を <strong>worktree ベースのコーディングチーム</strong>に変換します。DESIGN.md 対応の UI 生成、AGENTS.md 互換性、ライブ品質ゲート、並列 HUD を提供します。
 
 ### Features
 
@@ -881,11 +914,22 @@ graph TD
 | DESIGN.md 連携 | Google DESIGN.md 標準に基づく UI 生成 |
 | マルチエージェント互換 | AGENTS.md / GEMINI.md / CLAUDE.md を同時サポート |
 | 品質ゲート | 完了前に自動 lint、typecheck、test、build を検証 |
-| ライブ HUD | リアルタイムダッシュボード：システム使用量、Kimi クォータゲージ、プロジェクト状態、最新実行、TODO / 変更ファイルサイドバー |
+| 並列 HUD | `omk hud` / `omk cockpit` — 並列エージェント実行のリアルタイム監視（システム使用量、Kimi クォータゲージ、プロジェクト状態、最新実行、TODO/変更ファイルサイドバー） |
 | MCP 統合 | 様々な MCP サーバーとのシームレスな連携 |
 | Local Graph Memory | プロジェクト/セッション記憶を `.omk/memory/graph-state.json` のローカル ontology graph に保存し、mindmap/GraphQL-lite を提供 |
 | 並列 DAG | `omk parallel <goal>` (alpha) は coordinator → worker ファンアウト → reviewer を実行。ライブ UI と ETA 追跡付き |
 | 安全フック | 破壊的コマンドとシークレット漏洩をデフォルトで防止 |
+
+### 🆕 v1.0.0 の主な更新 (Stable)
+
+- **`omk chat`** — オーケストレーションパス、退出バナー（Run ID、再開、workers、MCP、skills）、cockpit/tmux 対応のインタラクティブ Kimi セッション
+- **Chat 専用 first-run star prompt** (`OMK_STAR_PROMPT`) — cockpit 子プロセスの重複排除
+- **パフォーマンス** — `cockpit`、`doctor`、`hud`、`ensemble`、`dag`、`run`、MCP サーバー全体に並列 I/O 最適化を適用
+- **`omk cockpit`** — 並列 TODO/エージェントレンダリング、git 変更履歴、ヒストリーを含むリアルタイムコンパクトダッシュボード
+- **`omk hud`** — 目標スコアリング、ETA 推定、状態エラー回復ヒントを含むフルターミナルダッシュボード
+- **安全性と品質** — 厳格な lint、typecheck、155 テスト、smoke test、パッケージ監査、シークレットスキャンすべて合格
+- **オーケストレーション** — リトライ、失敗時スキップ、フォールバックロール、エビデンスゲート、アンサンブル候補を備えた DAG スケジューラ
+- **メモリ** — ローカルグラフメモリ（デフォルト）、オプションの Neo4j、オプションの Kuzu バックエンド
 
 ### 🆕 v0.4.0 の主な更新
 
