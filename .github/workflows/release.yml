@@ -15,6 +15,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm rebuild
       - run: npm run lint
       - run: npm run secret:scan
       - run: npm run check
@@ -30,6 +31,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm rebuild
       - run: npm run build:clean
       - name: Pack tarball
         run: npm pack --ignore-scripts --json
@@ -49,6 +51,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm rebuild
       - name: Download tarball
         uses: actions/download-artifact@v4
         with:
