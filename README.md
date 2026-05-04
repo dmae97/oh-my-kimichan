@@ -100,7 +100,7 @@ omk run "Build a Next.js landing page with dark mode and contact form"
 Case studies with reproducible prompts, actual outputs, and honest limitations.
 
 **One-prompt landing page** — Next.js + Tailwind landing page from a single sentence  
-![One-prompt landing page](./readmeasset/oneprompt.gif)
+![One-prompt landing page](https://raw.githubusercontent.com/dmae97/oh-my-kimi/main/readmeasset/oneprompt.gif)
 
 | Example | Prompt → Output | Status |
 |---|---|---|
