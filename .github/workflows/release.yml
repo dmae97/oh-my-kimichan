@@ -52,6 +52,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm rebuild
+      - run: npm run build:clean
       - name: Download tarball
         uses: actions/download-artifact@v4
         with:
