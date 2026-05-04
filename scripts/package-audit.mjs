@@ -338,7 +338,7 @@ export function validateDistDrift(srcFiles, distFiles, pathSet) {
   const errors = [];
   const srcTsSet = new Set(
     srcFiles
-      .filter((f) => f.endsWith(".ts"))
+      .filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
       .map((f) => f.replace(/\.ts$/, ""))
   );
 

@@ -218,7 +218,7 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 
 > `@oneprompt.mp4` prompt → COS landing page. 10–20 min. Kimi-native multi-agent CLI behind it.
 
-![One Prompt Demo](./readmeasset/oneprompt.gif)
+![One Prompt Demo](https://raw.githubusercontent.com/dmae97/oh-my-kimi/main/readmeasset/oneprompt.gif)
 
 ---
 

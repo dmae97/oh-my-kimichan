@@ -57,6 +57,12 @@ coverage/
 .DS_Store
 Thumbs.db
 
+# Large media files (kept in repo for README, excluded from npm package)
+readmeasset/*.gif
+readmeasset/*.mp4
+readmeasset/*.mov
+readmeasset/*.webm
+
 # Archives
 *.zip
 *.tgz

@@ -26,13 +26,9 @@ jobs:
       - run: npm run secret:scan
       - run: npm run check
       - run: npm run build
-      - run: |
-          for f in test/*.test.mjs; do
-            echo "=== $f ==="
-            node --test --test-timeout=120000 "$f" || echo "FAIL: $f" >> failed-tests.txt
-          done
+      - run: node scripts/run-tests.mjs
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: failure()
         with:
           name: failed-tests-${{ matrix.os }}-node${{ matrix.node-version }}
           path: failed-tests.txt
