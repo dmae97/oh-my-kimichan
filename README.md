@@ -9,7 +9,7 @@
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:image" content="https://raw.githubusercontent.com/dmae97/oh-my-kimi/main/readmeasset/kimicat.png" />
 
-<video src="./readmeasset/kimicat.mp4" width="720" autoplay loop muted playsinline></video>
+<img src="./readmeasset/kimicat.gif" alt="oh-my-kimi demo" width="720" />
 
 <h1>oh-my-kimi</h1>
 
@@ -22,12 +22,12 @@
   <strong>What is oh-my-kimi?</strong> oh-my-kimi (OMK) wraps the Kimi Code CLI (Kimi K2.6) with a multi-agent orchestration layer. It spins up parallel coding teams in isolated Git worktrees, enforces lint / typecheck / test / build gates before completion, and provides a real-time terminal HUD to monitor progress.
 </p>
 
-```bash
-npm install -g @oh-my-kimi/cli
-omk init
-omk doctor
-# omk demo  # Coming soon — try the examples below
-```
+<p align="center">
+  <code>npm install -g @oh-my-kimi/cli</code><br/>
+  <code>omk init</code><br/>
+  <code>omk doctor</code><br/>
+  <code># omk demo  # Coming soon — try the examples below</code>
+</p>
 
 > ✅ <strong>Stable Release</strong> — v1.1.0 is ready for daily use. Core orchestration, chat harness, and quality gates are solid. Some advanced features (<code>parallel</code>, <code>goal</code>) may still evolve.
 
