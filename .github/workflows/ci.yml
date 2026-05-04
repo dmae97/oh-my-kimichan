@@ -26,5 +26,10 @@ jobs:
       - run: npm run secret:scan
       - run: npm run check
       - run: npm run build
-      - run: npm test
+      - run: node --test --test-timeout=120000 --test-concurrency=1 --test-reporter=spec test/*.test.mjs 2>&1 | tee test-output.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-log-${{ matrix.os }}-node${{ matrix.node-version }}
+          path: test-output.log
       - run: npm run audit:package
