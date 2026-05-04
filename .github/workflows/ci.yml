@@ -21,6 +21,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm rebuild
       - run: npm run lint
       - run: npm run secret:scan
       - run: npm run check
