@@ -123,7 +123,7 @@ export async function doctorCommand(options: { json?: boolean; soft?: boolean } 
         agentFile: findOk("Kimi Agent File"),
         webTools: findOk("Kimi Web Tools"),
         swarmStatus: findMsg("Kimi Swarm"),
-        installGuide: "curl -LsSf https://code.kimi.com/install.sh | bash or see https://github.com/dmae97/oh-my-kimichan#install",
+        installGuide: "curl -LsSf https://code.kimi.com/install.sh | bash or see https://github.com/dmae97/oh-my-kimi#install",
       },
       git: {
         installed: findOk("Git Installed"),
@@ -448,7 +448,7 @@ async function kimiChecks(root: string): Promise<CheckResult[]> {
     }
   } else {
     results.push({ name: "Kimi CLI", status: "fail", message: t("doctor.kimiNotFound") });
-    results.push({ name: "Kimi Install Guide", status: "info", message: "curl -LsSf https://code.kimi.com/install.sh | bash or see https://github.com/dmae97/oh-my-kimichan#install" });
+    results.push({ name: "Kimi Install Guide", status: "info", message: "curl -LsSf https://code.kimi.com/install.sh | bash or see https://github.com/dmae97/oh-my-kimi#install" });
     results.push({ name: "Kimi Capabilities", status: "info", message: "unknown — kimi not installed" });
   }
 

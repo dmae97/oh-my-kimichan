@@ -6,7 +6,7 @@ Thanks for your interest in contributing! OMK is a Kimi-native multi-agent orche
 
 ```bash
 # Clone and install
-git clone https://github.com/dmae97/oh-my-kimichan.git
+git clone https://github.com/dmae97/oh-my-kimi.git
 cd oh-my-kimi
 npm ci
 
@@ -129,7 +129,7 @@ When modifying commands that support `--json`:
 
 ## Questions?
 
-- Open a [Discussion](https://github.com/dmae97/oh-my-kimichan/discussions)
+- Open a [Discussion](https://github.com/dmae97/oh-my-kimi/discussions)
 - Check [`README.md`](./README.md) and [`DESIGN.md`](./DESIGN.md) for architecture context
 
 Thank you for helping make OMK better!

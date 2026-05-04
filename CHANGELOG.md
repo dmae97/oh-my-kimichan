@@ -4,8 +4,8 @@
 
 ### Changed
 
-- **Package rename** — npm package renamed from `oh-my-kimichan` to `@oh-my-kimi/cli`. All install commands, update prompts, doctor checks, and init guidance updated to reference the new scoped name
-- **GitHub repository URLs** — all docs, badges, and source constants aligned to the canonical repository `https://github.com/dmae97/oh-my-kimichan`
+- **Package rename** — npm package renamed from `oh-my-kimi` to `@oh-my-kimi/cli`. All install commands, update prompts, doctor checks, and init guidance updated to reference the new scoped name
+- **GitHub repository URLs** — all docs, badges, and source constants aligned to the canonical repository `https://github.com/dmae97/oh-my-kimi`
 
 ### Fixed
 
