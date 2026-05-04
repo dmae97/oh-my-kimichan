@@ -23,7 +23,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tarball
-          path: oh-my-kimi-*.tgz
+          path: oh-my-kimi-cli-*.tgz
 
   install-smoke:
     name: Install Smoke (${{ matrix.os }} / Node ${{ matrix.node-version }})
@@ -44,7 +44,7 @@ jobs:
         with:
           name: tarball
       - name: Run smoke tests
-        run: node scripts/smoke-test.mjs --tarball oh-my-kimi-*.tgz
+        run: node scripts/smoke-test.mjs --tarball oh-my-kimi-cli-*.tgz
 
   audit:
     name: Package Audit
@@ -63,4 +63,4 @@ jobs:
         with:
           name: tarball
       - name: Audit tarball
-        run: node scripts/package-audit.mjs --tarball oh-my-kimi-*.tgz
+        run: node scripts/package-audit.mjs --tarball oh-my-kimi-cli-*.tgz

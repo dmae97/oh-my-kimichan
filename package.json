@@ -105,15 +105,15 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dmae97/oh-my-kimi.git"
+    "url": "git+https://github.com/dmae97/oh-my-kimichan.git"
   },
   "bugs": {
-    "url": "https://github.com/dmae97/oh-my-kimi/issues"
+    "url": "https://github.com/dmae97/oh-my-kimichan/issues"
   },
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/dmae97/oh-my-kimi#readme",
+  "homepage": "https://github.com/dmae97/oh-my-kimichan#readme",
   "engines": {
     "node": ">=20.0.0"
   },

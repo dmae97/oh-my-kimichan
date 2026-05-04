@@ -1,9 +1,16 @@
 # Changelog
 
-## v1.1.0 — Release readiness & cross-platform hardening (2026-05-04)
+## v1.1.0 — Scoped package rename & cross-platform hardening (2026-05-04)
+
+### Changed
+
+- **Package rename** — npm package renamed from `oh-my-kimichan` to `@oh-my-kimi/cli`. All install commands, update prompts, doctor checks, and init guidance updated to reference the new scoped name
+- **GitHub repository URLs** — all docs, badges, and source constants aligned to the canonical repository `https://github.com/dmae97/oh-my-kimichan`
 
 ### Fixed
 
+- **CI test step cross-platform failure** — replaced bash `for` loop with `npm test -- --test-timeout=120000`, fixing Windows (`windows-latest`) PowerShell glob-expansion failures across the entire Node 20/22/24 matrix
+- **Scoped package tarball mismatch** — release and smoke-test workflows now reference correct tarball glob `oh-my-kimi-cli-*.tgz` for `@oh-my-kimi/cli` instead of the old `oh-my-kimi-*.tgz`
 - **Package audit link resolver** — `resolveLink` now uses pure POSIX path resolution, eliminating Windows absolute drive-path bugs (`M:/...`) that broke markdown link validation on Windows
 - **Secret scan reliability** — `git ls-files` invocations now include `-c safe.directory=<cwd>` to survive container/CI ownership mismatches; filesystem fallback activates when git is unavailable, with zero-scan pass strictly prevented
 - **Version truth alignment** — `package.json`, `package-lock.json`, `README.md`, `CHANGELOG.md`, preset, and test fixtures all aligned to `1.1.0`

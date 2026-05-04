@@ -39,7 +39,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tarball
-          path: oh-my-kimi-*.tgz
+          path: oh-my-kimi-cli-*.tgz
 
   audit:
     runs-on: ubuntu-latest
@@ -58,7 +58,7 @@ jobs:
         with:
           name: tarball
       - name: Audit tarball
-        run: node scripts/package-audit.mjs --tarball oh-my-kimi-*.tgz
+        run: node scripts/package-audit.mjs --tarball oh-my-kimi-cli-*.tgz
 
   smoke:
     name: Install Smoke (${{ matrix.os }} / Node ${{ matrix.node-version }})
@@ -79,7 +79,7 @@ jobs:
         with:
           name: tarball
       - name: Run smoke tests
-        run: node scripts/smoke-test.mjs --tarball oh-my-kimi-*.tgz
+        run: node scripts/smoke-test.mjs --tarball oh-my-kimi-cli-*.tgz
 
   publish:
     runs-on: ubuntu-latest
@@ -99,7 +99,7 @@ jobs:
         with:
           name: tarball
       - name: Publish to npm
-        run: npm publish oh-my-kimi-*.tgz --provenance --access public
+        run: npm publish oh-my-kimi-cli-*.tgz --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Create GitHub Release

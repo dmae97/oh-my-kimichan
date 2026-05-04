@@ -33,14 +33,14 @@
 
 
 <p>
-  <a href="https://github.com/dmae97/oh-my-kimi/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dmae97/oh-my-kimi/ci.yml?branch=main&amp;style=for-the-badge&amp;logo=githubactions&amp;label=CI" alt="GitHub CI" /></a>
-  <a href="https://github.com/dmae97/oh-my-kimi/releases"><img src="https://img.shields.io/github/package-json/v/dmae97/oh-my-kimi?style=for-the-badge&amp;logo=github&amp;label=GitHub%20version" alt="GitHub package version" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimichan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dmae97/oh-my-kimichan/ci.yml?branch=main&amp;style=for-the-badge&amp;logo=githubactions&amp;label=CI" alt="GitHub CI" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimichan/releases"><img src="https://img.shields.io/github/package-json/v/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github&amp;label=GitHub%20version" alt="GitHub package version" /></a>
   <a href="https://www.npmjs.com/package/@oh-my-kimi/cli"><img src="https://img.shields.io/npm/v/@oh-my-kimi/cli?style=for-the-badge&amp;color=cb3837&amp;logo=npm" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/@oh-my-kimi/cli"><img src="https://img.shields.io/npm/dm/@oh-my-kimi/cli?style=for-the-badge&amp;color=brightgreen&amp;logo=npm" alt="npm downloads" /></a>
-  <a href="https://github.com/dmae97/oh-my-kimi/stargazers"><img src="https://img.shields.io/github/stars/dmae97/oh-my-kimi?style=for-the-badge&amp;logo=github&amp;color=yellow" alt="GitHub stars" /></a>
-  <a href="https://github.com/dmae97/oh-my-kimi/network/members"><img src="https://img.shields.io/github/forks/dmae97/oh-my-kimi?style=for-the-badge&amp;logo=github" alt="GitHub forks" /></a>
-  <a href="https://github.com/dmae97/oh-my-kimi/issues"><img src="https://img.shields.io/github/issues/dmae97/oh-my-kimi?style=for-the-badge&amp;logo=github" alt="GitHub issues" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/oh-my-kimi?style=for-the-badge&amp;color=blue" alt="license" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimichan/stargazers"><img src="https://img.shields.io/github/stars/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github&amp;color=yellow" alt="GitHub stars" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimichan/network/members"><img src="https://img.shields.io/github/forks/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github" alt="GitHub forks" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimichan/issues"><img src="https://img.shields.io/github/issues/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github" alt="GitHub issues" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@oh-my-kimi/cli?style=for-the-badge&amp;color=blue" alt="license" /></a>
 </p>
 
 <p>
@@ -104,9 +104,9 @@ Case studies with reproducible prompts, actual outputs, and honest limitations.
 
 | Example | Prompt → Output | Status |
 |---|---|---|
-| [One-prompt landing page](https://github.com/dmae97/oh-my-kimi/tree/main/examples/one-prompt-landing-page) | Next.js + Tailwind landing page from a single sentence | 🎬 Video available |
-| [Neon Courier 2D](https://github.com/dmae97/oh-my-kimi/tree/main/examples/neon-courier-2d) | Browser 2D runner game in TypeScript | 🎬 Video available |
-| [Neon Courier FPS](https://github.com/dmae97/oh-my-kimi/tree/main/examples/neon-courier-fps) | Three.js first-person prototype | 🎬 Video available |
+| [One-prompt landing page](https://github.com/dmae97/oh-my-kimichan/tree/main/examples/one-prompt-landing-page) | Next.js + Tailwind landing page from a single sentence | 🎬 Video available |
+| [Neon Courier 2D](https://github.com/dmae97/oh-my-kimichan/tree/main/examples/neon-courier-2d) | Browser 2D runner game in TypeScript | 🎬 Video available |
+| [Neon Courier FPS](https://github.com/dmae97/oh-my-kimichan/tree/main/examples/neon-courier-fps) | Three.js first-person prototype | 🎬 Video available |
 
 Each example includes:
 - **Prompt** — exactly what was sent

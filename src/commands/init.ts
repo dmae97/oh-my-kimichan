@@ -768,9 +768,9 @@ export async function initCommand(options: { profile: string }): Promise<void> {
     console.log("");
     console.log(style.orange("⚠️  omk is not in PATH."));
     console.log(style.gray("   Run one of the following:"));
-    console.log(style.gray("   1) npm install -g oh-my-kimi"));
+    console.log(style.gray("   1) npm install -g @oh-my-kimi/cli"));
     console.log(style.gray("   2) npm link (for development)"));
-    console.log(style.gray("   3) alias omk='npx oh-my-kimi'"));
+    console.log(style.gray("   3) alias omk='npx @oh-my-kimi/cli'"));
   } else {
     await maybeInstallShellCompletion(root);
   }

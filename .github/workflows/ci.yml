@@ -25,17 +25,5 @@ jobs:
       - run: npm run secret:scan
       - run: npm run check
       - run: npm run build
-      - run: |
-          failed=0
-          for f in test/*.test.mjs; do
-            echo ""
-            echo "========================================"
-            echo "Running: $f"
-            echo "========================================"
-            if ! node --test --test-timeout=120000 "$f"; then
-              echo "FAILED: $f"
-              failed=1
-            fi
-          done
-          exit $failed
+      - run: npm test -- --test-timeout=120000
       - run: npm run audit:package

@@ -21,12 +21,12 @@ name: Feedback
      id: omk
      attributes:
        label: oh-my-kimi version
-       placeholder: "npm list -g oh-my-kimi"
+       placeholder: "npm list -g @oh-my-kimi/cli"
    - type: textarea
      id: install
      attributes:
        label: Install experience
-       placeholder: "Did npm install -g oh-my-kimi work smoothly?"
+       placeholder: "Did npm install -g @oh-my-kimi/cli work smoothly?"
    - type: textarea
      id: doctor
      attributes:
