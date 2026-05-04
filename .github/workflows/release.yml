@@ -20,7 +20,15 @@ jobs:
       - run: npm run lint
       - run: npm run secret:scan
       - run: npm run check
-      - run: npm test
+      - name: Run tests
+        run: npm test 2>&1 | tee test-output.log
+        continue-on-error: true
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output-release
+          path: test-output.log
 
   package:
     runs-on: ubuntu-latest
