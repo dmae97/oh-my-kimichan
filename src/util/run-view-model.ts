@@ -72,6 +72,8 @@ export interface RunViewModel {
   stateError: "ok" | "missing" | "invalid" | "corrupt" | "oldSchema";
   runId: string | null;
   workers: RunViewModelWorker[];
+  /** Lifecycle nodes (bootstrap, root-coordinator, review-merge) exposed separately from workers. */
+  lifecycleNodes?: RunViewModelWorker[];
   /** ISO timestamp when the run started. */
   startedAt?: string;
   /** ISO timestamp of last meaningful activity. */
@@ -257,36 +259,37 @@ export function buildRunViewModel(
   const now = Date.now();
   const lastActivityMs = state.lastActivityAt ? Date.parse(state.lastActivityAt) : 0;
 
-  const workers = nodes
-    .filter((n) => !isLifecycleNode(n))
-    .map((n) => {
-      const elapsed = n.durationMs ?? (n.startedAt ? now - new Date(n.startedAt).getTime() : 0);
-      const lastEvidence = n.evidence?.length ? n.evidence[n.evidence.length - 1] : undefined;
-      const stateValue: RunViewModelWorker["state"] =
-        n.status === "pending" ? "idle" :
-        n.status === "skipped" ? "skipped" :
-        n.status ?? "idle";
-      const nodeLastActivityMs = n.startedAt ? Math.max(lastActivityMs, new Date(n.startedAt).getTime()) : lastActivityMs;
-      const lastActivityAgeMs = n.status === "running" && nodeLastActivityMs > 0
-        ? now - nodeLastActivityMs
-        : undefined;
-      const thinking = n.status === "running" ? n.thinking : undefined;
-      const phase = thinking ? sanitizeForDisplay(thinking) : undefined;
-      return {
-        id: n.id,
-        label: options.workerLabels?.[n.id] ?? n.name ?? n.id,
-        state: stateValue,
-        elapsedMs: Math.max(0, elapsed),
-        retryCount: n.attempts?.length ?? 0,
-        currentNode: n.status === "running" ? (n.name || n.id) : undefined,
-        lastEvidence: lastEvidence
-          ? { gate: lastEvidence.gate, passed: lastEvidence.passed, message: lastEvidence.message ? sanitizeForDisplay(lastEvidence.message) : undefined }
-          : undefined,
-        thinking,
-        phase,
-        lastActivityAgeMs,
-      };
-    });
+  const mapNodeToWorker = (n: (typeof nodes)[0]): RunViewModelWorker => {
+    const elapsed = n.durationMs ?? (n.startedAt ? now - new Date(n.startedAt).getTime() : 0);
+    const lastEvidence = n.evidence?.length ? n.evidence[n.evidence.length - 1] : undefined;
+    const stateValue: RunViewModelWorker["state"] =
+      n.status === "pending" ? "idle" :
+      n.status === "skipped" ? "skipped" :
+      n.status ?? "idle";
+    const nodeLastActivityMs = n.startedAt ? Math.max(lastActivityMs, new Date(n.startedAt).getTime()) : lastActivityMs;
+    const lastActivityAgeMs = n.status === "running" && nodeLastActivityMs > 0
+      ? now - nodeLastActivityMs
+      : undefined;
+    const thinking = n.status === "running" ? n.thinking : undefined;
+    const phase = thinking ? sanitizeForDisplay(thinking) : undefined;
+    return {
+      id: n.id,
+      label: options.workerLabels?.[n.id] ?? n.name ?? n.id,
+      state: stateValue,
+      elapsedMs: Math.max(0, elapsed),
+      retryCount: n.attempts?.length ?? 0,
+      currentNode: n.status === "running" ? (n.name || n.id) : undefined,
+      lastEvidence: lastEvidence
+        ? { gate: lastEvidence.gate, passed: lastEvidence.passed, message: lastEvidence.message ? sanitizeForDisplay(lastEvidence.message) : undefined }
+        : undefined,
+      thinking,
+      phase,
+      lastActivityAgeMs,
+    };
+  };
+
+  const workers = nodes.filter((n) => !isLifecycleNode(n)).map(mapNodeToWorker);
+  const lifecycleNodes = nodes.filter(isLifecycleNode).map(mapNodeToWorker);
 
   return {
     health,
@@ -311,6 +314,7 @@ export function buildRunViewModel(
     stateError: "ok",
     runId: state.runId,
     workers,
+    lifecycleNodes,
     blockers,
     startedAt: state.startedAt,
     lastActivityAt: state.lastActivityAt,

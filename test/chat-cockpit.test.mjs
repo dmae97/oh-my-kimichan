@@ -6,7 +6,8 @@ import { tmpdir } from "os";
 
 // ESM dynamic import so we can test env-sensitive behavior
 const { isCockpitChild, detectTmux, shellQuote, buildLeftPaneCommand } = await import("../dist/util/chat-cockpit.js");
-const { ensureChatRunState, updateChatHeartbeat, updateChatThinking, finalizeChatRunState } = await import("../dist/commands/chat.js");
+const { ensureChatRunState } = await import("../dist/util/chat-cockpit.js");
+const { updateChatHeartbeat, updateChatThinking, finalizeChatRunState } = await import("../dist/commands/chat.js");
 const { buildRunViewModel, parseRunStateResult } = await import("../dist/util/run-view-model.js");
 
 describe("chat-cockpit utilities", () => {
@@ -237,12 +238,12 @@ describe("tmux lifecycle commands", () => {
       nodeCmd: "'/usr/local/bin/node'",
       cliCmd: "'/usr/local/bin/omk'",
       runId: "run-123",
-      brand: "kimichan",
+      brand: "kimicat",
       session: "omk-chat-run-123",
     });
     assert.ok(cmd.includes("chat --layout plain"), "should use chat --layout plain");
     assert.ok(cmd.includes("run-123"), "should contain runId");
-    assert.ok(cmd.includes("kimichan"), "should contain brand");
+    assert.ok(cmd.includes("kimicat"), "should contain brand");
     // Session cleanup is now handled by tmux set-hook pane-died, not inside the command
     assert.ok(!cmd.includes("/bin/sh -c"), "should not wrap in shell — runs directly via tmux new-session");
   });
@@ -252,7 +253,7 @@ describe("tmux lifecycle commands", () => {
       nodeCmd: "'/usr/local/bin/node'",
       cliCmd: "'/usr/local/bin/omk'",
       runId: "run-456",
-      brand: "kimichan",
+      brand: "kimicat",
       session: "omk-chat-run-456",
     });
     assert.ok(!cmd.includes("exec "), "must not contain 'exec ' to prevent orphaned panes");
@@ -264,14 +265,14 @@ describe("tmux lifecycle commands", () => {
       nodeCmd: "'/usr/local/bin/node'",
       cliCmd: "'/usr/local/bin/omk'",
       runId,
-      brand: "kimichan",
+      brand: "kimicat",
       session: "omk-chat-it-s-a-test",
     });
     assert.doesNotThrow(() => buildLeftPaneCommand({
       nodeCmd: "node",
       cliCmd: "omk",
       runId,
-      brand: "kimichan",
+      brand: "kimicat",
       session: "omk-chat-it-s-a-test",
     }));
     // The runId should survive quoting without being truncated
@@ -283,14 +284,14 @@ describe("tmux lifecycle commands", () => {
       nodeCmd: "node",
       cliCmd: "omk",
       runId: "run-789",
-      brand: "kimichan",
+      brand: "kimicat",
       session: "omk-chat-session-a",
     });
     const cmd2 = buildLeftPaneCommand({
       nodeCmd: "node",
       cliCmd: "omk",
       runId: "run-789",
-      brand: "kimichan",
+      brand: "kimicat",
       session: "omk-chat-session-b",
     });
     assert.strictEqual(cmd1, cmd2, "session should not affect command output — cleanup is handled by tmux set-hook");

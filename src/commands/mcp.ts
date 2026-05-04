@@ -394,7 +394,28 @@ export async function mcpSyncGlobalCommand(options: { overwrite?: boolean; omk?:
       skipped++;
       continue;
     }
-    merged[name] = server;
+    let redacted = { ...server };
+    if ((server as Record<string, unknown>).env && typeof (server as Record<string, unknown>).env === "object") {
+      const env = (server as Record<string, unknown>).env as Record<string, string>;
+      const cleaned: Record<string, string> = {};
+      for (const [k, v] of Object.entries(env)) {
+        cleaned[k] = isSecretEnvName(k) ? `\${${k}}` : v;
+      }
+      redacted = { ...redacted, env: cleaned };
+    }
+    if ((server as Record<string, unknown>).config) {
+      const cfg = { ...(server as Record<string, unknown>).config as Record<string, unknown> };
+      if (cfg.env && typeof cfg.env === "object") {
+        const env = cfg.env as Record<string, string>;
+        const cleaned: Record<string, string> = {};
+        for (const [k, v] of Object.entries(env)) {
+          cleaned[k] = isSecretEnvName(k) ? `\${${k}}` : v;
+        }
+        cfg.env = cleaned;
+      }
+      redacted = { ...(redacted as Record<string, unknown>), config: cfg } as McpServerConfig;
+    }
+    merged[name] = redacted as McpServerConfig;
     imported++;
   }
 
@@ -407,4 +428,8 @@ export async function mcpSyncGlobalCommand(options: { overwrite?: boolean; omk?:
     console.log(style.gray(`Skipped ${skipped} (omk-project or existing local)`));
   }
   console.log(label("Written to", targetPath));
+}
+
+function isSecretEnvName(name: string): boolean {
+  return /(?:SECRET|TOKEN|KEY|PASSWORD|CREDENTIAL)$/i.test(name);
 }

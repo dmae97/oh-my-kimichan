@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
-import { getProjectRoot } from "../util/fs.js";
+import { getProjectRoot, getRunPath } from "../util/fs.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { normalizeGoal, analyzeUserIntent } from "../goal/intake.js";
 import { createGoalPersister } from "../goal/persistence.js";
@@ -75,12 +75,11 @@ export async function orchestratePrompt(
   const root = getProjectRoot();
   const resources = await getOmkResourceSettings();
 
-  // ── Admin commands bypass orchestration (they are handled by CLI directly) ──
   if (looksLikeAdminCommand(rawPrompt)) {
-    const { spawnSync } = await import("child_process");
-    const args = [process.argv[1]!, ...rawPrompt.trim().split(/\s+/)];
-    const result = spawnSync(process.execPath, args, { stdio: "inherit" });
-    process.exit(result.status ?? 0);
+    throw new Error(
+      `Admin commands must be routed through the CLI. ` +
+      `Use the top-level CLI command instead: omk ${rawPrompt.trim().split(/\s+/)[0]}`
+    );
   }
 
   // ── Intake: normalize goal + analyze intent from raw prompt ──
@@ -181,7 +180,7 @@ export async function orchestratePrompt(
 
   // ── Ensemble auto-decision: evaluate progress and auto-continue/replan/close ──
   const { readFile } = await import("fs/promises");
-  const runStatePath = join(root, ".omk", "runs", effectiveRunId, "state.json");
+  const runStatePath = getRunPath(effectiveRunId, "state.json", root);
   try {
     const stateRaw = await readFile(runStatePath, "utf-8");
     const runState = JSON.parse(stateRaw);

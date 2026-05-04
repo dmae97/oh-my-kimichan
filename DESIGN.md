@@ -3,13 +3,13 @@
 ## Overview
 
 Project visual identity and design system for oh-my-kimi.
-Inspired by Kimichan — our purple-eyed, hoodie-wearing mascot.
+Inspired by Kimicat — our purple-eyed, hoodie-wearing mascot.
 
 ## Brand Concept
 
 - **Mood**: Playful, cozy, chibi-anime aesthetic
 - **Vibe**: "Onii-chan~ hai, naniga suki? Chocomint yori mo anata~ 💜"
-- **Character**: Kimichan — black hoodie, purple eyes, mint-green accents
+- **Character**: Kimicat — black hoodie, purple eyes, mint-green accents
 
 ## Colors
 
@@ -17,12 +17,12 @@ Inspired by Kimichan — our purple-eyed, hoodie-wearing mascot.
 
 | Token | Hex | Usage |
 |-------|-----|-------|
-| `--kimichan-purple` | #7B5BF5 | Eyes, logo, primary accent |
-| `--kimichan-pink` | #EC4899 | Hearts, cheeks, secondary accent |
-| `--kimichan-mint` | #14B8A6 | Chocomint theme, success states |
-| `--kimichan-dark` | #241C32 | Hoodie, dark backgrounds |
-| `--kimichan-cream` | #F3E8FF | Light backgrounds, bright text |
-| `--kimichan-skin` | #F9D3C5 | Warm highlights, soft accents |
+| `--kimicat-purple` | #7B5BF5 | Eyes, logo, primary accent |
+| `--kimicat-pink` | #EC4899 | Hearts, cheeks, secondary accent |
+| `--kimicat-mint` | #14B8A6 | Chocomint theme, success states |
+| `--kimicat-dark` | #241C32 | Hoodie, dark backgrounds |
+| `--kimicat-cream` | #F3E8FF | Light backgrounds, bright text |
+| `--kimicat-skin` | #F9D3C5 | Warm highlights, soft accents |
 
 ### Semantic Colors
 

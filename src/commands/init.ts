@@ -458,7 +458,7 @@ echo '{"hookSpecificOutput":{"hookEventName":"Stop","permissionDecision":"allow"
 `,
 };
 
-const KIMI_CONFIG_TOML = `# oh-my-kimichan generated Kimi config
+const KIMI_CONFIG_TOML = `# oh-my-kimi generated Kimi config
 # Lifecycle hook settings
 
 [[hooks]]
@@ -496,7 +496,7 @@ const MCP_JSON = {
   },
 };
 
-const CONFIG_TOML = `# oh-my-kimichan project settings
+const CONFIG_TOML = `# oh-my-kimi project settings
 [project]
 name = "my-project"
 description = ""
@@ -560,9 +560,9 @@ language = "en"
 [theme]
 # Custom logo image path for terminal welcome banner
 # Relative paths are resolved from project root; absolute paths also work
-# Example: logo_image = "kimichan.png"  or  logo_image = "M:\\oh-my-kimichan\\kimichan.png"
+# Example: logo_image = "kimicat.png"  or  logo_image = "M:\\oh-my-kimi\\kimicat.png"
 # Supported formats: PNG, JPEG, GIF (high-res on iTerm/Konsole, else ANSI block)
-logo_image = "kimichan.png"
+logo_image = "kimicat.png"
 
 [router]
 default_model = "kimi-k2.6"
@@ -579,7 +579,7 @@ const MEMORY_FILES: Record<string, string> = {
 
 export async function initCommand(options: { profile: string }): Promise<void> {
   const root = getProjectRoot();
-  console.log(header(`oh-my-kimichan init (profile: ${options.profile})`));
+  console.log(header(`oh-my-kimi init (profile: ${options.profile})`));
 
   // 1. Create directories (parallel)
   const dirs = [
@@ -683,16 +683,16 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   }
   await writeFile(join(root, ".omk/lsp.json"), defaultLspConfigJson());
 
-  const bundledLogoPath = join(packageRoot, "kimichan.png");
-  const projectLogoPath = join(root, "kimichan.png");
+  const bundledLogoPath = join(packageRoot, "kimicat.png");
+  const projectLogoPath = join(root, "kimicat.png");
   if (await pathExists(bundledLogoPath)) {
     if (await pathExists(projectLogoPath)) {
-      console.log(t("init.kimichanPngExists"));
+      console.log(t("init.kimicatPngExists"));
     } else {
       await copyFile(bundledLogoPath, projectLogoPath);
     }
   } else {
-    console.log(status.warn(t("init.kimichanPngMissing")));
+    console.log(status.warn(t("init.kimicatPngMissing")));
   }
 
   // 9. Write memory files (parallel)
@@ -743,7 +743,7 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   console.log("- DESIGN.md");
   console.log("- .omk/agents/root.yaml");
   console.log("- .omk/lsp.json");
-  console.log("- kimichan.png");
+  console.log("- kimicat.png");
   console.log("- .kimi/mcp.json");
   console.log("- .kimi/skills/");
   console.log("- .agents/skills/");
@@ -768,9 +768,9 @@ export async function initCommand(options: { profile: string }): Promise<void> {
     console.log("");
     console.log(style.orange("⚠️  omk is not in PATH."));
     console.log(style.gray("   Run one of the following:"));
-    console.log(style.gray("   1) npm install -g oh-my-kimichan"));
+    console.log(style.gray("   1) npm install -g oh-my-kimi"));
     console.log(style.gray("   2) npm link (for development)"));
-    console.log(style.gray("   3) alias omk='npx oh-my-kimichan'"));
+    console.log(style.gray("   3) alias omk='npx oh-my-kimi'"));
   } else {
     await maybeInstallShellCompletion(root);
   }

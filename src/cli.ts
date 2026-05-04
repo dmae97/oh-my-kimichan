@@ -1,51 +1,14 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { style, kimichanCliHero } from "./util/theme.js";
+import { style, status as themeStatus, kimicatCliHero } from "./util/theme.js";
 import { formatOmkVersionFooter, getOmkVersionSync } from "./util/version.js";
 import { t, initI18n } from "./util/i18n.js";
-import { orchestratePrompt } from "./orchestration/orchestrate-prompt.js";
+import { buildCustomHelp } from "./util/help-text.js";
+import { CliError, applyExitCode } from "./util/cli-contract.js";
 
 const OMK_VERSION = getOmkVersionSync();
 const OMK_VERSION_FOOTER = formatOmkVersionFooter(OMK_VERSION);
 
-function buildCustomHelp(): string {
-  return [
-    "",
-    kimichanCliHero(),
-    "",
-    "  " + style.purpleBold(t("cli.availableCommands")) + style.gray(" ─────────────────────────────────────────────────────"),
-    "",
-    "    " + style.mintBold("omk init") + "      " + style.gray(t("cli.initDesc")) +
-    "\n    " + style.mintBold("omk doctor") + "    " + style.gray(t("cli.doctorDesc")) +
-    "\n    " + style.mintBold("omk chat") + "      " + style.gray(t("cli.chatDesc")) +
-    "\n    " + style.mintBold("omk plan") + "      " + style.gray(t("cli.planDesc")) +
-    "\n    " + style.mintBold("omk run") + "       " + style.gray(t("cli.runDesc")) +
-    "\n    " + style.mintBold("omk team") + "      " + style.gray(t("cli.teamDesc")) +
-    "\n    " + style.mintBold("omk hud") + "       " + style.gray(t("cli.hudDesc")) +
-    "\n    " + style.mintBold("omk merge") + "     " + style.gray(t("cli.mergeDesc")) +
-    "\n    " + style.mintBold("omk sync") + "      " + style.gray(t("cli.syncDesc")) +
-    "\n    " + style.mintBold("omk lsp") + "       " + style.gray(t("cli.lspDesc")) +
-    "\n    " + style.mintBold("omk design") + "    " + style.gray(t("cli.designDesc")) +
-    "\n    " + style.mintBold("omk google") + "    " + style.gray(t("cli.googleDesc")) +
-    "\n    " + style.mintBold("omk specify") + "  " + style.gray(t("cli.specifyDesc")) +
-    "\n    " + style.mintBold("omk agent") + "     " + style.gray(t("cli.agentDesc")) +
-    "\n    " + style.mintBold("omk index") + "     " + style.gray(t("cli.indexDesc")) +
-    "\n    " + style.mintBold("omk skill") + "     " + style.gray(t("cli.skillDesc")) +
-    "\n    " + style.mintBold("omk summary") + "   " + style.gray(t("cli.summaryDesc")) +
-    "\n    " + style.mintBold("omk star") + "      " + style.gray(t("cmd.starDesc")) +
-    "\n    " + style.mintBold("omk runs") + "     " + style.gray(t("cmd.runsDesc")) +
-    "\n    " + style.mintBold("omk history") + "   " + style.gray(t("cmd.historyDesc")) +
-    "",
-    "  " + style.purpleBold(t("cli.quickStart")) + style.gray(" ────────────────────────────────────────────────────────"),
-    "",
-    "    " + style.gray("$") + " " + style.cream("omk init") + "     " + style.gray(t("cli.initProject")) +
-    "\n    " + style.gray("$") + " " + style.cream("omk hud") + "      " + style.gray(t("cli.viewDashboard")) +
-    "\n    " + style.gray("$") + " " + style.cream("omk chat") + "     " + style.gray(t("cli.startChat")) +
-    "",
-    "  " + style.gray(t("cli.fullHelp")) +
-    "",
-  ].join("\n");
-}
 
 const program = new Command();
 
@@ -82,198 +45,95 @@ program
     const globalOpts = program.opts();
     const hasTty = Boolean(process.stdout.isTTY && process.stdin.isTTY);
 
-    // ── Always show HUD (regardless of TTY) ──
-    const { renderHudDashboard } = await import("./commands/hud.js");
-    try {
-      const hud = await renderHudDashboard({
-        runId: globalOpts.runId,
-        terminalWidth: process.stdout.columns || 120,
-      });
-      console.log(hud);
-    } catch {
-      console.log(kimichanCliHero());
-    }
+    // Render HUD and check updates concurrently
+    const hudPromise = (async () => {
+      try {
+        const { renderHudDashboard } = await import("./commands/hud.js");
+        const hud = await renderHudDashboard({
+          runId: globalOpts.runId,
+          terminalWidth: process.stdout.columns || 120,
+        });
+        const lines = hud.split("\n");
+        return lines.slice(0, Math.min(lines.length, 10)).join("\n");
+      } catch {
+        return kimicatCliHero();
+      }
+    })();
 
-    // No TTY — exit without menu (prompt explicit command input)
+    const updatePromise = (async () => {
+      try {
+        const { checkUpdates } = await import("./util/update-check.js");
+        const updateStatus = await checkUpdates();
+        let banner = "";
+        if (updateStatus.omk.outdated) {
+          banner += `\n  ${style.orange("!")} omk ${updateStatus.omk.current} → ${updateStatus.omk.latest}  |  ${style.gray(updateStatus.omk.installCmd)}`;
+        }
+        if (updateStatus.kimi.outdated) {
+          banner += `\n  ${style.orange("!")} kimi ${updateStatus.kimi.installed} → ${updateStatus.kimi.latest}  |  ${style.gray("omk update kimi")}`;
+        }
+        return { banner, status: updateStatus };
+      } catch {
+        return { banner: "", status: null };
+      }
+    })();
+
+    console.log(await hudPromise);
+
+    const { banner: updateBanner, status } = await updatePromise;
+    if (updateBanner) console.log(updateBanner);
+
     if (!hasTty) {
-      console.log(style.gray("\n  💡 omk chat  — " + t("cli.suggestionChat").replace("  💡 omk chat  — ", "")));
-      console.log(style.gray("  💡 omk hud   — " + t("cli.suggestionHud").replace("  💡 omk hud   — ", "")));
-      console.log(style.gray("  💡 omk --help — " + t("cli.suggestionHelp").replace("  💡 omk --help — ", "").trim()));
+      const c = (k: string) => t(k).replace(/^.*? — /, "");
+      console.log(style.gray(`
+  💡 omk chat  — ${c("cli.suggestionChat")}`));
+      console.log(style.gray(`  💡 omk hud   — ${c("cli.suggestionHud")}`));
+      console.log(style.gray(`  💡 omk menu  — Show interactive menu`));
+      console.log(style.gray(`  💡 omk --help — ${c("cli.suggestionHelp")}`));
       return;
     }
 
-    // ── TTY menu (uses @inquirer/prompts select instead of readline) ──
-    // readline returns an empty string immediately when stdin is pipe/EOF,
-    // which can unintentionally trigger chat entry. @inquirer/prompts handles
-    // this properly and also provides arrow-key selection.
-    let answer: string;
-    try {
-      const { select } = await import("@inquirer/prompts");
-      const ac = new AbortController();
-      const timeoutId = setTimeout(() => ac.abort(), 30_000);
-      answer = await select(
-        {
-          message: t("cli.mainMenu"),
-          choices: [
-            { name: t("cli.menuChat"), value: "1" },
-            { name: t("cli.menuHud"), value: "2" },
-            { name: t("cli.menuPlan"), value: "3" },
-            { name: t("cli.menuParallel"), value: "4" },
-            { name: t("cli.menuPrevious"), value: "0" },
-            { name: t("cli.menuHelp"), value: "5" },
-            { name: t("cli.menuExit"), value: "q" },
-          ],
-        },
-        { signal: ac.signal }
-      );
-      clearTimeout(timeoutId);
-    } catch (err) {
-      if (err instanceof Error && err.name === "ExitPromptError") {
-        console.log("\n" + style.gray("Cancelled."));
-        process.exit(0);
+    // Interactive update prompt when omk is outdated
+    if (status && status.omk.outdated) {
+      try {
+        const { select } = await import("@inquirer/prompts");
+        const answer = await select(
+          {
+            message: `A new version of oh-my-kimi is available (${status.omk.current} → ${status.omk.latest}). Update now?`,
+            choices: [
+              { name: `YES — run ${status.omk.installCmd}`, value: "yes" },
+              { name: "NO — skip this update", value: "no" },
+            ],
+          },
+          { signal: AbortSignal.timeout(30_000) }
+        );
+        if (answer === "yes") {
+          console.log(style.gray("Running update…"));
+          const { runShell } = await import("./util/shell.js");
+          const updateResult = await runShell("npm", ["i", "-g", "@oh-my-kimi/cli"], { timeout: 120_000 });
+          if (updateResult.failed) {
+            console.log(style.red(`✖ Update failed: ${updateResult.stderr.trim() || updateResult.stdout.trim()}`));
+            process.exit(1);
+          } else {
+            console.log(themeStatus.success("Update completed successfully. Restart your terminal to use the new version."));
+            process.exit(0);
+          }
+        }
+      } catch (err) {
+        if (err instanceof Error && err.name === "ExitPromptError") {
+          console.log(style.gray("Update prompt cancelled."));
+          process.exit(0);
+        }
+        // Non-TTY or timeout — silently continue to chat
       }
-      // Not a TTY, stdin pipe/EOF, timeout, etc.
-      console.log(
-        style.gray(t("cli.menuUnavailable"))
-      );
-      console.log(customHelp);
-      return;
     }
 
-    switch (answer) {
-      case "1": {
-        const { input } = await import("@inquirer/prompts");
-        let rawPrompt: string;
-        try {
-          rawPrompt = await input({ message: "Prompt:" });
-        } catch (err) {
-          if (err instanceof Error && err.name === "ExitPromptError") {
-            console.log(style.purple("🐾 See you, onii-chan~ 💜"));
-            process.exit(0);
-          }
-          throw err;
-        }
-        try {
-          await orchestratePrompt(rawPrompt, {
-            sourceCommand: "default",
-            runId: globalOpts.runId,
-            workers: globalOpts.workers,
-          });
-        } catch {
-          const { spawnSync } = await import("child_process");
-          const chatArgs = [process.argv[1]!, "chat", "--layout", "auto", "--brand", "kimichan"];
-          if (globalOpts.runId) chatArgs.push("--run-id", globalOpts.runId);
-          if (globalOpts.workers) chatArgs.push("--workers", globalOpts.workers);
-          const result = spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
-          if (result.status !== 0) {
-            process.exit(result.status ?? 1);
-          }
-        }
-        break;
-      }
-      case "2": {
-        const { hudCommand } = await import("./commands/hud.js");
-        await hudCommand({ runId: globalOpts.runId, watch: true, refreshMs: 2000 });
-        break;
-      }
-      case "3": {
-        const { planCommand } = await import("./commands/plan.js");
-        const { input } = await import("@inquirer/prompts");
-        let goal: string;
-        try {
-          goal = await input({ message: "Goal:" });
-        } catch (err) {
-          if (err instanceof Error && err.name === "ExitPromptError") {
-            console.log(style.purple("🐾 See you, onii-chan~ 💜"));
-            process.exit(0);
-          }
-          throw err;
-        }
-        await planCommand(goal, { runId: globalOpts.runId });
-        break;
-      }
-      case "4": {
-        const { spawnSync } = await import("child_process");
-        const { input } = await import("@inquirer/prompts");
-        let goal: string;
-        try {
-          goal = await input({ message: "Goal:" });
-        } catch (err) {
-          if (err instanceof Error && err.name === "ExitPromptError") {
-            console.log(style.purple("🐾 See you, onii-chan~ 💜"));
-            process.exit(0);
-          }
-          throw err;
-        }
-        const parallelArgs = [process.argv[1]!, "parallel", goal];
-        if (globalOpts.runId) parallelArgs.push("--run-id", globalOpts.runId);
-        if (globalOpts.workers) parallelArgs.push("--workers", globalOpts.workers);
-        const result = spawnSync(process.execPath, parallelArgs, { stdio: "inherit" });
-        if (result.status !== 0) {
-          process.exit(result.status ?? 1);
-        }
-        break;
-      }
-      case "0": {
-        const { selectLatestRunName, listRunCandidates } = await import("./commands/hud.js");
-        const { getOmkPath, pathExists } = await import("./util/fs.js");
-        const runsDir = getOmkPath("runs");
-        let prevRunId: string | null = globalOpts.runId ?? null;
-        if (!prevRunId && (await pathExists(runsDir))) {
-          const candidates = await listRunCandidates(runsDir);
-          prevRunId = selectLatestRunName(candidates);
-        }
-        if (prevRunId) {
-          const { hudCommand } = await import("./commands/hud.js");
-          await hudCommand({ runId: prevRunId, watch: true, refreshMs: 2000 });
-        } else {
-          console.log(style.gray("  No previous run found."));
-        }
-        break;
-      }
-      case "5":
-      case "help":
-      case "h": {
-        console.log(customHelp);
-        break;
-      }
-      case "q":
-      case "quit":
-      case "exit": {
-        console.log(style.purple("🐾 See you, onii-chan~ 💜"));
-        process.exit(0);
-        break;
-      }
-      default: {
-        console.log(style.orange(t("cli.unknownChoice", answer)));
-        const { input } = await import("@inquirer/prompts");
-        let rawPrompt: string;
-        try {
-          rawPrompt = await input({ message: "Prompt:" });
-        } catch (err) {
-          if (err instanceof Error && err.name === "ExitPromptError") {
-            console.log(style.purple("🐾 See you, onii-chan~ 💜"));
-            process.exit(0);
-          }
-          throw err;
-        }
-        try {
-          await orchestratePrompt(rawPrompt, {
-            sourceCommand: "default",
-            runId: globalOpts.runId,
-            workers: globalOpts.workers,
-          });
-        } catch {
-          const { spawnSync } = await import("child_process");
-          const chatArgs = [process.argv[1]!, "chat"];
-          if (globalOpts.runId) chatArgs.push("--run-id", globalOpts.runId);
-          if (globalOpts.workers) chatArgs.push("--workers", globalOpts.workers);
-          const result = spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
-          if (result.status !== 0) {
-            process.exit(result.status ?? 1);
-          }
-        }
-      }
+    const { spawnSync } = await import("child_process");
+    const chatArgs = [process.argv[1]!, "chat", "--layout", "auto", "--brand", "kimicat"];
+    if (globalOpts.runId) chatArgs.push("--run-id", globalOpts.runId);
+    if (globalOpts.workers) chatArgs.push("--workers", globalOpts.workers);
+    const result = spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
+    if (result.status && result.status !== 0) {
+      process.exitCode = result.status;
     }
   });
 
@@ -303,6 +163,112 @@ program
   .action(async (options) => {
     const { starCommand } = await import("./commands/star.js");
     await starCommand(options);
+  });
+
+program
+  .command("menu")
+  .description("Show interactive OMK main menu")
+  .action(async () => {
+    const globalOpts = program.opts();
+    const { menuCommand } = await import("./commands/menu.js");
+    await menuCommand({ runId: globalOpts.runId, workers: globalOpts.workers });
+  });
+
+program
+  .command("update")
+  .description("Check or run OMK and Kimi CLI updates")
+  .argument("[action]", "check (default) | omk | kimi")
+  .option("--json", "Output update status as JSON")
+  .option("--refresh", "Force refresh update cache")
+  .option("--yes", "Skip confirmation prompt")
+  .option("--install-script", "Print official Kimi install script (no execution)")
+  .action(async (action, options) => {
+    const { checkUpdates } = await import("./util/update-check.js");
+    const actionMode = action ?? "check";
+    if (actionMode === "check") {
+      const status = await checkUpdates(Boolean(options.refresh));
+      if (options.json) {
+        console.log(JSON.stringify(status, null, 2));
+        return;
+      }
+      const kimiLabel = status.kimi.installed
+        ? (status.kimi.outdated
+          ? `${status.kimi.installed} → ${style.orange(status.kimi.latest ?? "?")}`
+          : `${status.kimi.installed} ${style.gray("(latest)")}`)
+        : style.red("not installed");
+      console.log(`  kimi: ${kimiLabel}`);
+      if (status.kimi.outdated) console.log(`  ℹ️  ${style.gray(status.kimi.installCmd)}`);
+      if (status.omk.error) console.log(style.gray(`  omk error: ${status.omk.error}`));
+      if (status.kimi.error) console.log(style.gray(`  kimi error: ${status.kimi.error}`));
+      if (status.cacheHit) console.log(style.gray(`
+  (cached, checked ${status.checkedAt})`));
+      console.log("");
+      return;
+    }
+
+      // install-script handled inside actionMode === "kimi" block
+
+    const isInstallScript = actionMode === "kimi" && options.installScript;
+    if (!process.stdout.isTTY && !options.yes && !isInstallScript) {
+      console.error("Interactive update requires a TTY. Use --yes to skip confirmation.");
+      process.exit(1);
+    }
+    if (actionMode === "omk") {
+      if (!options.yes) {
+        console.log("Upgrade omk via: npm i -g @oh-my-kimi/cli");
+        console.log("Press Enter to continue or Ctrl+C to cancel...");
+        const rl = (await import("readline")).createInterface({ input: process.stdin, output: process.stdout });
+        await new Promise<void>((resolve) => rl.question("", () => { rl.close(); resolve(); }));
+      }
+      const { runShell } = await import("./util/shell.js");
+      const result = await runShell("npm", ["i", "-g", "@oh-my-kimi/cli"], { stdio: "inherit", timeout: 120_000 });
+      process.exit(result.failed ? (result.exitCode ?? 1) : 0);
+    }
+    if (actionMode === "kimi") {
+      // --install-script is safe without TTY
+      if (options.installScript) {
+        const st = await checkUpdates();
+        console.log(st.kimi.installScript);
+        return;
+      }
+
+      const { runShell } = await import("./util/shell.js");
+      const kimiCheck = await runShell("kimi", ["--version"], { timeout: 10000 });
+      const needsInstall = kimiCheck.failed;
+
+      if (!options.yes && !needsInstall) {
+        console.log("Upgrade kimi-cli via: uv tool upgrade kimi-cli --no-cache");
+        console.log("Press Enter to continue or Ctrl+C to cancel...");
+        const rl = (await import("readline")).createInterface({ input: process.stdin, output: process.stdout });
+        await new Promise<void>((resolve) => rl.question("", () => { rl.close(); resolve(); }));
+      }
+
+      if (needsInstall) {
+        const script = process.platform === "win32"
+          ? "Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression"
+          : "curl -LsSf https://code.kimi.com/install.sh | bash";
+        console.log(`Kimi CLI not found. Installing via official script...`);
+        if (process.platform === "win32") {
+          console.error("Please run the following in PowerShell:");
+          console.log(script);
+          process.exit(1);
+        }
+        const result = await runShell("bash", ["-c", script], { stdio: "inherit", timeout: 300_000 });
+        process.exit(result.failed ? (result.exitCode ?? 1) : 0);
+      }
+
+      const result = await runShell("uv", ["tool", "upgrade", "kimi-cli", "--no-cache"], { stdio: "inherit", timeout: 120_000 });
+      if (result.failed) {
+        console.error("uv tool upgrade failed. Is uv installed? (pip install uv)");
+        console.error("Fallback: try the official install script:");
+        console.error(process.platform === "win32"
+          ? "Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression"
+          : "curl -LsSf https://code.kimi.com/install.sh | bash");
+      }
+      process.exit(result.failed ? (result.exitCode ?? 1) : 0);
+    }
+    console.error(`Unknown update action: ${actionMode}`);
+    process.exit(1);
   });
 
 program
@@ -450,11 +416,25 @@ program
   .option("--workers <n>", t("cmd.chatWorkersOption"), "auto")
   .option("--max-steps-per-turn <n>", t("cmd.chatMaxStepsOption"))
   .option("--layout <auto|tmux|inline|plain>", t("cmd.chatLayoutOption"), "auto")
-  .option("--brand <kimichan|minimal|plain>", t("cmd.chatBrandOption"), "kimichan")
+  .option("--brand <kimichan|minimal|plain>", t("cmd.chatBrandOption"), "kimicat")
+  .option("--cockpit-refresh <ms>", "Cockpit refresh interval in milliseconds", "2000")
+  .option("--cockpit-redraw <diff|full|append>", "Cockpit redraw mode", "diff")
+  .option("--cockpit-history <off|static|watch>", "Cockpit history pane mode", "static")
+  .option("--cockpit-side-width <percent>", "Cockpit side pane width percentage", "40")
+  .option("--cockpit-height <rows>", "Cockpit fixed height in rows", "18")
   .action(async (options) => {
     const globalOpts = program.opts();
     const { chatCommand } = await import("./commands/chat.js");
     await chatCommand({ ...options, runId: globalOpts.runId });
+  });
+
+program
+  .command("research <query>")
+  .description("Run a web research query via Kimi native SearchWeb/FetchURL")
+  .option("--agent-file <path>", "Custom researcher agent YAML")
+  .action(async (query, options) => {
+    const { researchCommand } = await import("./commands/research.js");
+    await researchCommand({ query, agentFile: options.agentFile });
   });
 
 program
@@ -463,10 +443,19 @@ program
   .option("--run-id <id>", t("cmd.cockpitRunIdOption"))
   .option("-w, --watch", t("cmd.cockpitWatchOption"))
   .option("--refresh <ms>", t("cmd.cockpitRefreshOption"), "1500")
+  .option("--redraw <diff|full|append>", "Redraw mode", "diff")
+  .option("--height <rows>", "Cockpit fixed height in rows", "18")
+  .option("--no-clear", "Do not clear screen between refreshes")
+  .option("--pause", "Start paused")
   .action(async (options) => {
     const globalOpts = program.opts();
     const { cockpitCommand } = await import("./commands/cockpit.js");
-    await cockpitCommand({ ...options, runId: globalOpts.runId ?? options.runId });
+    await cockpitCommand({
+      ...options,
+      runId: globalOpts.runId ?? options.runId,
+      refreshMs: options.refresh ? Number.parseInt(options.refresh, 10) : undefined,
+      height: options.height ? Number.parseInt(options.height, 10) : undefined,
+    });
   });
 
 program
@@ -522,7 +511,8 @@ program
   .action(async (options) => {
     const globalOpts = program.opts();
     const { reviewCommand } = await import("./commands/workflow.js");
-    await reviewCommand({ ...options, runId: globalOpts.runId });
+    const result = await reviewCommand({ ...options, runId: globalOpts.runId });
+    applyExitCode(result);
   });
 
 program
@@ -561,7 +551,7 @@ program
   .action(async (goal, options) => {
     const globalOpts = program.opts();
     const { parallelCommand } = await import("./commands/parallel.js");
-    await parallelCommand(goal, {
+    const result = await parallelCommand(goal, {
       ...options,
       runId: globalOpts.runId,
       watch: options.watch,
@@ -571,6 +561,9 @@ program
       noPause: options.pause === false,
       compact: options.compact,
     });
+    if (!result.success && process.exitCode === undefined) {
+      process.exitCode = 1;
+    }
   });
 
 program
@@ -862,7 +855,15 @@ program
   .action(async (options) => {
     const globalOpts = program.opts();
     const { verifyCommand } = await import("./commands/verify.js");
-    await verifyCommand({ ...options, runId: globalOpts.runId });
+    try {
+      await verifyCommand({ ...options, runId: globalOpts.runId });
+    } catch (err) {
+      if (err instanceof CliError) {
+        if (process.exitCode === undefined) process.exitCode = err.exitCode;
+        return;
+      }
+      throw err;
+    }
   });
 
 const goal = program.command("goal").description(t("cmd.goalDesc"));
@@ -875,7 +876,15 @@ goal
   .option("--risk <level>", t("cmd.goalRiskOption"))
   .action(async (rawPrompt, options) => {
     const { goalCreateCommand } = await import("./commands/goal.js");
-    await goalCreateCommand(rawPrompt, options);
+    try {
+      await goalCreateCommand(rawPrompt, options);
+    } catch (err) {
+      if (err instanceof CliError) {
+        if (process.exitCode === undefined) process.exitCode = err.exitCode;
+        return;
+      }
+      throw err;
+    }
   });
 goal
   .command("list")
@@ -883,7 +892,15 @@ goal
   .option("--json", t("cmd.goalJsonOption"))
   .action(async (options) => {
     const { goalListCommand } = await import("./commands/goal.js");
-    await goalListCommand(options);
+    try {
+      await goalListCommand(options);
+    } catch (err) {
+      if (err instanceof CliError) {
+        if (process.exitCode === undefined) process.exitCode = err.exitCode;
+        return;
+      }
+      throw err;
+    }
   });
 goal
   .command("show <goal-id>")
@@ -891,14 +908,30 @@ goal
   .option("--json", t("cmd.goalJsonOption"))
   .action(async (goalId, options) => {
     const { goalShowCommand } = await import("./commands/goal.js");
-    await goalShowCommand(goalId, options);
+    try {
+      await goalShowCommand(goalId, options);
+    } catch (err) {
+      if (err instanceof CliError) {
+        if (process.exitCode === undefined) process.exitCode = err.exitCode;
+        return;
+      }
+      throw err;
+    }
   });
 goal
   .command("plan <goal-id>")
   .description(t("cmd.goalPlanDesc"))
   .action(async (goalId) => {
     const { goalPlanCommand } = await import("./commands/goal.js");
-    await goalPlanCommand(goalId);
+    try {
+      await goalPlanCommand(goalId);
+    } catch (err) {
+      if (err instanceof CliError) {
+        if (process.exitCode === undefined) process.exitCode = err.exitCode;
+        return;
+      }
+      throw err;
+    }
   });
 goal
   .command("run <goal-id>")
@@ -907,7 +940,15 @@ goal
   .option("--run-id <id>", t("cmd.goalRunIdOption"))
   .action(async (goalId, options) => {
     const { goalRunCommand } = await import("./commands/goal.js");
-    await goalRunCommand(goalId, options);
+    try {
+      await goalRunCommand(goalId, options);
+    } catch (err) {
+      if (err instanceof CliError) {
+        if (process.exitCode === undefined) process.exitCode = err.exitCode;
+        return;
+      }
+      throw err;
+    }
   });
 goal
   .command("verify <goal-id>")
@@ -915,7 +956,15 @@ goal
   .option("--json", t("cmd.goalJsonOption"))
   .action(async (goalId, options) => {
     const { goalVerifyCommand } = await import("./commands/goal.js");
-    await goalVerifyCommand(goalId, options);
+    try {
+      await goalVerifyCommand(goalId, options);
+    } catch (err) {
+      if (err instanceof CliError) {
+        if (process.exitCode === undefined) process.exitCode = err.exitCode;
+        return;
+      }
+      throw err;
+    }
   });
 goal
   .command("close <goal-id>")
@@ -924,7 +973,15 @@ goal
   .option("--reason <text>", t("cmd.goalReasonOption"))
   .action(async (goalId, options) => {
     const { goalCloseCommand } = await import("./commands/goal.js");
-    await goalCloseCommand(goalId, options);
+    try {
+      await goalCloseCommand(goalId, options);
+    } catch (err) {
+      if (err instanceof CliError) {
+        if (process.exitCode === undefined) process.exitCode = err.exitCode;
+        return;
+      }
+      throw err;
+    }
   });
 goal
   .command("block <goal-id>")
@@ -932,7 +989,15 @@ goal
   .requiredOption("--reason <text>", t("cmd.goalReasonOption"))
   .action(async (goalId, options) => {
     const { goalBlockCommand } = await import("./commands/goal.js");
-    await goalBlockCommand(goalId, options);
+    try {
+      await goalBlockCommand(goalId, options);
+    } catch (err) {
+      if (err instanceof CliError) {
+        if (process.exitCode === undefined) process.exitCode = err.exitCode;
+        return;
+      }
+      throw err;
+    }
   });
 goal
   .command("continue [goal-id]")
@@ -941,7 +1006,15 @@ goal
   .option("--run-id <id>", "Run ID")
   .action(async (goalId, options) => {
     const { goalContinueCommand } = await import("./commands/goal.js");
-    await goalContinueCommand(goalId, options);
+    try {
+      await goalContinueCommand(goalId, options);
+    } catch (err) {
+      if (err instanceof CliError) {
+        if (process.exitCode === undefined) process.exitCode = err.exitCode;
+        return;
+      }
+      throw err;
+    }
   });
 
 const mcp = program.command("mcp").description(t("cli.mcpDesc"));
@@ -1044,9 +1117,51 @@ dag
     await dagReplayCommand(runId, target, subtarget, options);
   });
 
+const screenshot = program.command("screenshot").description("Manage project screenshots from clipboard");
+screenshot
+  .command("paste")
+  .description("Paste clipboard image into .omk/screenshots/")
+  .option("--json", "Output JSON")
+  .action(async (options) => {
+    const { screenshotPasteCommand } = await import("./commands/screenshot.js");
+    await screenshotPasteCommand(options);
+  });
+screenshot
+  .command("dir")
+  .description("Print the screenshot directory path")
+  .option("--json", "Output JSON")
+  .action(async (options) => {
+    const { screenshotDirCommand } = await import("./commands/screenshot.js");
+    await screenshotDirCommand(options);
+  });
+screenshot
+  .command("list")
+  .description("List saved screenshots")
+  .option("--json", "Output JSON")
+  .action(async (options) => {
+    const { screenshotListCommand } = await import("./commands/screenshot.js");
+    await screenshotListCommand(options);
+  });
+screenshot
+  .command("clean")
+  .description("Remove screenshots older than N days")
+  .option("--days <n>", "Age threshold in days", "7")
+  .option("--dry-run", "Show what would be deleted without removing")
+  .option("--json", "Output JSON")
+  .action(async (options) => {
+    const { screenshotCleanCommand } = await import("./commands/screenshot.js");
+    await screenshotCleanCommand(options);
+  });
+
 program.parseAsync(process.argv).catch((err) => {
   if (err instanceof Error && err.name === "ExitPromptError") {
     process.exit(0);
+  }
+  if (err instanceof CliError) {
+    if (process.exitCode === undefined) {
+      process.exitCode = err.exitCode;
+    }
+    return;
   }
   console.error("Unexpected error:", err);
   process.exit(1);

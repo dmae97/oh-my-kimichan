@@ -20,9 +20,10 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run lint
+      - run: npm run secret:scan
       - run: npm run check
-      - run: npm test
       - run: npm run build
+      - run: npm test
       - run: npm run audit:package

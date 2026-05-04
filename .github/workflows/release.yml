@@ -6,20 +6,98 @@ on:
       - 'v*'
 
 jobs:
-  release:
+  quality:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run lint
+      - run: npm run secret:scan
       - run: npm run check
-      - run: npm run build
+      - run: npm test
+
+  package:
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build:clean
+      - name: Pack tarball
+        run: npm pack --ignore-scripts --json
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: oh-my-kimi-*.tgz
+
+  audit:
+    runs-on: ubuntu-latest
+    needs: package
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Download tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: tarball
+      - name: Audit tarball
+        run: node scripts/package-audit.mjs --tarball oh-my-kimi-*.tgz
+
+  smoke:
+    name: Install Smoke (${{ matrix.os }} / Node ${{ matrix.node-version }})
+    needs: [package, audit]
+    strategy:
+      matrix:
+        node-version: [20, 22, 24]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - name: Download tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: tarball
+      - name: Run smoke tests
+        run: node scripts/smoke-test.mjs --tarball oh-my-kimi-*.tgz
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [smoke]
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+      - name: Download tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: tarball
+      - name: Publish to npm
+        run: npm publish oh-my-kimi-*.tgz --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

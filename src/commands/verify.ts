@@ -1,6 +1,8 @@
 import { join } from "path";
 import { style, status } from "../util/theme.js";
-import { getProjectRoot } from "../util/fs.js";
+import { NotFoundError, emitError, VerificationError } from "../util/cli-contract.js";
+import { getProjectRoot, pathExists, getRunsDir, getRunPath } from "../util/fs.js";
+import { readFile, writeFile } from "fs/promises";
 import { createStatePersister } from "../orchestration/state-persister.js";
 import { checkEvidenceGates } from "../orchestration/evidence-gate.js";
 
@@ -42,25 +44,17 @@ export async function verifyCommand(options: { run?: string; json?: boolean } = 
 
   if (!runId) {
     const msg = "No run ID specified. Use --run <id> or set OMK_RUN_ID.";
-    if (options.json) {
-      console.log(JSON.stringify({ error: msg }));
-    } else {
-      console.error(status.error(msg));
-    }
-    process.exit(1);
+    emitError(msg, Boolean(options.json));
+    throw new NotFoundError(msg);
   }
 
-  const persister = createStatePersister(join(root, ".omk", "runs"));
+  const persister = createStatePersister(getRunsDir(root));
   const state = await persister.load(runId);
 
   if (!state) {
     const msg = `Run not found: ${runId}`;
-    if (options.json) {
-      console.log(JSON.stringify({ error: msg }));
-    } else {
-      console.error(status.error(msg));
-    }
-    process.exit(1);
+    emitError(msg, Boolean(options.json));
+    throw new NotFoundError(msg);
   }
 
   if (!options.json && state.schemaVersion !== 1) {
@@ -134,7 +128,7 @@ export async function verifyCommand(options: { run?: string; json?: boolean } = 
 
     const result = await checkEvidenceGates(nodeGates, {
       cwd: root,
-      stdout: "",
+      stdout: await loadNodeStdout(root, runId, node.id),
       nodeId: node.id,
     });
 
@@ -256,7 +250,57 @@ export async function verifyCommand(options: { run?: string; json?: boolean } = 
     }
   }
 
-  if (failed.length > 0 || missing.length > 0) {
-    process.exitCode = 1;
+  const nodeFailed = failed.length > 0 || missing.length > 0;
+  const goalFailed = goalScore ? goalScore.overall === "fail" : false;
+  if (nodeFailed || goalFailed) {
+    throw new VerificationError("Verification failed", [
+      ...(nodeFailed ? [`${failed.length} failed gates, ${missing.length} missing`] : []),
+      ...(goalFailed ? ["goal score: fail"] : []),
+    ]);
+  }
+  await saveEvidenceJson(root, runId, { gates, evidence, passed, failed, missing, goalEvidence: goalEvidence.map(e => ({ ...e, message: e.message ?? "" })), goalScore: goalScore ?? null });
+}
+
+async function loadNodeStdout(root: string, runId: string, nodeId: string): Promise<string> {
+  const logPath = getRunPath(runId, `${nodeId}.log`, root);
+  if (await pathExists(logPath)) {
+    return await readFile(logPath, "utf-8");
+  }
+  const summaryPath = getRunPath(runId, "summary.md", root);
+  if (await pathExists(summaryPath)) {
+    return await readFile(summaryPath, "utf-8");
+  }
+  return "";
+}
+
+async function saveEvidenceJson(
+  root: string,
+  runId: string,
+  data: {
+    gates: VerifyGate[];
+    evidence: VerifyEvidence[];
+    passed: VerifyEvidence[];
+    failed: VerifyEvidence[];
+    missing: MissingEvidence[];
+    goalEvidence: { criterionId: string; passed: boolean; message: string; ref?: string; }[];
+    goalScore: { overall: string; requiredPassed: number; requiredTotal: number; optionalScore: number; } | null;
+  }
+): Promise<void> {
+  try {
+    const evidencePath = getRunPath(runId, "evidence.json", root);
+    await writeFile(evidencePath, JSON.stringify({
+      schemaVersion: SCHEMA_VERSION,
+      runId,
+      checkedAt: new Date().toISOString(),
+      gates: data.gates,
+      evidence: data.evidence,
+      passed: data.passed.length,
+      failed: data.failed.length,
+      missing: data.missing.length,
+      goalEvidence: data.goalEvidence,
+      goalScore: data.goalScore,
+    }, null, 2));
+  } catch {
+    // non-fatal
   }
 }

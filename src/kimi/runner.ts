@@ -1,11 +1,10 @@
 import pty from "node-pty";
 import { BannerReplacer } from "./banner.js";
 import { KimiBugFilter } from "./bug-filter.js";
-import { kimichanBanner, style } from "../util/theme.js";
+import { kimicatBanner, style } from "../util/theme.js";
 import { ensureDir, injectKimiGlobals, getProjectRoot, pathExists } from "../util/fs.js";
-import { readClipboardImage } from "../util/clipboard-image.js";
-import { join, resolve } from "path";
-import { spawn } from "child_process";
+import { pasteScreenshot } from "../util/screenshot-store.js";
+import { join } from "path";
 import type { TaskRunner, TaskResult } from "../contracts/orchestration.js";
 import type { DagNode } from "../orchestration/dag.js";
 import { runShellStreaming } from "../util/shell.js";
@@ -31,7 +30,7 @@ export async function runKimiInteractive(
   }
 
   const replacer = new BannerReplacer((meta) => {
-    writeStdout(kimichanBanner(meta, formatOmkVersionFooter()) + "\n");
+    writeStdout(kimicatBanner(meta, formatOmkVersionFooter()) + "\n");
     options?.onMeta?.(meta);
   });
   const bugFilter = new KimiBugFilter();
@@ -40,8 +39,8 @@ export async function runKimiInteractive(
 
   const tmpHome = await prepareIsolatedKimiHome();
   const env = options?.env
-    ? { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile, HOME: tmpHome, ...options.env }
-    : { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile, HOME: tmpHome };
+    ? { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile, HOME: tmpHome, USERPROFILE: tmpHome, HOMEDRIVE: "", HOMEPATH: tmpHome, ...options.env }
+    : { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile, HOME: tmpHome, USERPROFILE: tmpHome, HOMEDRIVE: "", HOMEPATH: tmpHome };
 
   const ptyProcess = pty.spawn("kimi", args, {
     name: "xterm-256color",
@@ -125,17 +124,16 @@ export async function runKimiInteractive(
   process.stdin.on("data", (data: string | Buffer) => {
     const text = typeof data === "string" ? data : data.toString("utf8");
 
-    // Ctrl+V (0x16) — paste clipboard image directly into the prompt
-    if (text.includes("\x16")) {
+    // Ctrl+V (0x16) — default: pass-through to Kimi native paste.
+    // Only intercept when OMK_IMAGE_PASTE_MODE=managed is set.
+    if (text.includes("\x16") && process.env.OMK_IMAGE_PASTE_MODE === "managed") {
       const remaining = text.replace(/\x16/g, "");
-      const result = readClipboardImage(getProjectRoot());
-      if (result.path && result.relativePath) {
-        // If user pressed Ctrl+V by itself, auto-submit with a newline so Kimi sees it immediately.
-        // If Ctrl+V was mixed with other typed text, only insert the path without newline.
-        const autoSubmit = remaining.trim().length === 0 ? "\n" : "";
-        ptyProcess.write(`[IMAGE: ./${result.relativePath}]${autoSubmit}`);
+      const result = pasteScreenshot(getProjectRoot());
+      if (result.ok && result.relativePath) {
+        // Insert path but do NOT auto-submit; user must press Enter.
+        ptyProcess.write(`Image file: ${result.relativePath}`);
       } else if (remaining.trim().length === 0) {
-        ptyProcess.write(`[Clipboard: no image found]\n`);
+        ptyProcess.write(`[Clipboard: ${result.error ?? "no image found"}]`);
       }
       if (remaining) {
         ptyProcess.write(remaining);
@@ -143,31 +141,20 @@ export async function runKimiInteractive(
       return;
     }
 
-    // /paste-image — explicit command to insert clipboard image path
+    // /paste-image — explicit command to save clipboard image and insert path
     if (text.trim() === "/paste-image") {
-      const result = readClipboardImage(getProjectRoot());
-      if (result.path && result.relativePath) {
-        ptyProcess.write(`[IMAGE: ./${result.relativePath}]\n`);
+      const result = pasteScreenshot(getProjectRoot());
+      if (result.ok && result.relativePath) {
+        // Insert path but do NOT auto-submit; user must press Enter.
+        ptyProcess.write(`Image file: ${result.relativePath}`);
       } else {
-        ptyProcess.write(`[Clipboard image error: ${result.error ?? "No image found"}]\n`);
+        ptyProcess.write(`[Screenshot error: ${result.error ?? "No image found"}]`);
       }
       return;
     }
 
-    // /goal-image — create an omk goal from clipboard image and run in parallel
-    if (text.trim() === "/goal-image") {
-      const result = readClipboardImage(getProjectRoot());
-      if (result.path && result.relativePath) {
-        ptyProcess.write(`[Goal image: ./${result.relativePath}] — spawning parallel agents…\n`);
-        spawnImageGoal(result.path, result.relativePath);
-      } else {
-        ptyProcess.write(`[Clipboard image error: ${result.error ?? "No image found"}]\n`);
-      }
-      return;
-    }
 
-    const sanitized = text.replace(/\x1b\[[AB]/g, "");
-    ptyProcess.write(sanitized);
+    ptyProcess.write(text);
   });
 
   // 터미널 리사이즈 → pty 동기화
@@ -191,7 +178,7 @@ export async function runKimiInteractive(
       // Returning the exit code via resolve is enough for the wrapper to handle.
       if (exitCode !== 0) {
         const runId = options?.env?.OMK_RUN_ID;
-        const resumeHint = runId ? ` • resume: omk resume ${runId}` : "";
+        const resumeHint = runId ? ` • resume: omk chat --run-id ${runId}` : "";
         process.stderr.write(style.red(`[omk] kimi exited with code ${exitCode}${resumeHint}\n`));
       }
       void cleanupIsolatedKimiHome(tmpHome);
@@ -367,58 +354,6 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
   return runner;
 }
 
-function spawnImageGoal(imagePath: string, relativePath: string): void {
-  const goalPrompt = `Analyze and process the attached image at ${relativePath}. Inspect the image contents, describe what you see, and propose relevant actions or code changes.`;
-  const omkCli = process.argv[1] ? resolve(process.argv[1]) : "omk";
-  const root = getProjectRoot();
-
-  // Step 1: create goal
-  const create = spawn(process.execPath, [omkCli, "goal", "create", goalPrompt, "--json"], {
-    cwd: root,
-    detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: process.env as NodeJS.ProcessEnv,
-  });
-
-  let stdout = "";
-  let stderr = "";
-  create.stdout.on("data", (d: Buffer) => {
-    stdout += d.toString("utf8");
-  });
-  create.stderr.on("data", (d: Buffer) => {
-    stderr += d.toString("utf8");
-  });
-
-  create.on("close", (code: number | null) => {
-    if (code !== 0) {
-      process.stderr.write(
-        `[omk] goal create failed for image ${relativePath}${stderr ? `: ${stderr.trim()}` : ""}\n`
-      );
-      return;
-    }
-    try {
-      const spec = JSON.parse(stdout);
-      const goalId = spec.goalId as string | undefined;
-      if (!goalId) {
-        process.stderr.write(`[omk] goal create returned no goalId\n`);
-        return;
-      }
-      // Step 2: run goal in parallel (detached)
-      const run = spawn(process.execPath, [omkCli, "goal", "run", goalId], {
-        cwd: root,
-        detached: true,
-        stdio: "ignore",
-        env: process.env as NodeJS.ProcessEnv,
-      });
-      run.unref();
-      process.stderr.write(`[omk] Spawned parallel goal ${goalId} for image ${relativePath}\n`);
-    } catch {
-      process.stderr.write(`[omk] Failed to parse goal create output: ${stdout.slice(0, 200)}\n`);
-    }
-  });
-
-  create.unref();
-}
 
 function buildNodeMessage(
   node: DagNode,

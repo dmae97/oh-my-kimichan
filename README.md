@@ -1,26 +1,46 @@
 <div align="center">
 
-<img src="./readmeasset/kimichan.png" alt="oh-my-kimichan" width="720" />
+<!-- Open Graph -->
+<meta property="og:image" content="https://raw.githubusercontent.com/dmae97/oh-my-kimi/main/readmeasset/kimicat.png" />
+<meta property="og:title" content="oh-my-kimi" />
+<meta property="og:description" content="Kimi CLI, but better." />
 
-<h1>oh-my-kimichan</h1>
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://raw.githubusercontent.com/dmae97/oh-my-kimi/main/readmeasset/kimicat.png" />
+
+<video src="./readmeasset/kimicat.mp4" width="720" autoplay loop muted playsinline></video>
+
+<h1>oh-my-kimi</h1>
 
 <p>
-  <strong>🚀 The unofficial Kimi Code CLI power-up</strong><br/>
-  <sub>Turn your Kimi into a meme-tier multi-agent coding team — DESIGN.md-aware UI, live quality gates, AGENTS.md compatible</sub>
+  <strong>Kimi-native multi-agent orchestration harness for the Kimi Code CLI</strong><br/>
+  <sub>Turn one prompt into a planned, reviewable project. Parallel agents, live quality gates, DESIGN.md-aware UI, and zero-config safety hooks.</sub>
 </p>
 
-> ✅ <strong>Stable Release</strong> — v1.0.0 is ready for daily use. Core orchestration, chat harness, and quality gates are solid. Some advanced features (<code>parallel</code>, <code>goal</code>) may still evolve.
+<p>
+  <strong>What is oh-my-kimi?</strong> oh-my-kimi (OMK) wraps the Kimi Code CLI (Kimi K2.6) with a multi-agent orchestration layer. It spins up parallel coding teams in isolated Git worktrees, enforces lint / typecheck / test / build gates before completion, and provides a real-time terminal HUD to monitor progress.
+</p>
+
+```bash
+npm install -g @oh-my-kimi/cli
+omk init
+omk doctor
+# omk demo  # Coming soon — try the examples below
+```
+
+> ✅ <strong>Stable Release</strong> — v1.1.0 is ready for daily use. Core orchestration, chat harness, and quality gates are solid. Some advanced features (<code>parallel</code>, <code>goal</code>) may still evolve.
 
 
 <p>
-  <a href="https://github.com/dmae97/oh-my-kimichan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dmae97/oh-my-kimichan/ci.yml?branch=main&amp;style=for-the-badge&amp;logo=githubactions&amp;label=CI" alt="GitHub CI" /></a>
-  <a href="https://github.com/dmae97/oh-my-kimichan/releases"><img src="https://img.shields.io/github/package-json/v/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github&amp;label=GitHub%20version" alt="GitHub package version" /></a>
-  <a href="https://www.npmjs.com/package/oh-my-kimichan"><img src="https://img.shields.io/npm/v/oh-my-kimichan?style=for-the-badge&amp;color=cb3837&amp;logo=npm" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/oh-my-kimichan"><img src="https://img.shields.io/npm/dm/oh-my-kimichan?style=for-the-badge&amp;color=brightgreen&amp;logo=npm" alt="npm downloads" /></a>
-  <a href="https://github.com/dmae97/oh-my-kimichan/stargazers"><img src="https://img.shields.io/github/stars/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github&amp;color=yellow" alt="GitHub stars" /></a>
-  <a href="https://github.com/dmae97/oh-my-kimichan/network/members"><img src="https://img.shields.io/github/forks/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github" alt="GitHub forks" /></a>
-  <a href="https://github.com/dmae97/oh-my-kimichan/issues"><img src="https://img.shields.io/github/issues/dmae97/oh-my-kimichan?style=for-the-badge&amp;logo=github" alt="GitHub issues" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/oh-my-kimichan?style=for-the-badge&amp;color=blue" alt="license" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimi/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dmae97/oh-my-kimi/ci.yml?branch=main&amp;style=for-the-badge&amp;logo=githubactions&amp;label=CI" alt="GitHub CI" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimi/releases"><img src="https://img.shields.io/github/package-json/v/dmae97/oh-my-kimi?style=for-the-badge&amp;logo=github&amp;label=GitHub%20version" alt="GitHub package version" /></a>
+  <a href="https://www.npmjs.com/package/@oh-my-kimi/cli"><img src="https://img.shields.io/npm/v/@oh-my-kimi/cli?style=for-the-badge&amp;color=cb3837&amp;logo=npm" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@oh-my-kimi/cli"><img src="https://img.shields.io/npm/dm/@oh-my-kimi/cli?style=for-the-badge&amp;color=brightgreen&amp;logo=npm" alt="npm downloads" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimi/stargazers"><img src="https://img.shields.io/github/stars/dmae97/oh-my-kimi?style=for-the-badge&amp;logo=github&amp;color=yellow" alt="GitHub stars" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimi/network/members"><img src="https://img.shields.io/github/forks/dmae97/oh-my-kimi?style=for-the-badge&amp;logo=github" alt="GitHub forks" /></a>
+  <a href="https://github.com/dmae97/oh-my-kimi/issues"><img src="https://img.shields.io/github/issues/dmae97/oh-my-kimi?style=for-the-badge&amp;logo=github" alt="GitHub issues" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/oh-my-kimi?style=for-the-badge&amp;color=blue" alt="license" /></a>
 </p>
 
 <p>
@@ -44,6 +64,8 @@
 
 ## Table of Contents
 
+- [Quick Start](#quick-start)
+- [Examples](#examples)
 - [GitHub Release Snapshot](#github-release-snapshot)
 - [Repository Topics](#repository-topics)
 - [One Prompt to Landing Page](#one-prompt-to-landing-page)
@@ -56,11 +78,45 @@
 
 ---
 
+## Quick Start
+
+```bash
+# 1. Install
+npm install -g @oh-my-kimi/cli
+
+# 2. Initialize a project
+mkdir my-project && cd my-project
+omk init
+
+# 3. Verify your environment
+omk doctor
+
+# 4. Run a planned workflow
+omk run "Build a Next.js landing page with dark mode and contact form"
+```
+
+## Examples
+
+Case studies with reproducible prompts, actual outputs, and honest limitations.
+
+| Example | Prompt → Output | Status |
+|---|---|---|
+| [One-prompt landing page](https://github.com/dmae97/oh-my-kimi/tree/main/examples/one-prompt-landing-page) | Next.js + Tailwind landing page from a single sentence | 🎬 Video available |
+| [Neon Courier 2D](https://github.com/dmae97/oh-my-kimi/tree/main/examples/neon-courier-2d) | Browser 2D runner game in TypeScript | 🎬 Video available |
+| [Neon Courier FPS](https://github.com/dmae97/oh-my-kimi/tree/main/examples/neon-courier-fps) | Three.js first-person prototype | 🎬 Video available |
+
+Each example includes:
+- **Prompt** — exactly what was sent
+- **RUN_REPORT.md** — what the agents produced
+- **Known limitations** — what broke or needed manual fix
+
+---
+
 ## GitHub Release Snapshot
 
-> **Current GitHub-ready version:** `1.0.0`
+> **Current GitHub-ready version:** `1.1.0`
 
-### What's New in v1.0.0
+### What's New in v1.1.0
 
 | **Area** | **GitHub-visible update** | **Why it matters** |
 |----------|---------------------------|--------------------|
@@ -69,7 +125,7 @@
 | **Performance** | Parallel I/O optimization across `cockpit`, `doctor`, `hud`, `ensemble`, `dag`, `run`, and MCP server | Faster dashboard refresh and lower latency on every command |
 | **UI/UX** | `omk cockpit` — Real-time compact dashboard with parallel TODO/agent rendering, git changes, and history | Monitor your multi-agent run from a tmux side panel |
 | **UI/UX** | `omk hud` — Full terminal dashboard with goal scoring, ETA estimation, and state-error recovery hints | Understand run health at a glance and know the next action |
-| **Safety & Quality** | Strict lint, typecheck, 155 tests, smoke test, package audit, and secret scan all green | Production-grade reliability for daily use |
+| **Safety & Quality** | Strict lint, typecheck, **234 tests**, smoke test, package audit, and secret scan all green | Production-grade reliability for daily use |
 | **Orchestration** | DAG scheduler with retry, skip-on-failure, fallback roles, evidence gates, and ensemble candidates | Robust multi-agent execution with failure recovery |
 | **Memory** | Local graph memory (default), optional Neo4j, and optional Kuzu backends | Choose the right graph store for your project size |
 
@@ -77,14 +133,14 @@
 
 | **Area** | **GitHub-visible update** | **Why it matters** |
 |----------|---------------------------|--------------------|
-| **Core Engine** | `omk specify` — GitHub Spec Kit integration (init, workflow, preset, version) | Connect structured planning to Kimi-native DAG execution |
+| **Experimental** | `omk specify` — GitHub Spec Kit integration (init, workflow, preset, version) | Connect structured planning to Kimi-native DAG execution |
 | **Core Engine** | `omk dag from-spec [dir]` — Convert spec Kit `tasks.md` into OMK DAG with dependency inference and role-based routing | Turn written specs into executable parallel pipelines |
 | **Core Engine** | `omk parallel --from-spec <dir>` — Load spec-based DAG and execute via existing parallel executor | Reuse the same spec for planning and execution |
 | **Core Engine** | `omk feature` / `bugfix` / `refactor` / `review` workflow presets with `--spec-kit` | One-command entry points for common development workflows |
 | **UI/UX** | `omk summary` / `summary-show` — Generate `summary.md` + `report.md` for the latest run | Understand what happened after a long agent run |
 | **UI/UX** | `omk index` / `index-show` — Build project index (package manager, git status, file tree) for context reduction | Faster agent context building without manual repo exploration |
-| **Memory & Intelligence** | `omk skill pack` / `install` / `sync` — Curated Kimi skill pack management | Share and version agent skills across projects |
-| **Memory & Intelligence** | `omk agent list` / `show` / `create` / `doctor` — Agent registry and YAML diagnostics | Manage 16 built-in roles and validate agent definitions |
+| **Experimental** | `omk skill pack` / `install` / `sync` — Curated Kimi skill pack management | Share and version agent skills across projects |
+| **Experimental** | `omk agent list` / `show` / `create` / `doctor` — Agent registry and YAML diagnostics | Manage 16 built-in roles and validate agent definitions |
 | **Safety & Quality** | Default `approval_policy = "auto"`, `yolo_mode = false` | Safe-by-default for open-source users |
 | **Safety & Quality** | `doctor` npm 10+ compatible; smoke test validates `doctor.errors` | First-install diagnostics work on modern Node/npm and catch real failures |
 
@@ -168,7 +224,7 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 
 <h2 id="korean">Korean</h2>
 
-> ✅ <strong>Stable Release v1.0.0</strong> — Kimi Code CLI를 <strong>worktree 기반 코딩 팀</strong>으로 변환하세요. DESIGN.md 기반 UI 생성, AGENTS.md 호환성, 실시간 품질 게이트, 병렬 HUD를 제공합니다.
+> ✅ <strong>Stable Release v1.1.0</strong> — Kimi Code CLI를 <strong>worktree 기반 코딩 팀</strong>으로 변환하세요. DESIGN.md 기반 UI 생성, AGENTS.md 호환성, 실시간 품질 게이트, 병렬 HUD를 제공합니다.
 
 ### Features
 
@@ -195,7 +251,7 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 - **성능** — `cockpit`, `doctor`, `hud`, `ensemble`, `dag`, `run`, MCP 서버 전반에 병렬 I/O 최적화 적용
 - **`omk cockpit`** — 병렬 TODO/에이전트 렌더링, git 변경사항, 히스토리를 포함한 실시간 컴팩트 대시보드
 - **`omk hud`** — 목표 점수, ETA 예측, 상태 오류 복구 힌트가 포함한 풀 터미널 대시보드
-- **안전 및 품질** — 엄격한 lint, typecheck, 155개 테스트, smoke test, 패키지 감사, 시크릿 스캔 전부 통과
+- **안전 및 품질** — 엄격한 lint, typecheck, **234 tests**, smoke test, 패키지 감사, 시크릿 스캔 전부 통과
 - **오케스트레이션** — 재시도, 실패 시 건너뛰기, 폴백 역할, 증거 게이트, 앙상블 후보가 포함된 DAG 스케줄러
 - **메모리** — 로컬 그래프 메모리(기본값), 선택적 Neo4j, 선택적 Kuzu 백엔드
 
@@ -233,7 +289,7 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 ### Install
 
 ```bash
-npm install -g oh-my-kimichan
+npm install -g @oh-my-kimi/cli
 ```
 
 > **Requirements:** Node.js >= 20, Git, python3, Kimi CLI (v1.39.0+)
@@ -248,7 +304,7 @@ omk chat
 
 ### Kimi-native context
 
-oh-my-kimichan agents use an Okabe-compatible base agent that inherits `default` and adds `SendDMail`, so D-Mail is available for checkpoint rollback and context recovery. Use it before risky refactors, long-running handoffs, or `/compact`; durable facts still go to project-local ontology graph memory.
+oh-my-kimi agents use an Okabe-compatible base agent that inherits `default` and adds `SendDMail`, so D-Mail is available for checkpoint rollback and context recovery. Use it before risky refactors, long-running handoffs, or `/compact`; durable facts still go to project-local ontology graph memory.
 
 ### Project-local graph memory
 
@@ -290,7 +346,7 @@ Goal:     refactor auth module
 Workers:  3
 ✔ Parallel DAG run complete
 
-$ omk team
+$ omk team  # Experimental — tmux layout scaffold only
 Team Runtime starting...
    [architect]  Creating plan.md...
    [coder]      Implementation in progress...
@@ -300,7 +356,7 @@ Team Runtime starting...
 
 ### CLI Commands
 
-> Note: run, parallel, verify, summary, and goal are alpha features. Expect breaking changes.
+> Note: run, parallel, verify, summary, sync, runs, and goal are alpha features. Expect breaking changes.
 
 #### Stable
 
@@ -318,14 +374,8 @@ Team Runtime starting...
 | `omk design list` | List local/remote DESIGN.md files |
 | `omk design apply <name>` | Convert DESIGN.md into code |
 | `omk google stitch-install` | Install Google Stitch skills |
-| `omk sync` | Sync Kimi assets (hooks, MCP, skills, local graph memory) |
-| `omk sync --dry-run` | Preview sync without applying changes |
-| `omk sync --diff` | Show diff of what would change |
-| `omk sync --rollback` | Rollback last sync from manifest |
-| `omk agent list` | List agent roles by maturity (see MATURITY.md) |
-| `omk agent show <name>` | Show agent role details |
-| `omk agent create <name>` | Create a new agent from a template |
-| `omk agent doctor` | Validate all agent YAMLs |
+| `omk update` | Check or run OMK and Kimi CLI updates |
+| `omk menu` | Interactive OMK main menu via @inquirer/prompts |
 
 #### Alpha
 
@@ -338,6 +388,11 @@ Team Runtime starting...
 | `omk review --soft` (alpha) | Soft mode: always exit 0 even if review fails |
 | `omk verify` (alpha) | Evidence gate verification for completed runs |
 | `omk summary` (alpha) | Run summary and report generation |
+| `omk sync` (alpha) | Sync Kimi assets (hooks, MCP, skills, local graph memory) |
+| `omk sync --dry-run` (alpha) | Preview sync without applying changes |
+| `omk sync --diff` (alpha) | Show diff of what would change |
+| `omk sync --rollback` (alpha) | Rollback last sync from manifest |
+| `omk runs` (alpha) | List past OMK runs with status and dates |
 | `omk goal` (alpha) | Codex-style goal management |
 
 #### Experimental
@@ -345,6 +400,8 @@ Team Runtime starting...
 | Command | Status | Notes |
 |---------|--------|-------|
 | `omk team` | Layout only | tmux window layout scaffold |
+| `omk agent` | Experimental | Agent registry and YAML diagnostics |
+| `omk skill` | Experimental | Kimi skill pack manager |
 | `omk merge` | Manual | Diff check + manual cherry-pick guidance |
 | `omk design lint` | Stub | Validation not yet implemented |
 | `omk design diff` | Stub | Diff not yet implemented |
@@ -386,10 +443,11 @@ OMK ships with 16 built-in agent roles. Each role is a YAML file in `.omk/agents
 graph TD
     User["👤 User / omk CLI"] --> Router["🎮 Command Router"]
 
-    Router --> Stable["🟢 init / doctor / sync"]
-    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary"]
+    Router --> Stable["🟢 init / doctor / update / menu"]
+    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary / sync / runs / review"]
     Router --> Hud["📺 omk hud / cockpit"]
     Router --> Chat["💬 omk chat / lsp / design / star"]
+    Router --> Experimental["🔴 team / merge / specify / agent / skill"]
 
     Alpha --> Orchestrator["⚡ Parallel Orchestrator"]
     Orchestrator --> Coordinator["🎛️ coordinator agent"]
@@ -454,7 +512,7 @@ omk lsp typescript
 
 <h2 id="english">English</h2>
 
-> ✅ <strong>Stable Release v1.0.0</strong> — Turn Kimi Code CLI into a <strong>meme-tier multi-agent coding team</strong>. This is a Kimi-native wrapper — not a generic AI tool. DESIGN.md-aware UI, live quality gates, parallel HUD, AGENTS.md compatible.
+> ✅ <strong>Stable Release v1.1.0</strong> — Turn Kimi Code CLI into a <strong>meme-tier multi-agent coding team</strong>. This is a Kimi-native wrapper — not a generic AI tool. DESIGN.md-aware UI, live quality gates, parallel HUD, AGENTS.md compatible.
 
 ### Features
 
@@ -479,7 +537,7 @@ omk lsp typescript
 - **Performance** — Parallel I/O optimization across `cockpit`, `doctor`, `hud`, `ensemble`, `dag`, `run`, and MCP server
 - **`omk cockpit`** — Real-time compact dashboard with parallel TODO/agent rendering, git changes, and history
 - **`omk hud`** — Full terminal dashboard with goal scoring, ETA estimation, and state-error recovery hints
-- **Safety & Quality** — Strict lint, typecheck, 155 tests, smoke test, package audit, and secret scan all green
+- **Safety & Quality** — Strict lint, typecheck, **234 tests**, smoke test, package audit, and secret scan all green
 - **Orchestration** — DAG scheduler with retry, skip-on-failure, fallback roles, evidence gates, and ensemble candidates
 - **Memory** — Local graph memory (default), optional Neo4j, and optional Kuzu backends
 
@@ -517,7 +575,7 @@ omk lsp typescript
 ### Install
 
 ```bash
-npm install -g oh-my-kimichan
+npm install -g @oh-my-kimi/cli
 ```
 
 > **Requirements:** Node.js >= 20, Git, python3, Kimi CLI (v1.39.0+)
@@ -569,7 +627,7 @@ Team Runtime starting...
 
 ### CLI Commands
 
-> Note: run, parallel, verify, summary, goal, and sync are alpha features. Expect breaking changes.
+> Note: run, parallel, verify, summary, sync, runs, and goal are alpha features. Expect breaking changes.
 
 #### Stable
 
@@ -599,17 +657,20 @@ Team Runtime starting...
 | `omk review --soft` (alpha) | Soft mode: always exit 0 even if review fails |
 | `omk verify` (alpha) | Evidence gate verification for completed runs |
 | `omk summary` (alpha) | Run summary and report generation |
-| `omk goal` (alpha) | Codex-style goal management |
 | `omk sync` (alpha) | Sync Kimi assets (hooks, MCP, skills, local graph memory) |
 | `omk sync --dry-run` (alpha) | Preview sync without applying changes |
 | `omk sync --diff` (alpha) | Show diff of what would change |
 | `omk sync --rollback` (alpha) | Rollback last sync from manifest |
+| `omk runs` (alpha) | List past OMK runs with status and dates |
+| `omk goal` (alpha) | Codex-style goal management |
 
 #### Experimental
 
 | Command | Status | Notes |
 |---------|--------|-------|
 | `omk team` | Layout only | tmux window layout scaffold |
+| `omk agent` | Experimental | Agent registry and YAML diagnostics |
+| `omk skill` | Experimental | Kimi skill pack manager |
 | `omk merge` | Manual | Diff check + manual cherry-pick guidance |
 | `omk design lint` | Stub | Validation not yet implemented |
 | `omk design diff` | Stub | Diff not yet implemented |
@@ -621,10 +682,11 @@ Team Runtime starting...
 graph TD
     User["👤 User / omk CLI"] --> Router["🎮 Command Router"]
 
-    Router --> Stable["🟢 init / doctor / sync"]
-    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary"]
+    Router --> Stable["🟢 init / doctor / update / menu"]
+    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary / sync / runs / review"]
     Router --> Hud["📺 omk hud / cockpit"]
     Router --> Chat["💬 omk chat / lsp / design / star"]
+    Router --> Experimental["🔴 team / merge / specify / agent / skill"]
 
     Alpha --> Orchestrator["⚡ Parallel Orchestrator"]
     Orchestrator --> Coordinator["🎛️ coordinator agent"]
@@ -678,7 +740,7 @@ Default hooks block destructive commands and secret leakage:
 
 <h2 id="chinese">Chinese</h2>
 
-> ✅ <strong>Stable Release v1.0.0</strong> — 将 Kimi Code CLI 转变为一个<strong>基于 worktree 的编码团队</strong>。支持 DESIGN.md 感知 UI 生成、AGENTS.md 兼容性、实时质量门禁以及并行 HUD。
+> ✅ <strong>Stable Release v1.1.0</strong> — 将 Kimi Code CLI 转变为一个<strong>基于 worktree 的编码团队</strong>。支持 DESIGN.md 感知 UI 生成、AGENTS.md 兼容性、实时质量门禁以及并行 HUD。
 
 ### Features
 
@@ -703,7 +765,7 @@ Default hooks block destructive commands and secret leakage:
 - **性能** — 对 `cockpit`、`doctor`、`hud`、`ensemble`、`dag`、`run` 及 MCP 服务器进行并行 I/O 优化
 - **`omk cockpit`** — 实时紧凑仪表盘，支持并行 TODO/Agent 渲染、git 变更与历史记录
 - **`omk hud`** — 完整终端仪表盘，支持目标评分、ETA 估算与状态错误恢复提示
-- **安全与质量** — 严格的 lint、typecheck、155 项测试、smoke test、包审计、密钥扫描全部通过
+- **安全与质量** — 严格的 lint、typecheck、**234 项测试**、smoke test、包审计、密钥扫描全部通过
 - **编排** — 支持重试、失败跳过、回退角色、证据门控与候选集成的 DAG 调度器
 - **记忆** — 本地图记忆（默认）、可选 Neo4j、可选 Kuzu 后端
 
@@ -741,7 +803,7 @@ Default hooks block destructive commands and secret leakage:
 ### Install
 
 ```bash
-npm install -g oh-my-kimichan
+npm install -g @oh-my-kimi/cli
 ```
 
 > **要求：** Node.js >= 20、Git、python3、Kimi CLI (v1.39.0+)
@@ -783,7 +845,7 @@ Goal:     refactor auth module
 Workers:  3
 ✔ Parallel DAG run complete
 
-$ omk team
+$ omk team  # Experimental — tmux layout scaffold only
 Team Runtime 启动中...
    [architect]  创建 plan.md...
    [coder]      实现进行中...
@@ -793,7 +855,7 @@ Team Runtime 启动中...
 
 ### CLI Commands
 
-> Note: run, parallel, verify, summary, and goal are alpha features. Expect breaking changes.
+> Note: run, parallel, verify, summary, sync, runs, and goal are alpha features. Expect breaking changes.
 
 #### Stable
 
@@ -811,10 +873,8 @@ Team Runtime 启动中...
 | `omk design list` | 列出本地/远程 DESIGN.md |
 | `omk design apply <name>` | 将 DESIGN.md 转换为代码 |
 | `omk google stitch-install` | 安装 Google Stitch 技能 |
-| `omk sync` | 同步 Kimi 资源（hooks、MCP、skills、本地图记忆） |
-| `omk sync --dry-run` | 预览变更，不实际应用 |
-| `omk sync --diff` | 显示将要变更的 diff |
-| `omk sync --rollback` | 从 manifest 回滚上次同步 |
+| `omk update` | 检查或运行 OMK 和 Kimi CLI 更新 |
+| `omk menu` | 通过 @inquirer/prompts 显示交互式 OMK 主菜单 |
 
 #### Alpha
 
@@ -827,6 +887,11 @@ Team Runtime 启动中...
 | `omk review --soft` (alpha) | 软模式：审查失败也返回 exit 0 |
 | `omk verify` (alpha) | 已完成运行的证据门验证 |
 | `omk summary` (alpha) | 运行摘要与报告生成 |
+| `omk sync` (alpha) | 同步 Kimi 资源（hooks、MCP、skills、本地图记忆） |
+| `omk sync --dry-run` (alpha) | 预览变更，不实际应用 |
+| `omk sync --diff` (alpha) | 显示将要变更的 diff |
+| `omk sync --rollback` (alpha) | 从 manifest 回滚上次同步 |
+| `omk runs` (alpha) | 列出过去的 OMK 运行及其状态和日期 |
 | `omk goal` (alpha) | Codex 风格的目标管理 |
 
 #### Experimental
@@ -834,6 +899,8 @@ Team Runtime 启动中...
 | Command | Status | Notes |
 |---------|--------|-------|
 | `omk team` | 仅布局 | tmux 窗口布局脚手架 |
+| `omk agent` | 实验性 | Agent 注册表及 YAML 诊断 |
+| `omk skill` | 实验性 | Kimi 技能包管理器 |
 | `omk merge` | 手动 | Diff 检查 + 手动 cherry-pick 指导 |
 | `omk design lint` | 占位 | 验证尚未实现 |
 | `omk design diff` | 占位 | Diff 尚未实现 |
@@ -845,10 +912,11 @@ Team Runtime 启动中...
 graph TD
     User["👤 User / omk CLI"] --> Router["🎮 Command Router"]
 
-    Router --> Stable["🟢 init / doctor / sync"]
-    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary"]
+    Router --> Stable["🟢 init / doctor / update / menu"]
+    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary / sync / runs / review"]
     Router --> Hud["📺 omk hud / cockpit"]
     Router --> Chat["💬 omk chat / lsp / design / star"]
+    Router --> Experimental["🔴 team / merge / specify / agent / skill"]
 
     Alpha --> Orchestrator["⚡ Parallel Orchestrator"]
     Orchestrator --> Coordinator["🎛️ coordinator agent"]
@@ -902,7 +970,7 @@ graph TD
 
 <h2 id="japanese">Japanese</h2>
 
-> ✅ <strong>Stable Release v1.0.0</strong> — Kimi Code CLI を <strong>worktree ベースのコーディングチーム</strong>に変換します。DESIGN.md 対応の UI 生成、AGENTS.md 互換性、ライブ品質ゲート、並列 HUD を提供します。
+> ✅ <strong>Stable Release v1.1.0</strong> — Kimi Code CLI を <strong>worktree ベースのコーディングチーム</strong>に変換します。DESIGN.md 対応の UI 生成、AGENTS.md 互換性、ライブ品質ゲート、並列 HUD を提供します。
 
 ### Features
 
@@ -927,7 +995,7 @@ graph TD
 - **パフォーマンス** — `cockpit`、`doctor`、`hud`、`ensemble`、`dag`、`run`、MCP サーバー全体に並列 I/O 最適化を適用
 - **`omk cockpit`** — 並列 TODO/エージェントレンダリング、git 変更履歴、ヒストリーを含むリアルタイムコンパクトダッシュボード
 - **`omk hud`** — 目標スコアリング、ETA 推定、状態エラー回復ヒントを含むフルターミナルダッシュボード
-- **安全性と品質** — 厳格な lint、typecheck、155 テスト、smoke test、パッケージ監査、シークレットスキャンすべて合格
+- **安全性と品質** — 厳格な lint、typecheck、**234 テスト**、smoke test、パッケージ監査、シークレットスキャンすべて合格
 - **オーケストレーション** — リトライ、失敗時スキップ、フォールバックロール、エビデンスゲート、アンサンブル候補を備えた DAG スケジューラ
 - **メモリ** — ローカルグラフメモリ（デフォルト）、オプションの Neo4j、オプションの Kuzu バックエンド
 
@@ -965,7 +1033,7 @@ graph TD
 ### Install
 
 ```bash
-npm install -g oh-my-kimichan
+npm install -g @oh-my-kimi/cli
 ```
 
 > **要件:** Node.js >= 20、Git、python3、Kimi CLI (v1.39.0+)
@@ -1007,7 +1075,7 @@ Goal:     refactor auth module
 Workers:  3
 ✔ Parallel DAG run complete
 
-$ omk team
+$ omk team  # Experimental — tmux layout scaffold only
 Team Runtime 開始中...
    [architect]  plan.md 作成中...
    [coder]      実装進行中...
@@ -1017,7 +1085,7 @@ Team Runtime 開始中...
 
 ### CLI Commands
 
-> Note: run, parallel, verify, summary, and goal are alpha features. Expect breaking changes.
+> Note: run, parallel, verify, summary, sync, runs, and goal are alpha features. Expect breaking changes.
 
 #### Stable
 
@@ -1035,10 +1103,8 @@ Team Runtime 開始中...
 | `omk design list` | ローカル/リモート DESIGN.md を一覧表示 |
 | `omk design apply <name>` | DESIGN.md をコードに変換適用 |
 | `omk google stitch-install` | Google Stitch スキルをインストール |
-| `omk sync` | Kimi アセットを同期（hooks、MCP、skills、ローカルグラフメモリ） |
-| `omk sync --dry-run` | 変更を適用せずプレビュー |
-| `omk sync --diff` | 変更内容の diff を表示 |
-| `omk sync --rollback` | manifest から前回の同期をロールバック |
+| `omk update` | OMK と Kimi CLI の更新を確認または実行 |
+| `omk menu` | @inquirer/prompts 経由でインタラクティブ OMK メニューを表示 |
 
 #### Alpha
 
@@ -1051,6 +1117,11 @@ Team Runtime 開始中...
 | `omk review --soft` (alpha) | ソフトモード：レビュー失敗時も exit 0 を維持 |
 | `omk verify` (alpha) | 完了済み実行のエビデンスゲート検証 |
 | `omk summary` (alpha) | 実行サマリーとレポート生成 |
+| `omk sync` (alpha) | Kimi アセットを同期（hooks、MCP、skills、ローカルグラフメモリ） |
+| `omk sync --dry-run` (alpha) | 変更を適用せずプレビュー |
+| `omk sync --diff` (alpha) | 変更内容の diff を表示 |
+| `omk sync --rollback` (alpha) | manifest から前回の同期をロールバック |
+| `omk runs` (alpha) | 過去の OMK 実行を状態と日付で一覧表示 |
 | `omk goal` (alpha) | Codex スタイルのゴール管理 |
 
 #### Experimental
@@ -1058,6 +1129,8 @@ Team Runtime 開始中...
 | Command | Status | Notes |
 |---------|--------|-------|
 | `omk team` | レイアウトのみ | tmux ウィンドウ レイアウト スキャフォールド |
+| `omk agent` | 実験的 | エージェントレジストリと YAML 診断 |
+| `omk skill` | 実験的 | Kimi スキルパックマネージャー |
 | `omk merge` | 手動 | Diff 確認 + 手動 cherry-pick ガイダンス |
 | `omk design lint` | スタブ | 検証は未実装 |
 | `omk design diff` | スタブ | Diff は未実装 |
@@ -1069,10 +1142,11 @@ Team Runtime 開始中...
 graph TD
     User["👤 User / omk CLI"] --> Router["🎮 Command Router"]
 
-    Router --> Stable["🟢 init / doctor / sync"]
-    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary"]
+    Router --> Stable["🟢 init / doctor / update / menu"]
+    Router --> Alpha["🟡 plan / run / parallel / goal / verify / summary / sync / runs / review"]
     Router --> Hud["📺 omk hud / cockpit"]
     Router --> Chat["💬 omk chat / lsp / design / star"]
+    Router --> Experimental["🔴 team / merge / specify / agent / skill"]
 
     Alpha --> Orchestrator["⚡ Parallel Orchestrator"]
     Orchestrator --> Coordinator["🎛️ coordinator agent"]
@@ -1128,7 +1202,7 @@ graph TD
 
 ### ⭐ First-run GitHub Star Prompt
 
-After your first successful interactive OMK CLI command (`init`, `doctor`, `hud`, `plan`, `parallel` (alpha), `run` (alpha)), OMK may ask: **"Support oh-my-kimichan on GitHub?"**
+After your first successful interactive OMK CLI command (`init`, `doctor`, `hud`, `plan`, `parallel` (alpha), `run` (alpha)), OMK may ask: **"Support oh-my-kimi on GitHub?"**
 
 - Only appears in **interactive TTY sessions**; never in CI, non-TTY, `chat`, `lsp`, `--help`, or `--version`.
 - **Yes** → explicitly requests a star via authenticated `gh` CLI.
@@ -1172,7 +1246,7 @@ logo_image = "kimichan.png"
 This project stands on the shoulders of giants. Every line of code here is possible because of the relentless dedication of open-source contributors around the world. With deepest respect and gratitude:
 
 ### Core Platform & AI
-- **[Kimi Code CLI](https://github.com/moonshot-ai/kimi-cli)** by Moonshot AI — The foundation that makes everything possible. Without Kimi K2.6 and its brilliant native agent runtime, `oh-my-kimichan` would not exist. Thank you for pushing the boundary of AI-native coding.
+- **[Kimi Code CLI](https://github.com/moonshot-ai/kimi-cli)** by Moonshot AI — The foundation that makes everything possible. Without Kimi K2.6 and its brilliant native agent runtime, `oh-my-kimi` would not exist. Thank you for pushing the boundary of AI-native coding.
 - **[Google DESIGN.md](https://design.md)** — For establishing a design-specification standard that bridges the gap between design intent and generated UI. A north star for structured frontend workflows.
 
 ### Language & Runtime
@@ -1205,7 +1279,7 @@ This project stands on the shoulders of giants. Every line of code here is possi
 
 ### Inspiration & Community
 - **[OpenCode](https://github.com/opencode)** and the broader agentic-coding community — For proving that AI-native development workflows are not just possible, but inevitable. Your early experiments with autonomous coding agents lit the path.
-- **Creators of `oh-my-opencode`, `oh-my-claude`, and `oh-my-codex`** — For showing that every major AI coding assistant deserves its own ergonomic harness. Your pioneering work inspired the architecture and philosophy behind `oh-my-kimichan`.
+- **Creators of `oh-my-opencode`, `oh-my-claude`, and `oh-my-codex`** — For showing that every major AI coding assistant deserves its own ergonomic harness. Your pioneering work inspired the architecture and philosophy behind `oh-my-kimi`.
 - **The Kimi engineering team at Moonshot AI** — For building not just a model, but a complete native agent runtime with Okabe context management, D-Mail checkpoints, SendDMail recovery, and subagent orchestration. You redefined what a coding assistant can be.
 
 ---

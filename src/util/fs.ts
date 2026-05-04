@@ -114,14 +114,7 @@ export function getOmkPath(subPath?: string): string {
   return subPath ? join(root, ".omk", subPath) : join(root, ".omk");
 }
 
-export function getRunPath(runId: string, subPath?: string): string {
-  const sanitized = runId.replace(/[^a-zA-Z0-9_.-]/g, "");
-  if (sanitized !== runId || sanitized.length === 0 || sanitized.length > 128) {
-    throw new Error(`Invalid runId: ${runId}`);
-  }
-  const runDir = getOmkPath(join("runs", sanitized));
-  return subPath ? join(runDir, subPath) : runDir;
-}
+export { validateRunId, getRunsDir, getRunPath, listValidRunIds } from "./run-store.js";
 
 export function getKimiConfigPath(): string {
   return join(homedir(), ".kimi", "config.toml");

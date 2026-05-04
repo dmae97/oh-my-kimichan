@@ -20,10 +20,19 @@ export async function prepareIsolatedKimiHome(): Promise<string> {
     const src = join(originalKimi, name);
     const dst = join(tmpKimi, name);
     if (await pathExists(src)) {
-      await symlink(src, dst, "dir").catch(() => {});
+      if (name === "credentials") {
+        try {
+          await symlink(src, dst, "dir");
+        } catch (err) {
+          throw new Error(`[omk] Fatal: failed to symlink ~/.kimi/credentials to isolated HOME: ${(err as Error).message ?? err}`);
+        }
+      } else {
+        await symlink(src, dst, "dir").catch((err) => {
+          console.warn(`[omk] Failed to symlink ~/.kimi/${name} to isolated HOME: ${(err as Error).message ?? err}`);
+        });
+      }
     }
   }
-
   // Build sanitized mcp.json: copy global servers except known broken ones
   const mcpServers: Record<string, unknown> = {};
   const globalMcpPath = join(originalKimi, "mcp.json");

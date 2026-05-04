@@ -1,7 +1,7 @@
 import { mkdir, writeFile, readdir, readFile } from "fs/promises";
 import { join } from "path";
 
-import { getOmkPath, getProjectRoot, pathExists } from "../util/fs.js";
+import { getOmkPath, getProjectRoot, pathExists, getRunPath } from "../util/fs.js";
 import { style, header, status, label } from "../util/theme.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { t } from "../util/i18n.js";
@@ -52,7 +52,7 @@ export async function runCommand(
   if (options.runId) {
     isResume = true;
     runId = options.runId;
-    runDir = join(root, ".omk/runs", runId);
+    runDir = getRunPath(runId);
 
     if (!(await pathExists(runDir))) {
       console.error(status.error(t("run.runNotFound", runId)));
@@ -92,9 +92,43 @@ export async function runCommand(
       process.exit(1);
     }
     runId = new Date().toISOString().replace(/[:.]/g, "-");
-    runDir = join(root, ".omk/runs", runId);
-    startedAt = new Date().toISOString();
+    runDir = getRunPath(runId);
+
+    const flowPath = getOmkPath(`flows/${resolvedFlow}/SKILL.md`);
+    const kimiFlowPath = join(root, ".kimi/skills", `omk-flow-${resolvedFlow}`, "SKILL.md");
+    let resolvedFlowPath: string | null = null;
+    if (await pathExists(flowPath)) {
+      resolvedFlowPath = flowPath;
+    } else if (await pathExists(kimiFlowPath)) {
+      resolvedFlowPath = kimiFlowPath;
+    }
+
+    if (!resolvedFlowPath) {
+      console.error(status.error(t("run.flowNotFound", resolvedFlow)));
+      console.error(style.gray(t("run.availableFlows")));
+      const flowsDir = getOmkPath("flows");
+      try {
+        const entries = await readdir(flowsDir, { withFileTypes: true });
+        for (const e of entries.filter((d) => d.isDirectory())) {
+          console.error(`   - ${e.name}`);
+        }
+      } catch {
+        // ignore
+      }
+      const kimiFlowsDir = join(root, ".kimi/skills");
+      try {
+        const entries = await readdir(kimiFlowsDir, { withFileTypes: true });
+        for (const e of entries.filter((d) => d.isDirectory() && d.name.startsWith("omk-flow-"))) {
+          console.error(`   - ${e.name.replace("omk-flow-", "")}`);
+        }
+      } catch {
+        // ignore
+      }
+      process.exit(1);
+    }
+
     await mkdir(runDir, { recursive: true });
+    startedAt = new Date().toISOString();
     await writeFile(join(runDir, "goal.md"), `# Goal\n\n${resolvedGoal}\n`);
     await writeFile(join(runDir, "plan.md"), `# Plan\n\nFlow: ${resolvedFlow}\nWorkers: ${workerCount}\nResource profile: ${resources.profile}\n`);
     const runState = createInteractiveRunState({
@@ -107,40 +141,6 @@ export async function runCommand(
       goalSnapshot,
     });
     await writeFile(join(runDir, "state.json"), JSON.stringify(runState, null, 2));
-  }
-
-  const flowPath = getOmkPath(`flows/${resolvedFlow}/SKILL.md`);
-  const kimiFlowPath = join(root, ".kimi/skills", `omk-flow-${resolvedFlow}`, "SKILL.md");
-
-  let resolvedFlowPath: string | null = null;
-  if (await pathExists(flowPath)) {
-    resolvedFlowPath = flowPath;
-  } else if (await pathExists(kimiFlowPath)) {
-    resolvedFlowPath = kimiFlowPath;
-  }
-
-  if (!resolvedFlowPath) {
-    console.error(status.error(t("run.flowNotFound", resolvedFlow)));
-    console.error(style.gray(t("run.availableFlows")));
-    const flowsDir = getOmkPath("flows");
-    try {
-      const entries = await readdir(flowsDir, { withFileTypes: true });
-      for (const e of entries.filter((d) => d.isDirectory())) {
-        console.error(`   - ${e.name}`);
-      }
-    } catch {
-      // ignore
-    }
-    const kimiFlowsDir = join(root, ".kimi/skills");
-    try {
-      const entries = await readdir(kimiFlowsDir, { withFileTypes: true });
-      for (const e of entries.filter((d) => d.isDirectory() && d.name.startsWith("omk-flow-"))) {
-        console.error(`   - ${e.name.replace("omk-flow-", "")}`);
-      }
-    } catch {
-      // ignore
-    }
-    process.exit(1);
   }
 
   console.log(header(isResume ? "Run resumed" : "Run started"));

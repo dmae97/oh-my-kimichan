@@ -22,7 +22,10 @@ function runReviewInTemp(opts, changes = true) {
   }
   const script = `
     import { reviewCommand } from "${REVIEW_MODULE}";
-    await reviewCommand(${JSON.stringify(opts)});
+    const result = await reviewCommand(${JSON.stringify(opts)});
+    if (!result.ok && process.exitCode === undefined) {
+      process.exitCode = result.exitCode;
+    }
     console.log("REVIEW_OK");
   `;
   return spawnSync(process.execPath, ["--input-type=module"], {

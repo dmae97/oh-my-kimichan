@@ -3,7 +3,7 @@ import { join } from "path";
 import { uptime } from "os";
 import { execFile, execSync } from "child_process";
 import { promisify } from "util";
-import { getOmkPath, pathExists, getProjectRoot } from "../util/fs.js";
+import { getOmkPath, pathExists, getProjectRoot, getRunPath, getRunsDir } from "../util/fs.js";
 import { getKimiUsage, type UsageStats } from "../kimi/usage.js";
 import { buildUsageViewModel } from "../util/usage-view-model.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
@@ -475,11 +475,11 @@ export async function listRunCandidates(runsDir: string): Promise<HudRunCandidat
   return Promise.all(dirs.map(async (entry) => {
     const runDir = join(runsDir, entry.name);
     const info = await fsStat(runDir).catch(() => null);
-    const statePath = join(runDir, "state.json");
+    const statePath = getRunPath(entry.name, "state.json");
     const [hasState, hasGoal, hasPlan] = await Promise.all([
       pathExists(statePath),
-      pathExists(join(runDir, "goal.md")),
-      pathExists(join(runDir, "plan.md")),
+      pathExists(getRunPath(entry.name, "goal.md")),
+      pathExists(getRunPath(entry.name, "plan.md")),
     ]);
     let schemaVersion: number | undefined;
     let stateUpdatedAtMs = info?.mtimeMs ?? 0;
@@ -630,7 +630,7 @@ async function buildLatestRunPanel(
   sessionMeta?: SessionMeta | null,
   todos?: TodoItem[] | null,
 ): Promise<string> {
-  const runsDir = getOmkPath("runs");
+  const runsDir = getRunsDir();
   let runLines: string[] = [];
 
   if (await pathExists(runsDir)) {
@@ -642,14 +642,12 @@ async function buildLatestRunPanel(
     }
 
     if (latestRunName) {
-      const runDir = join(runsDir, latestRunName);
-
       let goalTitle: string | null = null;
       let goalData: GoalData | null = null;
 
       if (vm.runId && stateError === "ok") {
         try {
-          const stateContent = await readFile(join(runDir, "state.json"), "utf-8");
+          const stateContent = await readFile(getRunPath(latestRunName, "state.json"), "utf-8");
           const { state } = parseRunStateResult(stateContent);
           if (state?.goalId) {
             goalData = await loadGoalData(state.goalId);
@@ -664,8 +662,8 @@ async function buildLatestRunPanel(
       }
 
       const [goalMd, plan] = await Promise.all([
-        readFile(join(runDir, "goal.md"), "utf-8").catch(() => null),
-        readFile(join(runDir, "plan.md"), "utf-8").catch(() => null),
+        readFile(getRunPath(latestRunName, "goal.md"), "utf-8").catch(() => null),
+        readFile(getRunPath(latestRunName, "plan.md"), "utf-8").catch(() => null),
       ]);
 
       if (!goalTitle && goalMd) {
@@ -791,7 +789,7 @@ async function renderCompactDashboard(options: HudRenderOptions): Promise<string
   const gitChangesResult = await getGitChanges(root);
   const gitChanges = gitChangesResult ?? [];
 
-  const runsDir = getOmkPath("runs");
+  const runsDir = getRunsDir();
   let vm: RunViewModel = buildRunViewModel(null);
   let stateError: RunViewModel["stateError"] = "missing";
   let latestRunName: string | null = options.runId ?? null;
@@ -802,7 +800,7 @@ async function renderCompactDashboard(options: HudRenderOptions): Promise<string
       latestRunName = selectLatestRunName(candidates);
     }
     if (latestRunName) {
-      const stateContent = await readFile(join(runsDir, latestRunName, "state.json"), "utf-8").catch(() => null);
+      const stateContent = await readFile(getRunPath(latestRunName, "state.json"), "utf-8").catch(() => null);
       if (stateContent) {
         const result = parseRunStateResult(stateContent);
         stateError = result.error;
@@ -821,7 +819,7 @@ async function renderCompactDashboard(options: HudRenderOptions): Promise<string
   const goalTitle = vm.goalTitle ?? null;
   const output: string[] = [];
 
-  output.push(sparkleHeader("oh-my-kimichan HUD"));
+  output.push(sparkleHeader("oh-my-kimi HUD"));
 
   const summary = buildSummaryBar(vm, stateError, goalTitle, effectiveWidth);
   output.push(summary);
@@ -857,9 +855,9 @@ async function renderMediumDashboard(options: HudRenderOptions): Promise<string>
   const mainPanels: string[] = [];
   const output: string[] = [];
 
-  output.push(sparkleHeader("oh-my-kimichan HUD"));
+  output.push(sparkleHeader("oh-my-kimi HUD"));
 
-  const runsDir = getOmkPath("runs");
+  const runsDir = getRunsDir();
   let vm: RunViewModel = buildRunViewModel(null);
   let stateError: RunViewModel["stateError"] = "missing";
   let latestRunName: string | null = options.runId ?? null;
@@ -870,7 +868,7 @@ async function renderMediumDashboard(options: HudRenderOptions): Promise<string>
       latestRunName = selectLatestRunName(candidates);
     }
     if (latestRunName) {
-      const stateContent = await readFile(join(runsDir, latestRunName, "state.json"), "utf-8").catch(() => null);
+      const stateContent = await readFile(getRunPath(latestRunName, "state.json"), "utf-8").catch(() => null);
       if (stateContent) {
         const result = parseRunStateResult(stateContent);
         stateError = result.error;
@@ -918,9 +916,9 @@ async function renderFullDashboard(options: HudRenderOptions): Promise<string> {
   const mainPanels: string[] = [];
   const output: string[] = [];
 
-  output.push(sparkleHeader("oh-my-kimichan HUD"));
+  output.push(sparkleHeader("oh-my-kimi HUD"));
 
-  const runsDir = getOmkPath("runs");
+  const runsDir = getRunsDir();
   let vm: RunViewModel = buildRunViewModel(null);
   let stateError: RunViewModel["stateError"] = "missing";
   let latestRunName: string | null = options.runId ?? null;
@@ -931,7 +929,7 @@ async function renderFullDashboard(options: HudRenderOptions): Promise<string> {
       latestRunName = selectLatestRunName(candidates);
     }
     if (latestRunName) {
-      const stateContent = await readFile(join(runsDir, latestRunName, "state.json"), "utf-8").catch(() => null);
+      const stateContent = await readFile(getRunPath(latestRunName, "state.json"), "utf-8").catch(() => null);
       if (stateContent) {
         const result = parseRunStateResult(stateContent);
         stateError = result.error;
@@ -979,9 +977,9 @@ async function renderSectionDashboard(options: HudRenderOptions): Promise<string
   const gitChanges = gitChangesResult ?? [];
   const output: string[] = [];
 
-  output.push(sparkleHeader("oh-my-kimichan HUD"));
+  output.push(sparkleHeader("oh-my-kimi HUD"));
 
-  const runsDir = getOmkPath("runs");
+  const runsDir = getRunsDir();
   let vm: RunViewModel = buildRunViewModel(null);
   let stateError: RunViewModel["stateError"] = "missing";
   let latestRunName: string | null = options.runId ?? null;
@@ -992,7 +990,7 @@ async function renderSectionDashboard(options: HudRenderOptions): Promise<string
       latestRunName = selectLatestRunName(candidates);
     }
     if (latestRunName) {
-      const stateContent = await readFile(join(runsDir, latestRunName, "state.json"), "utf-8").catch(() => null);
+      const stateContent = await readFile(getRunPath(latestRunName, "state.json"), "utf-8").catch(() => null);
       if (stateContent) {
         const result = parseRunStateResult(stateContent);
         stateError = result.error;

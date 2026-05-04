@@ -23,7 +23,7 @@ Use this skill when running oh-my-kimi workflows on Kimi K2.6.
 
 ## Okabe + D-Mail
 
-- Generated oh-my-kimichan agents should inherit the Okabe-compatible base, not plain `default`, so `SendDMail` is available while custom `--agent-file` configs remain supported.
+- Generated oh-my-kimi agents should inherit the Okabe-compatible base, not plain `default`, so `SendDMail` is available while custom `--agent-file` configs remain supported.
 - Use `SendDMail` for checkpoint rollback scenarios: risky refactors, dependency migrations, context compaction, or long-running work where a future recovery note prevents lost state.
 - Treat D-Mail as context insurance, not a substitute for tests, git diff review, or project-local graph durable memory.
 

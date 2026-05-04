@@ -1,11 +1,11 @@
 /**
- * OMK Brand Theme — oh-my-kimichan CLI color system
- * Extracted from kimichan.png brand palette
+ * OMK Brand Theme — oh-my-kimi CLI color system
+ * Extracted from kimicat.png brand palette
  * HUD-ready: gradients, gauges, panels, sparkles ✨
  */
 
 import { totalmem, freemem, loadavg, cpus } from "os";
-import { KIMICHAN_SIMPLE_ASCII_ART } from "../kimi/simple-art.js";
+import { KIMICAT_SIMPLE_ASCII_ART } from "../kimi/simple-art.js";
 
 // ── True-color ANSI helpers ──────────────────────────────────
 const colorEnabled = process.env.FORCE_COLOR === "1"
@@ -19,10 +19,10 @@ const esc = (codes: string) => colorEnabled ? `\x1b[${codes}m` : "";
 const rgb = (r: number, g: number, b: number) => `38;2;${r};${g};${b}`;
 const bgRgb = (r: number, g: number, b: number) => `48;2;${r};${g};${b}`;
 
-// ── Brand palette (from kimichan.png) ────────────────────────
+// ── Brand palette (from kimicat.png) ────────────────────────
 // "Onii-chan~ hai, naniga suki? Chocomint yori mo anata~ 💜"
 const P = {
-  purple: { r: 123, g: 91, b: 245 },   // #7B5BF5  Kimichan's eyes & logo
+  purple: { r: 123, g: 91, b: 245 },   // #7B5BF5  Kimicat's eyes & logo
   lightPurple: { r: 167, g: 139, b: 250 }, // #A78BFA  soft highlights
   darkPurple: { r: 91, g: 33, b: 182 },    // #5B21B6  deep shadows
   pink: { r: 236, g: 72, b: 153 },         // #EC4899  hearts & cheeks
@@ -245,7 +245,7 @@ export function sanitizeTerminalText(value: string): string {
     .replace(/^::code-comment\{.*?\}[ \t]*\r?\n?/gm, "");
 }
 
-// ── Kimichan Emoji Kit ───────────────────────────────────────
+// ── Kimicat Emoji Kit ───────────────────────────────────────
 export const emoji = {
   shell: "🐚",
   code: "💜",
@@ -269,7 +269,7 @@ export const emoji = {
   wand: "✨",
 };
 
-export function kimichanStatusChips(): string {
+export function kimicatStatusChips(): string {
   const chips = [
     style.purpleBold("[AI-native]"),
     style.blue("[agent-first]"),
@@ -280,26 +280,26 @@ export function kimichanStatusChips(): string {
   return chips.join(" ");
 }
 
-export function kimichanCliHero(footer?: string): string {
+export function kimicatCliHero(footer?: string): string {
   const heroLines = [
-    gradient("✦ oh-my-kimichan ✦"),
+    gradient("✦ oh-my-kimi ✦"),
     style.creamBold("Kimi CLI, but better."),
     style.gray("The orchestration layer that turns Kimi CLI into a powerful coding team."),
     "",
-    ...KIMICHAN_SIMPLE_ASCII_ART.split("\n").map((line) => style.lightPurple(line)),
+    ...KIMICAT_SIMPLE_ASCII_ART.split("\n").map((line) => style.lightPurple(line)),
     "",
-    kimichanStatusChips(),
+    kimicatStatusChips(),
   ];
 
   if (footer) {
     heroLines.push("", style.gray(footer));
   }
 
-  return box(heroLines, "Kimichan Mascot Theme");
+  return box(heroLines, "Kimicat Mascot Theme");
 }
 
-// ── Kimichan Custom Banner ───────────────────────────────────
-export function kimichanMetaBox(meta?: { directory?: string; session?: string; model?: string }): string {
+// ── Kimicat Custom Banner ───────────────────────────────────
+export function kimicatMetaBox(meta?: { directory?: string; session?: string; model?: string }): string {
   const metaLines: string[] = [];
   if (meta?.directory) metaLines.push(label("Directory", meta.directory));
   if (meta?.session) metaLines.push(label("Session", meta.session));
@@ -309,12 +309,12 @@ export function kimichanMetaBox(meta?: { directory?: string; session?: string; m
   return box(metaLines, "Session Info") + "\n";
 }
 
-export function kimichanBanner(meta?: { directory?: string; session?: string; model?: string }, footer?: string): string {
+export function kimicatBanner(meta?: { directory?: string; session?: string; model?: string }, footer?: string): string {
   const parts: string[] = [
-    kimichanCliHero(footer),
+    kimicatCliHero(footer),
   ];
 
-  const metaBox = kimichanMetaBox(meta);
+  const metaBox = kimicatMetaBox(meta);
   if (metaBox) parts.push(metaBox);
 
   return parts.join("\n");

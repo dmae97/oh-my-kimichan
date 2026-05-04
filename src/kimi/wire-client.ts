@@ -154,7 +154,7 @@ export class KimiWireClient {
 
     await this.call("initialize", {
       protocol_version: "2025-03-11",
-      client: { name: "oh-my-kimichan", version: getOmkVersionSync() },
+      client: { name: "oh-my-kimi", version: getOmkVersionSync() },
       capabilities: { supports_question: true, supports_plan_mode: true },
       external_tools: [
         {

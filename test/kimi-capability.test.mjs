@@ -16,6 +16,9 @@ test("parseKimiCapabilityFlags detects no sampling flags in v1.40.0 help", () =>
   assert.strictEqual(caps.topP, false);
   assert.strictEqual(caps.variant, false);
   assert.strictEqual(caps.version, "1.40.0");
+  assert.strictEqual(caps.agentFile, false);
+  assert.strictEqual(caps.webTools, false);
+  assert.strictEqual(caps.swarmStatus, "available");
 });
 
 test("parseKimiCapabilityFlags detects extended flags when present", () => {
@@ -33,11 +36,17 @@ test("parseKimiCapabilityFlags detects extended flags when present", () => {
   assert.strictEqual(caps.topP, true);
   assert.strictEqual(caps.variant, true);
   assert.strictEqual(caps.version, null);
+  assert.strictEqual(caps.agentFile, false);
+  assert.strictEqual(caps.webTools, false);
+  assert.strictEqual(caps.swarmStatus, "unknown");
 });
 
 test("parseKimiCapabilityFlags extracts version from help fallback", () => {
   const caps = parseKimiCapabilityFlags("", "kimi, version 2.0.0");
   assert.strictEqual(caps.version, "2.0.0");
+  assert.strictEqual(caps.agentFile, false);
+  assert.strictEqual(caps.webTools, false);
+  assert.strictEqual(caps.swarmStatus, "available");
 });
 
 test("parseKimiCapabilityFlags handles missing CLI gracefully", () => {
@@ -48,4 +57,7 @@ test("parseKimiCapabilityFlags handles missing CLI gracefully", () => {
   assert.strictEqual(caps.topP, false);
   assert.strictEqual(caps.variant, false);
   assert.strictEqual(caps.version, null);
+  assert.strictEqual(caps.agentFile, false);
+  assert.strictEqual(caps.webTools, false);
+  assert.strictEqual(caps.swarmStatus, "unknown");
 });

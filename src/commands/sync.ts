@@ -4,9 +4,11 @@ import {
   syncAllKimiGlobals,
   readManifest,
   writeManifest,
+  getOmkPath,
 } from "../util/fs.js";
 import { mkdir, writeFile, copyFile, rm } from "fs/promises";
 import { dirname, join, relative } from "path";
+import { homedir } from "os";
 import { header, status } from "../util/theme.js";
 import { t } from "../util/i18n.js";
 
@@ -19,7 +21,7 @@ export async function syncCommand(options?: { dryRun?: boolean; diff?: boolean; 
   }
 
   const root = getProjectRoot();
-  console.log(header("oh-my-kimichan sync"));
+  console.log(header("oh-my-kimi sync"));
 
   const timestamp = new Date().toISOString();
   const manifest: SyncManifestEntry[] = [];
@@ -94,7 +96,7 @@ export async function syncCommand(options?: { dryRun?: boolean; diff?: boolean; 
 }
 
 async function rollbackSync(): Promise<void> {
-  console.log(header("oh-my-kimichan sync rollback"));
+  console.log(header("oh-my-kimi sync rollback"));
   const manifest = await readManifest();
   if (manifest.length === 0) {
     console.log("No manifest entries found.");
@@ -105,6 +107,10 @@ async function rollbackSync(): Promise<void> {
   const reversed = [...manifest].reverse();
   for (const entry of reversed) {
     if (entry.action === "create" || entry.action === "symlink") {
+      if (!isAllowedRollbackPath(entry.path)) {
+        console.warn(`⚠️  Skipping ${entry.path}: not in allowed OMK paths`);
+        continue;
+      }
       if (await pathExists(entry.path)) {
         await rm(entry.path, { recursive: false, force: true });
         console.log(`Removed ${entry.path}`);
@@ -113,6 +119,10 @@ async function rollbackSync(): Promise<void> {
     }
     if (!entry.backupPath) {
       console.warn(`⚠️  Skipping ${entry.path}: no backup available`);
+      continue;
+    }
+    if (!isAllowedRollbackPath(entry.path)) {
+      console.warn(`⚠️  Skipping ${entry.path}: not in allowed OMK paths`);
       continue;
     }
     if (!(await pathExists(entry.backupPath))) {
@@ -124,4 +134,9 @@ async function rollbackSync(): Promise<void> {
     console.log(`Restored ${entry.path}`);
   }
   console.log(status.success("Rollback complete"));
+
+function isAllowedRollbackPath(p: string): boolean {
+  const allowed = [join(homedir(), ".kimi"), getOmkPath()];
+  return allowed.some((a) => p.startsWith(a));
+}
 }

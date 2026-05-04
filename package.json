@@ -1,22 +1,26 @@
 {
-  "name": "oh-my-kimichan",
-  "version": "1.0.0",
-  "description": "Kimi Code CLI용 multi-agent orchestration harness. Kimi K2.6 위에 올라가는 하네스 + 팀 런타임 + 스킬/훅/워크플로 배포판",
+  "name": "@oh-my-kimi/cli",
+  "version": "1.1.0",
+  "description": "Multi-agent orchestration harness for the Kimi Code CLI. Parallel coding teams, live quality gates, DESIGN.md-aware UI, and zero-config safety hooks on top of Kimi K2.6.",
   "type": "module",
   "bin": {
     "omk": "dist/cli.js",
-    "oh-my-kimichan": "dist/cli.js"
+    "oh-my-kimi": "dist/cli.js"
   },
   "scripts": {
+    "clean:dist": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc",
+    "build:clean": "npm run clean:dist && npm run build",
     "dev": "tsx src/cli.ts",
-    "lint": "node node_modules/eslint/bin/eslint.js --max-warnings=0 src/ && npm run secret:scan",
+    "lint": "node node_modules/eslint/bin/eslint.js --max-warnings=0 src/",
     "check": "tsc --noEmit",
-    "test": "npm run build && node --test --test-timeout=60000 --test-concurrency=1 test/*.test.mjs",
+    "test": "node --test --test-timeout=60000 --test-concurrency=1 test/*.test.mjs",
     "secret:scan": "node scripts/secret-scan.mjs",
+    "verify": "npm run lint && npm run secret:scan && npm run check && npm run build:clean && npm test",
+    "pack:dry": "npm pack --dry-run --ignore-scripts --json",
     "audit:package": "node scripts/package-audit.mjs",
-    "prepare": "npm run build",
-    "prepublishOnly": "npm run lint && npm test && npm run build"
+    "smoke": "node scripts/smoke-test.mjs",
+    "prepare": "npm run build"
   },
   "keywords": [
     "kimi",
@@ -25,7 +29,6 @@
     "kimi-k2",
     "k2.6",
     "oh-my-kimi",
-    "oh-my-kimichan",
     "ai",
     "ai-agent",
     "ai-agents",
@@ -85,13 +88,10 @@
   "files": [
     "dist",
     "templates",
-    "kimichan.png",
-    "kimiagent.png",
-    "omk-hud-1.png",
-    "omk-hud-screenshot.png",
-    "omk-hud-dev-screenshot.png",
-    "omk-statusline-gauge.png",
-    "omk-statusline-reset.png",
+    "docs",
+    "readmeasset",
+    "CHANGELOG.md",
+    "MATURITY.md",
     "README.md",
     "AGENTS.md",
     "SECURITY.md",
@@ -100,16 +100,20 @@
     "WORKER_MANIFEST.md",
     "CLAUDE.md",
     "GEMINI.md",
-    "LICENSE"
+    "LICENSE",
+    "llms.txt"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dmae97/oh-my-kimichan.git"
+    "url": "git+https://github.com/dmae97/oh-my-kimi.git"
   },
   "bugs": {
-    "url": "https://github.com/dmae97/oh-my-kimichan/issues"
+    "url": "https://github.com/dmae97/oh-my-kimi/issues"
   },
-  "homepage": "https://github.com/dmae97/oh-my-kimichan#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/dmae97/oh-my-kimi#readme",
   "engines": {
     "node": ">=20.0.0"
   },

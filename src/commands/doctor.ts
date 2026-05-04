@@ -68,7 +68,7 @@ export async function doctorCommand(options: { json?: boolean; soft?: boolean } 
   const categories: CheckCategory[] = [
     { title: "Runtime", checks: () => runtimeChecks(resources) },
     { title: "Toolchain", checks: () => toolchainChecks(root) },
-    { title: "Kimi CLI", checks: () => kimiChecks() },
+    { title: "Kimi CLI", checks: () => kimiChecks(root) },
     { title: "Project", checks: () => projectChecks(root) },
     { title: "OMK Scaffold", checks: () => omkChecks(root) },
     { title: "MCP & Skills", checks: () => mcpSkillsChecks(root) },
@@ -120,7 +120,10 @@ export async function doctorCommand(options: { json?: boolean; soft?: boolean } 
         config: findOk("Kimi Config"),
         hooks: findOk("OMK Hooks"),
         capabilities: findMsg("Kimi Capabilities"),
-        installGuide: "npm install -g kimi-cli or see https://github.com/dmae97/oh-my-kimichan#install",
+        agentFile: findOk("Kimi Agent File"),
+        webTools: findOk("Kimi Web Tools"),
+        swarmStatus: findMsg("Kimi Swarm"),
+        installGuide: "curl -LsSf https://code.kimi.com/install.sh | bash or see https://github.com/dmae97/oh-my-kimi#install",
       },
       git: {
         installed: findOk("Git Installed"),
@@ -166,7 +169,7 @@ export async function doctorCommand(options: { json?: boolean; soft?: boolean } 
     return;
   }
 
-  console.log(header("oh-my-kimichan doctor"));
+  console.log(header("oh-my-kimi doctor"));
   console.log(separator());
 
   for (const { title, results } of categoryResults) {
@@ -197,9 +200,9 @@ export async function doctorCommand(options: { json?: boolean; soft?: boolean } 
       const { select } = await import("@inquirer/prompts");
       const answer = await select(
         {
-          message: `A new version of oh-my-kimichan is available. Update now?`,
+          message: `A new version of oh-my-kimi is available. Update now?`,
           choices: [
-            { name: "YES — run npm i -g oh-my-kimichan", value: "yes" },
+            { name: "YES — run npm i -g oh-my-kimi", value: "yes" },
             { name: "NO — skip this update", value: "no" },
           ],
         },
@@ -207,7 +210,7 @@ export async function doctorCommand(options: { json?: boolean; soft?: boolean } 
       );
       if (answer === "yes") {
         console.log(style.gray("Running update…"));
-        const updateResult = await runShell("npm", ["i", "-g", "oh-my-kimichan"], { timeout: 120_000 });
+        const updateResult = await runShell("npm", ["i", "-g", "oh-my-kimi"], { timeout: 120_000 });
         if (updateResult.failed) {
           console.log(status.error(`Update failed: ${updateResult.stderr.trim() || updateResult.stdout.trim()}`));
           process.exit(1);
@@ -277,7 +280,7 @@ async function runtimeChecks(resources: Awaited<ReturnType<typeof getOmkResource
 
   const currentVersion = getOmkVersionSync();
   try {
-    const latest = execSync("npm view oh-my-kimichan version", {
+    const latest = execSync("npm view oh-my-kimi version", {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"],
       timeout: 5000,
@@ -286,7 +289,7 @@ async function runtimeChecks(resources: Awaited<ReturnType<typeof getOmkResource
       results.push({
         name: "OMK Version",
         status: "warn",
-        message: `${currentVersion} → ${latest} available. Run: npm i -g oh-my-kimichan`,
+        message: `${currentVersion} → ${latest} available. Run: npm i -g oh-my-kimi`,
       });
     } else {
       results.push({
@@ -417,7 +420,7 @@ async function toolchainChecks(root: string): Promise<CheckResult[]> {
 
 // ── Kimi CLI ──────────────────────────────────────────────────
 
-async function kimiChecks(): Promise<CheckResult[]> {
+async function kimiChecks(root: string): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
   const kimiExists = await checkCommand("kimi");
 
@@ -445,7 +448,7 @@ async function kimiChecks(): Promise<CheckResult[]> {
     }
   } else {
     results.push({ name: "Kimi CLI", status: "fail", message: t("doctor.kimiNotFound") });
-    results.push({ name: "Kimi Install Guide", status: "info", message: "npm install -g kimi-cli or see https://github.com/dmae97/oh-my-kimichan#install" });
+    results.push({ name: "Kimi Install Guide", status: "info", message: "curl -LsSf https://code.kimi.com/install.sh | bash or see https://github.com/dmae97/oh-my-kimi#install" });
     results.push({ name: "Kimi Capabilities", status: "info", message: "unknown — kimi not installed" });
   }
 
@@ -481,6 +484,45 @@ async function kimiChecks(): Promise<CheckResult[]> {
       name: "Kimi Capabilities",
       status: supported.length > 0 ? "ok" : "info",
       message: supported.length > 0 ? supported.join(", ") : "no extended sampling flags",
+    });
+
+    results.push({
+      name: "Kimi Agent File",
+      status: caps.agentFile ? "ok" : "warn",
+      message: caps.agentFile ? "--agent-file supported" : "--agent-file not detected — update Kimi CLI",
+    });
+
+    results.push({
+      name: "Kimi Web Tools",
+      status: caps.webTools ? "ok" : "warn",
+      message: caps.webTools ? "SearchWeb / FetchURL available" : "web search tools not detected — may be unavailable",
+    });
+
+    results.push({
+      name: "Kimi Swarm",
+      status: caps.swarmStatus === "available" ? "ok" : caps.swarmStatus === "unavailable" ? "info" : "warn",
+      message: caps.swarmStatus === "available"
+        ? "K2.6 Agent Swarm platform capability detected"
+        : caps.swarmStatus === "unavailable"
+          ? "swarm APIs not available in this Kimi version"
+          : "unable to detect swarm capability from version",
+    });
+  }
+
+  // Agent YAML tools check
+  const rootYamlPath = join(root, ".omk", "agents", "root.yaml");
+  if (await pathExists(rootYamlPath)) {
+    const rootYaml = await readTextFile(rootYamlPath, "");
+    const hasAgentTool = /\bAgent\b/.test(rootYaml);
+    const hasSearchWeb = /\bSearchWeb\b/.test(rootYaml);
+    const hasFetchURL = /\bFetchURL\b/.test(rootYaml);
+    const agentToolStatus = hasAgentTool && hasSearchWeb && hasFetchURL ? "ok" : "warn";
+    results.push({
+      name: "Agent YAML Tools",
+      status: agentToolStatus,
+      message: hasAgentTool && hasSearchWeb && hasFetchURL
+        ? "root.yaml includes Agent, SearchWeb, FetchURL"
+        : `root.yaml missing tools: ${[!hasAgentTool && "Agent", !hasSearchWeb && "SearchWeb", !hasFetchURL && "FetchURL"].filter(Boolean).join(", ")}`,
     });
   }
 

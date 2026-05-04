@@ -1,7 +1,7 @@
 import { join } from "path";
 import { writeFile, mkdir } from "fs/promises";
 import { style, status, header, label, bullet } from "../util/theme.js";
-import { getProjectRoot, pathExists, injectKimiGlobals, readTextFile } from "../util/fs.js";
+import { getProjectRoot, pathExists, injectKimiGlobals, readTextFile, getRunPath } from "../util/fs.js";
 import { runShell } from "../util/shell.js";
 import { isGitRepo, getGitStatus } from "../util/git.js";
 import { createOmkSessionEnv, createOmkSessionId } from "../util/session.js";
@@ -9,6 +9,7 @@ import { detectSpecKitContext, injectSpecKitPrompt } from "./spec.js";
 import { runQualityGate } from "../mcp/quality-gate.js";
 import { saveCheckpoint } from "../util/checkpoint.js";
 import { createWorktree } from "../util/worktree.js";
+import { successResult, failureResult, type CommandResult } from "../util/cli-contract.js";
 
 const root = getProjectRoot();
 
@@ -56,7 +57,7 @@ async function saveRunArtifacts(
   runId: string,
   artifacts: { goal?: string; plan?: string; tasks?: string }
 ): Promise<string> {
-  const runDir = join(root, ".omk", "runs", runId);
+  const runDir = getRunPath(runId, undefined, root);
   await mkdir(runDir, { recursive: true });
   if (artifacts.goal) {
     await writeFile(join(runDir, "goal.md"), artifacts.goal, "utf-8");
@@ -281,7 +282,7 @@ export async function refactorCommand(
 // CI mode: skips Kimi agents, runs local checks + quality gate only
 export async function reviewCommand(
   options: WorkflowOptions = {}
-): Promise<void> {
+): Promise<CommandResult> {
   console.log(header(options.ci ? "omk review --ci" : "omk review"));
 
   const gitOk = await isGitRepo();
@@ -299,17 +300,16 @@ export async function reviewCommand(
   const diff = diffResult.stdout;
   if (!diff.trim()) {
     console.log(status.warn("No changes to review (git diff HEAD is empty)"));
-    return;
+    return successResult();
   }
   console.log(label("Changes", `${gitStatus.changes} files`));
 
   // CI mode: run local checks without Kimi API
   if (options.ci) {
-    await runCiReview(diff, {
+    return await runCiReview(diff, {
       changes: gitStatus.changes,
       branch: branchResult.stdout.trim() || "unknown",
     }, options.soft);
-    return;
   }
 
   // 2. Review (parallel security + code review)
@@ -335,19 +335,22 @@ export async function reviewCommand(
 
   if (qgPassed) {
     console.log(status.ok("Quality gates passed"));
-  } else {
-    console.log(status.error("Quality gates failed — do not merge"));
-    if (!options.soft) {
-      process.exit(1);
-    }
+    return successResult();
   }
+  console.log(status.error("Quality gates failed — do not merge"));
+  const result = failureResult(1, ["Quality gates failed"]);
+  if (options.soft) {
+    // Soft mode: exit 0 but preserve failed result so callers can inspect diagnostics.
+    return { ...result, exitCode: 0 };
+  }
+  return result;
 }
 
 async function runCiReview(
   diff: string,
   gitStatus: { changes: number; branch: string },
   soft?: boolean
-): Promise<void> {
+): Promise<CommandResult> {
   const lines = diff.split("\n").filter((l) => l.startsWith("diff --git"));
   const files = lines.map((l) => {
     const m = l.match(/diff --git a\/(.+?) b\/(.+?)$/);
@@ -422,10 +425,15 @@ async function runCiReview(
 
   if (qgPassed && dagValid) {
     console.log(status.ok("CI review passed"));
-  } else {
-    console.log(status.error("CI review failed — check logs above"));
-    if (!soft) {
-      process.exit(1);
-    }
+    return successResult();
   }
+  console.log(status.error("CI review failed — check logs above"));
+  const result = failureResult(1, [
+    ...(qgPassed ? [] : ["Quality gate failed"]),
+    ...(dagValid ? [] : ["DAG validation failed"]),
+  ]);
+  if (soft) {
+    return { ...result, exitCode: 0 };
+  }
+  return result;
 }

@@ -1,5 +1,5 @@
 /**
- * Lightweight i18n for oh-my-kimichan CLI
+ * Lightweight i18n for oh-my-kimi CLI
  * Default language: en. Supports ko via .omk/config.toml [locale] section
  * or OMK_LANGUAGE env var.
  */
@@ -62,7 +62,10 @@ const en: Record<string, string> = {
   "cli.initProject": "# Initialize current project",
   "cli.viewDashboard": "# View dashboard",
   "cli.startChat": "# Start chatting with Kimi",
-  "cli.fullHelp": "Full help: omk --help    |    Docs: https://github.com/dmae97/oh-my-kimichan",
+  "cli.fullHelp": "Full help: omk --help    |    Docs: https://github.com/dmae97/oh-my-kimi",
+  "cli.menuDesc": "Interactive OMK main menu via @inquirer/prompts",
+  "cli.showMenu": "> show interactive menu",
+  "cmd.updateDesc": "Check or run OMK and Kimi CLI updates",
   "cli.unknownCommand": "❌ Unknown command: {0}",
   "cli.alwaysHud": "Always show HUD",
   "cli.noTtyExit": "No TTY — exit without menu (type a command explicitly)",
@@ -71,7 +74,7 @@ const en: Record<string, string> = {
   "cli.suggestionHelp": "  💡 omk --help — Full commands\n",
   "cli.ttyMenuNote": "TTY menu uses @inquirer/prompts for arrow-key selection",
   "cli.mainMenu": "OMK Main Menu",
-  "cli.menuChat": "chat — Kimichan Chat Cockpit",
+  "cli.menuChat": "chat — Kimicat Chat Cockpit",
   "cli.menuHud": "hud      — View dashboard",
   "cli.menuPlan": "plan     — Create a plan",
   "cli.menuParallel": "parallel — Run parallel agents",
@@ -80,12 +83,12 @@ const en: Record<string, string> = {
   "cli.menuExit": "exit     — Exit",
   "cli.menuUnavailable": "\n  (Cannot display menu in this environment. Type a command below.)\n",
   "cli.unknownChoice": "Unknown choice: {0}, proceeding to chat.",
-  "cli.description": "oh-my-kimichan: multi-agent orchestration harness for Kimi Code CLI",
+  "cli.description": "oh-my-kimi: multi-agent orchestration harness for Kimi Code CLI",
   "cli.runIdOption": "run ID (resume / reference)",
   "cli.sudoOption": "Run shell commands with sudo (admin privileges)",
 
   // Command descriptions (cli.ts)
-  "cmd.initDesc": "[Stable] Create oh-my-kimichan scaffold in current project",
+  "cmd.initDesc": "[Stable] Create oh-my-kimi scaffold in current project",
   "cmd.initProfileOption": "Preset profile",
   "cmd.doctorDesc": "[Stable] Check Kimi CLI status, auth, model, hooks, MCP, skills",
   "cmd.doctorJsonOption": "Output results as JSON",
@@ -94,14 +97,14 @@ const en: Record<string, string> = {
   "cmd.chatWorkersOption": "Parallel agent workers (auto = resource-profile based)",
   "cmd.chatMaxStepsOption": "Max steps per turn (tool use limit)",
   "cmd.chatLayoutOption": "Chat layout (auto | tmux | inline | plain)",
-  "cmd.chatBrandOption": "Chat branding (kimichan | minimal | plain)",
+  "cmd.chatBrandOption": "Chat branding (kimicat | minimal | plain)",
   "cmd.cockpitDesc": "[Stable] OMK sidecar cockpit for run state, TODOs, and ETA",
   "cmd.cockpitRunIdOption": "Run ID to watch",
   "cmd.cockpitWatchOption": "Auto-refresh cockpit display",
   "cmd.cockpitRefreshOption": "Refresh interval in milliseconds",
   "chat.cockpitTmuxNotFound": "tmux is required for cockpit layout but was not found.",
   "chat.cockpitTmuxInstallHint": "Install tmux or use --layout inline for a single-pane chat.",
-  "chat.intro.kimichan": "Kimichan Chat ready",
+  "chat.intro.kimicat": "Kimicat Chat ready",
   "chat.intro.minimal": "OMK Chat ready",
   "chat.intro.plain": "Chat ready",
   "chat.intro.agent": "agent",
@@ -183,7 +186,7 @@ const en: Record<string, string> = {
   "cmd.agentDoctorDesc": "Validate built-in agent roles",
 
   // Verify
-  "cmd.starDesc": "Star oh-my-kimichan on GitHub",
+  "cmd.starDesc": "Star oh-my-kimi on GitHub",
   "cmd.verifyDesc": "[Alpha] Verify evidence gates for a run",
   "cmd.verifyRunOption": "Run ID to verify",
   "cmd.verifyJsonOption": "Output results as JSON",
@@ -237,7 +240,7 @@ const en: Record<string, string> = {
 
   // Doctor command
   "doctor.kimiInstalled": "Installed",
-  "doctor.kimiNotFound": "kimi command not found. npm install -g kimi-cli or official install required",
+  "doctor.kimiNotFound": "kimi command not found. curl -LsSf https://code.kimi.com/install.sh | bash or official install required",
   "doctor.kimiRunnable": "Executable",
   "doctor.kimiRunFailed": "kimi execution check failed",
   "doctor.gitBranchChanges": "Branch: {0}, Changes: {1}",
@@ -305,8 +308,8 @@ const en: Record<string, string> = {
   "init.kimiSkillsMissing": "Kimi skills template not found — check templates/skills/kimi",
   "init.copyPortableSkills": "   📦 Copying Portable skills...",
   "init.portableSkillsMissing": "Portable skills template not found — check templates/skills/agents",
-  "init.kimichanPngExists": "   ℹ️ kimichan.png already exists — skipping",
-  "init.kimichanPngMissing": "kimichan.png bundle missing — falling back to built-in ASCII theme",
+  "init.kimicatPngExists": "   ℹ️ kimicat.png already exists — skipping",
+  "init.kimicatPngMissing": "kimicat.png bundle missing — falling back to built-in ASCII theme",
   "init.hooksSyncFailed": "⚠️  hooks sync failed: {0}",
   "init.mcpSyncFailed": "⚠️  MCP global sync failed: {0}",
   "init.skillsSyncFailed": "⚠️  skills global sync failed: {0}",
@@ -320,7 +323,7 @@ const en: Record<string, string> = {
 
   // First-run star
   "star.prompt": "Thank you for the first run. Would you leave a ⭐ Star on the GitHub repo?\n{0}",
-  "star.promptShort": "Support oh-my-kimichan on GitHub?",
+  "star.promptShort": "Support oh-my-kimi on GitHub?",
   "star.yes": "YES — auto-open GitHub Star",
   "star.yesStarIt": "Yes, star it",
   "star.no": "NO — don't ask again",
@@ -467,7 +470,10 @@ const ko: Record<string, string> = {
   "cli.initProject": "# 현재 프로젝트 초기화",
   "cli.viewDashboard": "# 대시보드 보기",
   "cli.startChat": "# Kimi와 대화 시작",
-  "cli.fullHelp": "전체 도움말: omk --help    |    문서: https://github.com/dmae97/oh-my-kimichan",
+  "cli.menuDesc": "@inquirer/prompts 기반 인터랙티브 OMK 메인 메뉴",
+  "cli.showMenu": "> 인터랙티브 메뉴 보기",
+  "cli.fullHelp": "전체 도움말: omk --help    |    문서: https://github.com/dmae97/oh-my-kimi",
+  "cmd.updateDesc": "OMK 및 Kimi CLI 업데이트 확인/실행",
   "cli.unknownCommand": "❌ 알 수 없는 명령어: {0}",
   "cli.alwaysHud": "항상 HUD 출력",
   "cli.noTtyExit": "TTY 없으면 메뉴 없이 종료",
@@ -476,7 +482,7 @@ const ko: Record<string, string> = {
   "cli.suggestionHelp": "  💡 omk --help — 전체 명령어\n",
   "cli.ttyMenuNote": "TTY 메뉴 (readline 대신 @inquirer/prompts select 사용)",
   "cli.mainMenu": "OMK 메인 메뉴",
-  "cli.menuChat": "chat — Kimichan Chat Cockpit",
+  "cli.menuChat": "chat — Kimicat Chat Cockpit",
   "cli.menuHud": "hud      — 대시보드 보기",
   "cli.menuPlan": "plan     — 계획 수립",
   "cli.menuParallel": "parallel — 병렬 에이전트 실행",
@@ -485,12 +491,12 @@ const ko: Record<string, string> = {
   "cli.menuExit": "exit     — 종료",
   "cli.menuUnavailable": "\n  (메뉴를 표시할 수 없는 환경입니다. 아래 명령어를 직접 입력하세요.)\n",
   "cli.unknownChoice": "알 수 없는 선택: {0}, chat으로 진행합니다.",
-  "cli.description": "oh-my-kimichan: Kimi Code CLI용 multi-agent orchestration harness",
+  "cli.description": "oh-my-kimi: Kimi Code CLI용 multi-agent orchestration harness",
   "cli.runIdOption": "run ID 지정 (resume / 참조)",
   "cli.sudoOption": "셸 명령어를 sudo로 실행 (관리자 권한)",
 
   // Command descriptions
-  "cmd.initDesc": "[Stable] 현재 프로젝트에 oh-my-kimichan scaffold 생성",
+  "cmd.initDesc": "[Stable] 현재 프로젝트에 oh-my-kimi scaffold 생성",
   "cmd.initProfileOption": "프리셋 프로파일",
   "cmd.doctorDesc": "[Stable] Kimi CLI 상태, auth, model, hook, MCP, skills 검사",
   "cmd.doctorJsonOption": "결과를 JSON으로 출력",
@@ -499,14 +505,14 @@ const ko: Record<string, string> = {
   "cmd.chatWorkersOption": "병렬 에이전트 워커 수 (auto면 리소스 프로파일 기반)",
   "cmd.chatMaxStepsOption": "한 턴당 최대 스텝 수 (tool use 제한)",
   "cmd.chatLayoutOption": "Chat layout (auto | tmux | inline | plain)",
-  "cmd.chatBrandOption": "Chat branding (kimichan | minimal | plain)",
+  "cmd.chatBrandOption": "Chat branding (kimicat | minimal | plain)",
   "cmd.cockpitDesc": "[Stable] OMK sidecar cockpit for run state, TODOs, and ETA",
   "cmd.cockpitRunIdOption": "Run ID to watch",
   "cmd.cockpitWatchOption": "Auto-refresh cockpit display",
   "cmd.cockpitRefreshOption": "Refresh interval in milliseconds",
   "chat.cockpitTmuxNotFound": "tmux is required for cockpit layout but was not found.",
   "chat.cockpitTmuxInstallHint": "Install tmux or use --layout inline for a single-pane chat.",
-  "chat.intro.kimichan": "Kimichan Chat ready",
+  "chat.intro.kimicat": "Kimicat Chat ready",
   "chat.intro.minimal": "OMK Chat ready",
   "chat.intro.plain": "Chat ready",
   "chat.intro.agent": "agent",
@@ -588,7 +594,7 @@ const ko: Record<string, string> = {
   "cmd.agentDoctorDesc": "내장 에이전트 역할 검증",
 
   // Verify
-  "cmd.starDesc": "GitHub에서 oh-my-kimichan에 Star 누르기",
+  "cmd.starDesc": "GitHub에서 oh-my-kimi에 Star 누르기",
   "cmd.verifyDesc": "[Alpha] run의 evidence gate 검증",
   "cmd.verifyRunOption": "검증할 run ID",
   "cmd.verifyJsonOption": "결과를 JSON으로 출력",
@@ -642,7 +648,7 @@ const ko: Record<string, string> = {
 
   // Doctor command
   "doctor.kimiInstalled": "설치됨",
-  "doctor.kimiNotFound": "kimi 명령을 찾을 수 없습니다. npm install -g kimi-cli 또는 공식 설치 필요",
+  "doctor.kimiNotFound": "kimi 명령을 찾을 수 없습니다. curl -LsSf https://code.kimi.com/install.sh | bash 또는 공식 설치 필요",
   "doctor.kimiRunnable": "실행 가능",
   "doctor.kimiRunFailed": "kimi 실행 확인 실패",
   "doctor.gitBranchChanges": "브랜치: {0}, 변경: {1}개",
@@ -710,8 +716,8 @@ const ko: Record<string, string> = {
   "init.kimiSkillsMissing": "Kimi skills 템플릿 없음 — templates/skills/kimi 확인",
   "init.copyPortableSkills": "   📦 Portable skills 복사 중...",
   "init.portableSkillsMissing": "Portable skills 템플릿 없음 — templates/skills/agents 확인",
-  "init.kimichanPngExists": "   ℹ️ kimichan.png 이미 존재 — 건너뜀",
-  "init.kimichanPngMissing": "kimichan.png 번들 없음 — 내장 ASCII 테마로 폴백",
+  "init.kimicatPngExists": "   ℹ️ kimicat.png 이미 존재 — 건너뜀",
+  "init.kimicatPngMissing": "kimicat.png 번들 없음 — 내장 ASCII 테마로 폴백",
   "init.hooksSyncFailed": "⚠️  hooks 동기화 실패: {0}",
   "init.mcpSyncFailed": "⚠️  MCP 글로벌 동기화 실패: {0}",
   "init.skillsSyncFailed": "⚠️  skills 글로벌 동기화 실패: {0}",
@@ -725,7 +731,7 @@ const ko: Record<string, string> = {
 
   // First-run star
   "star.prompt": "처음 실행해주셔서 감사합니다. GitHub repo에 ⭐ Star를 남겨주시겠어요?\n{0}",
-  "star.promptShort": "GitHub에서 oh-my-kimichan을 지원하시겠어요?",
+  "star.promptShort": "GitHub에서 oh-my-kimi을 지원하시겠어요?",
   "star.yes": "YES — 자동으로 GitHub Star 누르기",
   "star.yesStarIt": "네, Star를 누르겠습니다",
   "star.no": "NO — 다음부터 묻지 않기",

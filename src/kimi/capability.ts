@@ -7,6 +7,9 @@ export interface KimiCapabilityFlags {
   topP: boolean;
   variant: boolean;
   version: string | null;
+  agentFile: boolean;
+  webTools: boolean;
+  swarmStatus: "available" | "unavailable" | "unknown";
 }
 
 let capabilityCache: KimiCapabilityFlags | undefined;
@@ -50,7 +53,22 @@ export function parseKimiCapabilityFlags(helpOutput: string, versionOutput: stri
     topP: /\s--top-p\b/.test(helpOutput) || /\s--top_p\b/.test(helpOutput),
     variant: /\s--variant\b/.test(helpOutput),
     version: parseKimiVersion(versionOutput) ?? parseKimiVersion(helpOutput),
+    agentFile: /\s--agent-file\b/.test(helpOutput),
+    webTools: /\sSearchWeb\b/.test(helpOutput) || /\sFetchURL\b/.test(helpOutput) || /\sweb search\b/i.test(helpOutput),
+    swarmStatus: inferSwarmStatus(versionOutput, helpOutput),
   };
+}
+
+function inferSwarmStatus(versionOutput: string, helpOutput: string): "available" | "unavailable" | "unknown" {
+  // Kimi K2.6 Agent Swarm is a platform capability, not a CLI flag.
+  // We infer availability from version (>=1.1.0 heuristic) or help mentions.
+  const version = parseKimiVersion(versionOutput) ?? parseKimiVersion(helpOutput);
+  if (!version) return "unknown";
+  const [major, minor] = version.split(".").map((n) => Number.parseInt(n, 10));
+  if (Number.isNaN(major) || Number.isNaN(minor)) return "unknown";
+  // Conservative heuristic: swarm APIs stabilized around 1.1+
+  if (major > 1 || (major === 1 && minor >= 1)) return "available";
+  return "unavailable";
 }
 
 function parseKimiVersion(output: string): string | null {

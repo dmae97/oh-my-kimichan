@@ -1,10 +1,8 @@
 import { readFile, writeFile, readdir } from "fs/promises";
 import { join } from "path";
 import type { RunState } from "../contracts/orchestration.js";
-import { getProjectRoot, pathExists } from "../util/fs.js";
+import { getProjectRoot, pathExists, getRunsDir, getRunPath } from "../util/fs.js";
 import { style, header, status, label } from "../util/theme.js";
-
-const RUNS_DIR = ".omk/runs";
 
 interface RunSummary {
   runId: string;
@@ -37,7 +35,7 @@ interface RunSummary {
 }
 
 async function findLatestRunId(root: string): Promise<string | null> {
-  const dir = join(root, RUNS_DIR);
+  const dir = getRunsDir(root);
   if (!(await pathExists(dir))) return null;
   const entries = await readdir(dir, { withFileTypes: true });
   const runs = entries
@@ -49,7 +47,7 @@ async function findLatestRunId(root: string): Promise<string | null> {
 }
 
 async function loadRunState(root: string, runId: string): Promise<RunState | null> {
-  const filePath = join(root, RUNS_DIR, runId, "state.json");
+  const filePath = getRunPath(runId, "state.json", root);
   if (!(await pathExists(filePath))) return null;
   try {
     return JSON.parse(await readFile(filePath, "utf-8")) as RunState;
@@ -155,9 +153,10 @@ function generateReportMd(s: RunSummary): string {
     lines.push("");
   }
 
-  if (s.failed === 0 && s.blocked === 0) {
+  if (s.failed === 0 && s.blocked === 0 && s.pending === 0 && s.running === 0) {
     lines.push(`All ${s.totalNodes} nodes completed successfully.`);
-  } else if (s.failed > 0 && s.blocked > 0) {
+  } else if (s.pending > 0 || s.running > 0) {
+    lines.push(`${s.done}/${s.totalNodes} nodes completed. ${s.pending} pending, ${s.running} running.`);
     lines.push(`${s.done}/${s.totalNodes} nodes completed. ${s.failed} failed, ${s.blocked} blocked.`);
   } else if (s.failed > 0) {
     lines.push(`${s.done}/${s.totalNodes} nodes completed. ${s.failed} node(s) failed.`);
@@ -252,7 +251,7 @@ export async function summaryLatestCommand(): Promise<void> {
   const summaryMd = generateSummaryMd(summary);
   const reportMd = generateReportMd(summary);
 
-  const runDir = join(root, RUNS_DIR, latestId);
+  const runDir = getRunPath(latestId, undefined, root);
   await writeFile(join(runDir, "summary.md"), summaryMd);
   await writeFile(join(runDir, "report.md"), reportMd);
 

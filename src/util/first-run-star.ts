@@ -7,6 +7,7 @@ import { select } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import { OMK_REPO_URL } from "./version.js";
 import { t } from "./i18n.js";
+import { style } from "./theme.js";
 
 export type StarPromptResult = "yes" | "no" | "seen" | "skipped" | "error";
 const execFileAsync = promisify(execFile);
@@ -53,7 +54,7 @@ export function isStarPromptEligible(
   if (!stdin.isTTY || !stdout.isTTY) return false;
   if (!options.allowChat && (options.commandName === "chat" || options.commandName === "omk")) return false;
   if (options.commandName === "lsp") return false;
-  if (argv.some((arg) => ["--help", "-h", "--version", "-V"].includes(arg))) return false;
+  if (argv.some((arg) => ["--help", "-h", "--version", "-V", "--json"].includes(arg))) return false;
   return true;
 }
 
@@ -95,6 +96,9 @@ export async function maybeAskForGitHubStar(
       } catch (error) {
         starred = false;
         starError = error instanceof Error ? error.message : String(error);
+        const slug = parseGitHubRepoSlug(repoUrl);
+        console.error(style.gray(`GitHub star failed: ${starError}`));
+        if (slug) console.error(style.gray(`Visit ${style.cream(`https://github.com/${slug}`)} to star manually.`));
       }
     }
 
@@ -151,6 +155,9 @@ export async function maybeAskForGitHubStarAfterCommand(
       } catch (error) {
         starred = false;
         starError = error instanceof Error ? error.message : String(error);
+        const slug = parseGitHubRepoSlug(repoUrl);
+        console.error(style.gray(`GitHub star failed: ${starError}`));
+        if (slug) console.error(style.gray(`Visit ${style.cream(`https://github.com/${slug}`)} to star manually.`));
       }
     }
 

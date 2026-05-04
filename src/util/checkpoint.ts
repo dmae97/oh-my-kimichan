@@ -2,6 +2,7 @@ import { mkdir, writeFile, readFile, readdir } from "fs/promises";
 import { join } from "path";
 import { runShell } from "./shell.js";
 import { getProjectRoot, pathExists, readTextFile } from "./fs.js";
+import { validateRunId } from "./run-store.js";
 
 const CHECKPOINTS_DIR = ".omk/checkpoints";
 
@@ -9,24 +10,16 @@ function sanitizeLabel(label: string): string {
   return label.replace(/[^a-zA-Z0-9_-]/g, "_").substring(0, 64);
 }
 
-function sanitizeRunId(runId: string): string {
-  const sanitized = runId.replace(/[^a-zA-Z0-9_.-]/g, "");
-  if (sanitized !== runId || sanitized.length === 0 || sanitized.length > 128) {
-    throw new Error(`Invalid runId: ${runId}`);
-  }
-  return sanitized;
-}
-
 function getCheckpointsBasePath(): string {
   return join(getProjectRoot(), CHECKPOINTS_DIR);
 }
 
 function getCheckpointPath(runId: string, checkpointId: string): string {
-  return join(getCheckpointsBasePath(), sanitizeRunId(runId), sanitizeLabel(checkpointId));
+  return join(getCheckpointsBasePath(), validateRunId(runId), sanitizeLabel(checkpointId));
 }
 
 function getRunPath(runId: string): string {
-  return join(getProjectRoot(), ".omk", "runs", sanitizeRunId(runId));
+  return join(getProjectRoot(), ".omk", "runs", validateRunId(runId));
 }
 
 export interface SaveCheckpointResult {

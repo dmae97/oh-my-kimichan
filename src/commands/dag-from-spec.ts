@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { join } from "path";
 import { writeFile, mkdir } from "fs/promises";
-import { getProjectRoot, pathExists } from "../util/fs.js";
+import { getProjectRoot, pathExists, getRunPath, getRunsDir } from "../util/fs.js";
 import { header, label } from "../util/theme.js";
 import { createDag } from "../orchestration/dag.js";
 import type { Dag, DagNodeDefinition, DagNodeOutput, DagOutputGate } from "../orchestration/dag.js";
@@ -148,7 +148,7 @@ export function parseTasksMd(content: string): ParsedTask[] {
               metaVerify = value;
               break;
             case "gate":
-              if (["file-exists", "command-pass", "diff-nonempty", "summary-present", "test-pass", "none"].includes(value)) {
+              if (["file-exists", "command-pass", "test-pass", "summary", "review-pass", "none"].includes(value)) {
                 metaGate = value as DagOutputGate;
               }
               break;
@@ -302,7 +302,7 @@ export async function dagFromSpecCommand(
 
   // Resolve --run latest
   if (options.run) {
-    const runsDir = join(root, ".omk", "runs");
+    const runsDir = getRunsDir(root);
     if (options.run === "latest") {
       // List runs directory
       const { readdir } = await import("fs/promises");
@@ -314,9 +314,9 @@ export async function dagFromSpecCommand(
       if (sorted.length === 0) {
         throw new Error("No runs found in .omk/runs/");
       }
-      targetDir = join(runsDir, sorted[0]);
+      targetDir = getRunPath(sorted[0], undefined, root);
     } else {
-      targetDir = join(runsDir, options.run);
+      targetDir = getRunPath(options.run, undefined, root);
     }
   }
 
@@ -324,7 +324,7 @@ export async function dagFromSpecCommand(
 
   const dagJson = JSON.stringify(dag, null, 2);
   if (options.output) {
-    await mkdir(join(root, ".omk", "runs"), { recursive: true });
+    await mkdir(getRunsDir(root), { recursive: true });
     await writeFile(options.output, dagJson);
     console.log(label("DAG saved", options.output));
   } else {

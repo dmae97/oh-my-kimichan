@@ -107,8 +107,8 @@ test("first-run star prompt records star failure without opening a browser", asy
 });
 
 test("GitHub repo slug parser supports browser and git URLs", () => {
-  assert.equal(parseGitHubRepoSlug("https://github.com/dmae97/oh-my-kimichan"), "dmae97/oh-my-kimichan");
-  assert.equal(parseGitHubRepoSlug("git@github.com:dmae97/oh-my-kimichan.git"), "dmae97/oh-my-kimichan");
+  assert.equal(parseGitHubRepoSlug("https://github.com/dmae97/oh-my-kimi"), "dmae97/oh-my-kimi");
+  assert.equal(parseGitHubRepoSlug("git@github.com:dmae97/oh-my-kimi.git"), "dmae97/oh-my-kimi");
 });
 
 test("maybeAskForGitHubStarAfterCommand skips non-whitelist commands", async () => {
@@ -302,7 +302,7 @@ test("state file privacy assertion", async () => {
 test("OMK version footer reads package version", () => {
   assert.match(getOmkVersionSync(), /^\d+\.\d+\.\d+/);
   assert.match(formatOmkVersionFooter(), /omk v\d+\.\d+\.\d+/);
-  assert.match(formatOmkVersionFooter(), /github\.com\/dmae97\/oh-my-kimichan/);
+  assert.match(formatOmkVersionFooter(), /github\.com\/dmae97\/oh-my-kimi/);
 });
 
 test("maybeAskForGitHubStarAtChatStart skips cockpit child", async () => {

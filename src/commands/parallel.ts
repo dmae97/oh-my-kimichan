@@ -2,8 +2,8 @@ import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import readline from "readline";
 
-import { getOmkPath, getProjectRoot } from "../util/fs.js";
-import { style, header, status, label, kimichanCliHero, bullet } from "../util/theme.js";
+import { getOmkPath, getProjectRoot, getRunPath } from "../util/fs.js";
+import { style, header, status, label, kimicatCliHero, bullet } from "../util/theme.js";
 import { t } from "../util/i18n.js";
 import { createKimiTaskRunner } from "../kimi/runner.js";
 import { createOmkSessionEnv } from "../util/session.js";
@@ -14,6 +14,7 @@ import { createStatePersister } from "../orchestration/state-persister.js";
 
 import { ParallelLiveRenderer, renderCompactParallelFrame, type ParallelViewMode } from "../orchestration/parallel-ui.js";
 import { formatOmkVersionFooter } from "../util/version.js";
+import { UsageError } from "../util/cli-contract.js";
 import type { RunState, UserIntent } from "../contracts/orchestration.js";
 import type { Dag } from "../orchestration/dag.js";
 
@@ -37,7 +38,7 @@ export interface ParallelCommandOptions {
 export async function parallelCommand(
   goal: string | undefined,
   options: ParallelCommandOptions = {}
-): Promise<{ runId: string }> {
+): Promise<{ runId: string; success: boolean }> {
   const root = getProjectRoot();
   const resources = await getOmkResourceSettings();
   const workerCount = normalizeWorkerCount(options.workers, resources.maxWorkers);
@@ -45,13 +46,13 @@ export async function parallelCommand(
   const hasFromSpec = Boolean(options.fromSpec);
 
   if (!goal && !hasFromSpec) {
-    console.error(status.error(t("parallel.goalRequired")));
-    process.exit(1);
+    throw new UsageError(t("parallel.goalRequired"));
   }
 
   const approvalPolicy = normalizeApprovalPolicy(options.approvalPolicy, resources.profile);
   const runId = options.runId ?? new Date().toISOString().replace(/[:.]/g, "-");
-  const runDir = join(root, ".omk/runs", runId);
+  const sanitized = runId.replace(/[^a-zA-Z0-9_.-]/g, "-").replace(/\.\./g, "");
+  const runDir = getRunPath(sanitized);
   const startedAt = new Date().toISOString();
 
   await mkdir(runDir, { recursive: true });
@@ -141,12 +142,18 @@ export async function parallelCommand(
   let shuttingDown = false;
   function handleSignal(): void {
     if (shuttingDown) {
-      process.exit(1);
+      if (options.noPause !== true) {
+        process.exit(1);
+      }
+      return;
     }
     shuttingDown = true;
     abortController.abort();
     // Force exit if graceful shutdown hangs (e.g. long-running node)
-    setTimeout(() => process.exit(1), 5000);
+    // In programmatic mode (noPause=true) we skip force-exit so callers can handle abort.
+    if (options.noPause !== true) {
+      setTimeout(() => process.exit(1), 5000);
+    }
   }
   process.once("SIGINT", handleSignal);
   process.once("SIGTERM", handleSignal);
@@ -158,7 +165,7 @@ export async function parallelCommand(
     signal: abortController.signal,
   });
 
-  console.log(kimichanCliHero(formatOmkVersionFooter()));
+  console.log(kimicatCliHero(formatOmkVersionFooter()));
   console.log(style.purpleBold("🐾 omk parallel — DAG executor with live UI"));
   console.log(style.gray(t("parallel.agentsActivated")));
 
@@ -265,7 +272,6 @@ export async function parallelCommand(
     console.log(status.ok("Parallel DAG run complete"));
   } else {
     console.log(status.error("Parallel DAG run failed"));
-    process.exitCode = 1;
   }
   console.log(label("State", statePath));
 
@@ -274,7 +280,7 @@ export async function parallelCommand(
     console.log(style.purple(t("parallel.complete")));
     const { chatCommand } = await import("./chat.js");
     await chatCommand({ runId });
-    return { runId };
+    return { runId, success: true };
   }
 
   // Pause so the user can read the result before the process exits
@@ -289,7 +295,7 @@ export async function parallelCommand(
     });
   }
 
-  return { runId };
+  return { runId, success: result.success };
 }
 
 function normalizeWorkerCount(value: string | undefined, fallback: number): number {

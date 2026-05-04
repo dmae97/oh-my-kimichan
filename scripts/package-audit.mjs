@@ -1,16 +1,483 @@
 #!/usr/bin/env node
 /**
- * Package contents audit — cross-platform (Windows / Linux / macOS)
+ * Package truth audit — cross-platform (Windows / Linux / macOS)
  * Validates the tarball that npm would publish using npm pack --dry-run --json.
  * No shell pipes, grep, head, or tar.
+ * Does NOT rebuild or repack the artifact — only audits what npm pack reports.
+ *
+ * Hard-fail checks:
+ *   - pack JSON structure (exactly 1 object, required fields)
+ *   - local package.json name\/version\/bin\/files match pack metadata
+ *   - required entries exist in tarball
+ *   - forbidden entries do NOT exist in tarball (glob-based, full path)
+ *   - package.json.files entries exist locally and are packed
+ *   - bin targets exist locally, are packed, live under dist\/ , have shebang
+ *   - dist drift: every src\/\/*\/*.ts has matching dist artifacts
+ *   - stale dist files have no source counterpart (unless allowlisted)
+ *   - sourcemap source paths are clean (no absolute, node_modules, traversal)
+ *   - size budgets (tarball, unpacked, entryCount, single file, readmeasset, dist)
+ *   - markdown local link integrity (README.md + docs\/\/*\/ links point to packed files)
  */
 import { execSync } from "node:child_process";
-import { readFileSync, appendFileSync } from "node:fs";
+import {
+  readFileSync,
+  appendFileSync,
+  readdirSync,
+  statSync,
+  existsSync,
+} from "node:fs";
+import { join, relative, extname, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const REQUIRED_ENTRIES = ["dist", "templates", "README.md", "LICENSE"];
-const FORBIDDEN_ENTRIES = ["src", "test", ".github", ".omk", ".kimi", ".agents", ".specify", "specs", "dist.old"];
-const FORBIDDEN_PATTERNS = [/^omk-hud-.*\.log$/, /^omk-.*\.log$/, /^runtime.*\.log$/];
-const MAX_SIZE_MB = 50;
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+export const REQUIRED_ENTRIES = [
+  "package.json",
+  "README.md",
+  "LICENSE",
+  "dist/cli.js",
+  "templates/AGENTS.md",
+  "templates/.kimi/AGENTS.md",
+  "templates/.omk/agents/root.yaml",
+  "readmeasset/kimicat.png",
+];
+
+export const FORBIDDEN_PATTERNS = [
+  "src/**",
+  "test/**",
+  "scripts/**",
+  ".github/**",
+  ".omk/**",
+  ".kimi/**",
+  ".agents/**",
+  ".specify/**",
+  "specs/**",
+  "dist.old/**",
+  "node_modules/**",
+  "package-lock.json",
+  "**/*.tgz",
+  "**/*.tar.gz",
+  "**/*.zip",
+  "archives/**",
+  "logs/**",
+  "**/*.log",
+  "**/.env*",
+  "keys/**",
+  "credentials/**",
+  "**/*.pem",
+  "**/*.key",
+  "id_rsa",
+  "id_ed25519",
+];
+
+export const SIZE_BUDGETS = {
+  tarballMb: 35,
+  unpackedMb: 40,
+  entryCount: 650,
+  singleFileMb: 20,
+  readmeassetMb: 30,
+  distMb: 5,
+};
+
+export const MEDIA_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".mp4",
+  ".webm",
+  ".mov",
+]);
+
+export const STALE_DIST_ALLOWLIST = new Set([]);
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+export function toPosix(p) {
+  return p.replace(/\\/g, "/");
+}
+
+export function walkDir(dir, base = dir) {
+  const entries = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      entries.push(...walkDir(fullPath, base));
+    } else {
+      entries.push(toPosix(relative(base, fullPath)));
+    }
+  }
+  return entries;
+}
+
+export function globMatch(pattern, target) {
+  const parts = pattern.split("/");
+  const targetParts = target.split("/");
+
+  let pi = 0;
+  let ti = 0;
+
+  while (pi < parts.length && ti < targetParts.length) {
+    const pp = parts[pi];
+    const tp = targetParts[ti];
+
+    if (pp === "**") {
+      if (pi === parts.length - 1) return true;
+      const nextPart = parts[pi + 1];
+      while (ti < targetParts.length && !segmentMatch(nextPart, targetParts[ti])) {
+        ti++;
+      }
+      if (ti >= targetParts.length) return false;
+      pi += 2;
+      ti++;
+      continue;
+    }
+
+    if (!segmentMatch(pp, tp)) {
+      return false;
+    }
+    pi++;
+    ti++;
+  }
+
+  if (pi < parts.length && parts[pi] === "**") {
+    pi++;
+  }
+
+  if (pi === parts.length && ti === targetParts.length) return true;
+
+  if (
+    pi === parts.length - 1 &&
+    parts[pi] === "**" &&
+    ti === targetParts.length
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function segmentMatch(pattern, segment) {
+  if (pattern === "*") return true;
+  if (!pattern.includes("*")) return pattern === segment;
+
+  const parts = pattern.split("*");
+  let pos = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (part === "") continue;
+    const idx = segment.indexOf(part, pos);
+    if (idx === -1) return false;
+    if (i === 0 && idx !== 0) return false;
+    pos = idx + part.length;
+  }
+  if (parts[parts.length - 1] !== "" && pos !== segment.length) return false;
+  return true;
+}
+
+export function anyGlobMatch(patterns, target) {
+  return patterns.some((p) => globMatch(p, target));
+}
+
+export function parseMarkdownLocalLinks(content) {
+  const links = [];
+  const regex = /!?\[([^\]]*)\]\(([^)]+)\)/g;
+  let m;
+  while ((m = regex.exec(content)) !== null) {
+    const raw = m[2].trim();
+    const url = raw.split("#")[0].split("?")[0];
+    if (!url) continue;
+    if (/^(https?:|mailto:|data:)/i.test(url)) continue;
+    if (url.startsWith("/")) continue;
+    links.push(url);
+  }
+  return links;
+}
+
+export function resolveLink(fromFile, link) {
+  const dirParts = dirname(fromFile).split("/").filter((p) => p && p !== ".");
+  const linkParts = link.split("/").filter((p) => p !== ".");
+  const parts = [...dirParts, ...linkParts];
+  const result = [];
+  for (const part of parts) {
+    if (part === "..") result.pop();
+    else result.push(part);
+  }
+  return result.join("/");
+}
+
+// ---------------------------------------------------------------------------
+// Validators
+// ---------------------------------------------------------------------------
+
+export function validatePackStructure(packResult) {
+  const errors = [];
+  if (!Array.isArray(packResult)) {
+    errors.push("npm pack JSON is not an array");
+    return { errors };
+  }
+  if (packResult.length === 0) {
+    errors.push("npm pack JSON array is empty");
+    return { errors };
+  }
+  if (packResult.length > 1) {
+    errors.push(`Expected exactly 1 pack object, got ${packResult.length}`);
+  }
+  const pkg = packResult[0];
+  const requiredFields = [
+    "name",
+    "version",
+    "filename",
+    "size",
+    "unpackedSize",
+    "entryCount",
+    "files",
+  ];
+  for (const field of requiredFields) {
+    if (!(field in pkg)) {
+      errors.push(`Missing required pack field: ${field}`);
+    }
+  }
+  return { errors, pkg };
+}
+
+export function validateMetadata(localPkg, pkg) {
+  const errors = [];
+  if (localPkg.name !== pkg.name) {
+    errors.push(`name mismatch: local="${localPkg.name}" pack="${pkg.name}"`);
+  }
+  if (localPkg.version !== pkg.version) {
+    errors.push(
+      `version mismatch: local="${localPkg.version}" pack="${pkg.version}"`
+    );
+  }
+  return { errors };
+}
+
+export function validateRequiredEntries(files, required) {
+  const errors = [];
+  const pathSet = new Set(files.map((f) => toPosix(f.path || "")));
+  for (const req of required) {
+    if (!pathSet.has(req)) {
+      errors.push(`Required entry missing: ${req}`);
+    }
+  }
+  return { errors };
+}
+
+export function validateForbiddenEntries(files, patterns) {
+  const errors = [];
+  for (const f of files) {
+    const path = toPosix(f.path || "");
+    if (anyGlobMatch(patterns, path)) {
+      errors.push(`Forbidden entry found in tarball: ${path}`);
+    }
+  }
+  return { errors };
+}
+
+export function validateFilesAllowlist(localFiles, pathSet) {
+  const errors = [];
+  for (const entry of localFiles) {
+    const localPath = toPosix(entry);
+    if (!existsSync(localPath)) {
+      errors.push(`Stale files allowlist entry: ${localPath}`);
+      continue;
+    }
+    let packed = false;
+    if (pathSet.has(localPath)) {
+      packed = true;
+    } else if (
+      statSync(localPath).isDirectory() &&
+      [...pathSet].some((p) => p.startsWith(localPath + "/"))
+    ) {
+      packed = true;
+    }
+    if (!packed) {
+      errors.push(`Local files entry not packed: ${localPath}`);
+    }
+  }
+  return { errors };
+}
+
+export function validateBinTruth(binEntries, pathSet) {
+  const errors = [];
+  for (const [name, target] of binEntries) {
+    const targetPath = toPosix(target);
+    if (!existsSync(targetPath)) {
+      errors.push(`Bin target missing locally: ${name} -> ${targetPath}`);
+      continue;
+    }
+    if (!pathSet.has(targetPath)) {
+      errors.push(`Bin target not packed: ${name} -> ${targetPath}`);
+      continue;
+    }
+    if (!targetPath.startsWith("dist/")) {
+      errors.push(`Bin target not under dist/: ${name} -> ${targetPath}`);
+      continue;
+    }
+    try {
+      const firstLine = readFileSync(targetPath, "utf-8").split(/\r?\n/)[0];
+      if (!firstLine.startsWith("#!/usr/bin/env node")) {
+        errors.push(`Bin target missing shebang: ${name} -> ${targetPath}`);
+      }
+    } catch (e) {
+      errors.push(`Could not read bin target: ${name} -> ${targetPath}`);
+    }
+  }
+  return { errors };
+}
+
+export function validateDistDrift(srcFiles, distFiles, pathSet) {
+  const errors = [];
+  const srcTsSet = new Set(
+    srcFiles
+      .filter((f) => f.endsWith(".ts"))
+      .map((f) => f.replace(/\.ts$/, ""))
+  );
+
+  const expectedDistArtifacts = [];
+  for (const srcBase of srcTsSet) {
+    expectedDistArtifacts.push(`dist/${srcBase}.js`);
+    expectedDistArtifacts.push(`dist/${srcBase}.d.ts`);
+    expectedDistArtifacts.push(`dist/${srcBase}.js.map`);
+    expectedDistArtifacts.push(`dist/${srcBase}.d.ts.map`);
+  }
+
+  for (const artifact of expectedDistArtifacts) {
+    if (!pathSet.has(artifact)) {
+      errors.push(`Missing expected dist artifact: ${artifact}`);
+    }
+  }
+
+  for (const distFile of distFiles) {
+    if (!distFile.endsWith(".js")) continue;
+    if (distFile.endsWith(".d.ts")) continue;
+    const base = distFile.replace(/\.js$/, "");
+    if (!srcTsSet.has(base) && !STALE_DIST_ALLOWLIST.has(`dist/${distFile}`)) {
+      errors.push(`Stale dist file: dist/${distFile}`);
+    }
+  }
+
+  return { errors };
+}
+
+export function validateSourcemapPaths(mapFiles) {
+  const errors = [];
+  for (const mapFile of mapFiles) {
+    try {
+      const mapContent = JSON.parse(readFileSync(mapFile, "utf-8"));
+      const sources = Array.isArray(mapContent.sources)
+        ? mapContent.sources
+        : [];
+      for (const src of sources) {
+        if (typeof src !== "string") continue;
+        if (src.startsWith("/") || /^[A-Za-z]:[\\/]/.test(src)) {
+          errors.push(`Sourcemap absolute path in ${mapFile}: ${src}`);
+        }
+        if (src.includes("node_modules")) {
+          errors.push(`Sourcemap node_modules path in ${mapFile}: ${src}`);
+        }
+        if (src.includes("././") || (src.includes("..") && !/^(\.\.\/)+src\//.test(src))) {
+          errors.push(`Sourcemap traversal path in ${mapFile}: ${src}`);
+        }
+      }
+    } catch {
+      // ignore unreadable maps
+    }
+  }
+  return { errors };
+}
+
+export function validateMarkdownLinks(markdownFiles, pathSet) {
+  const errors = [];
+  for (const mdFile of markdownFiles) {
+    const content = readFileSync(mdFile, "utf-8");
+    const links = parseMarkdownLocalLinks(content);
+    for (const link of links) {
+      const resolved = resolveLink(mdFile, link);
+      if (!pathSet.has(resolved)) {
+        errors.push(
+          `Broken local link in ${mdFile}: ${link} -> ${resolved}`
+        );
+      }
+    }
+  }
+  return { errors };
+}
+
+export function validateSizeBudgets(files, pkg) {
+  const errors = [];
+  const tarballSizeBytes = typeof pkg.size === "number" ? pkg.size : 0;
+  const unpackedSizeBytes =
+    typeof pkg.unpackedSize === "number" ? pkg.unpackedSize : 0;
+  const entryCount =
+    typeof pkg.entryCount === "number" ? pkg.entryCount : files.length;
+
+  const sizeMb = tarballSizeBytes / (1024 * 1024);
+  const unpackedMb = unpackedSizeBytes / (1024 * 1024);
+
+  if (sizeMb > SIZE_BUDGETS.tarballMb) {
+    errors.push(
+      `Tarball size ${sizeMb.toFixed(2)} MB exceeds ${SIZE_BUDGETS.tarballMb} MB`
+    );
+  }
+  if (unpackedMb > SIZE_BUDGETS.unpackedMb) {
+    errors.push(
+      `Unpacked size ${unpackedMb.toFixed(2)} MB exceeds ${SIZE_BUDGETS.unpackedMb} MB`
+    );
+  }
+  if (entryCount > SIZE_BUDGETS.entryCount) {
+    errors.push(
+      `Entry count ${entryCount} exceeds ${SIZE_BUDGETS.entryCount}`
+    );
+  }
+
+  let largestFiles = [];
+  for (const f of files) {
+    const path = toPosix(f.path || "");
+    const fileSizeMb = (f.size || 0) / (1024 * 1024);
+    if (fileSizeMb > SIZE_BUDGETS.singleFileMb) {
+      errors.push(
+        `Oversized single file: ${path} ${fileSizeMb.toFixed(2)} MB`
+      );
+    }
+    largestFiles.push({ path, size: f.size || 0, sizeMb: fileSizeMb });
+  }
+
+  let readmeassetTotal = 0;
+  let distTotal = 0;
+  for (const f of files) {
+    const path = toPosix(f.path || "");
+    if (path.startsWith("readmeasset/")) readmeassetTotal += f.size || 0;
+    if (path.startsWith("dist/")) distTotal += f.size || 0;
+  }
+  const readmeassetMb = readmeassetTotal / (1024 * 1024);
+  const distMb = distTotal / (1024 * 1024);
+
+  if (readmeassetMb > SIZE_BUDGETS.readmeassetMb) {
+    errors.push(
+      `readmeasset/ size ${readmeassetMb.toFixed(2)} MB exceeds ${SIZE_BUDGETS.readmeassetMb} MB`
+    );
+  }
+  if (distMb > SIZE_BUDGETS.distMb) {
+    errors.push(
+      `dist/ size ${distMb.toFixed(2)} MB exceeds ${SIZE_BUDGETS.distMb} MB`
+    );
+  }
+
+  return { errors, largestFiles };
+}
+
+// ---------------------------------------------------------------------------
+// Main runner
+// ---------------------------------------------------------------------------
 
 function log(label, message, type = "info") {
   const icons = { info: "ℹ️", ok: "✅", warn: "⚠️", fail: "❌" };
@@ -23,151 +490,186 @@ function ciAnnotation(type, message) {
   }
 }
 
-function main() {
-  const isCI = Boolean(process.env.CI);
-
-  // 1. Run npm pack --dry-run --json and parse JSON from stdout only
-  let packResult;
-  try {
-    const stdout = execSync("npm pack --dry-run --json", {
-      encoding: "utf-8",
-      cwd: process.cwd(),
-      stdio: ["pipe", "pipe", "ignore"],
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    // npm lifecycle scripts (e.g. prepare) may print non-JSON before the array
-    const jsonStart = stdout.indexOf("[");
-    if (jsonStart === -1) throw new Error("No JSON array found in npm pack output");
-    packResult = JSON.parse(stdout.slice(jsonStart));
-  } catch (e) {
-    log("PACK", `npm pack --dry-run --json failed: ${e.message}`, "fail");
-    ciAnnotation("error", `npm pack --dry-run --json failed: ${e.message}`);
-    process.exit(1);
-  }
-
-  if (!Array.isArray(packResult) || packResult.length === 0) {
-    log("PACK", "Empty or invalid npm pack JSON output", "fail");
-    ciAnnotation("error", "Empty or invalid npm pack JSON output");
-    process.exit(1);
-  }
-
-  const pkg = packResult[0];
-  const files = pkg.files || [];
-  const tarballSizeBytes = pkg.size || 0;
-  const entryCount = files.length;
-  const tarballName = pkg.filename || "unknown.tgz";
-
-  const sizeMb = tarballSizeBytes / (1024 * 1024);
+function runValidator(label, result, ciPrefix) {
   let failed = false;
-
-  // 2. Size check
-  if (sizeMb > MAX_SIZE_MB) {
-    log("SIZE", `${sizeMb.toFixed(2)} MB exceeds ${MAX_SIZE_MB} MB limit`, "fail");
-    ciAnnotation("error", `Tarball size ${sizeMb.toFixed(2)} MB exceeds ${MAX_SIZE_MB} MB limit`);
+  if (result.errors.length > 0) {
+    for (const err of result.errors) {
+      log(label, err, "fail");
+      ciAnnotation("error", `${ciPrefix}: ${err}`);
+    }
     failed = true;
   } else {
-    log("SIZE", `${sizeMb.toFixed(2)} MB within ${MAX_SIZE_MB} MB limit`, "ok");
+    log(label, "passed", "ok");
   }
+  return failed;
+}
 
-  // 3. Entry count
-  log("ENTRIES", `${entryCount} files`, "info");
-  ciAnnotation("notice", `Tarball entries: ${entryCount}`);
+function readTarballMetadata(tarballPath) {
+  // Extract package.json from tarball
+  const pkgJson = execSync(`tar -xzf "${tarballPath}" -O package/package.json`, {
+    encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  const pkg = JSON.parse(pkgJson);
 
-  // 4. Top-level entries
-  const topLevel = new Set();
-  for (const f of files) {
-    const path = f.path || "";
-    const parts = path.split("/");
-    if (parts.length >= 1) {
-      topLevel.add(parts[0]);
-    }
-  }
+  // List all entries
+  const listOutput = execSync(`tar -tzf "${tarballPath}"`, {
+    encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  const entries = listOutput
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.endsWith("/"));
 
-  // 5. Required entries
-  for (const req of REQUIRED_ENTRIES) {
-    const found = [...topLevel].some((name) => name === req || name.startsWith(req + "/"));
-    if (found) {
-      log("REQUIRED", `${req} present`, "ok");
-    } else {
-      log("REQUIRED", `${req} MISSING`, "fail");
-      ciAnnotation("error", `Required entry missing: ${req}`);
-      failed = true;
-    }
-  }
+  const files = entries
+    .filter((e) => e.startsWith("package/"))
+    .map((e) => {
+      const path = e.slice("package/".length);
+      return { path, size: 0, mode: 420 };
+    });
 
-  // 6. Forbidden entries
-  for (const forbid of FORBIDDEN_ENTRIES) {
-    const found = [...topLevel].some((name) => name === forbid || name.startsWith(forbid + "/"));
-    if (found) {
-      log("FORBIDDEN", `${forbid} found in tarball`, "fail");
-      ciAnnotation("error", `Forbidden entry found in tarball: ${forbid}`);
-      failed = true;
-    } else {
-      log("FORBIDDEN", `${forbid} not present`, "ok");
-    }
-  }
+  return [{
+    name: pkg.name,
+    version: pkg.version,
+    filename: tarballPath.split("/").pop() || tarballPath,
+    size: statSync(tarballPath).size,
+    unpackedSize: 0,
+    entryCount: files.length,
+    files,
+  }];
+}
 
-  // 7. Forbidden patterns (runtime logs, etc.)
-  const forbiddenPatternMatches = [];
-  for (const f of files) {
-    const path = f.path || "";
-    for (const pattern of FORBIDDEN_PATTERNS) {
-      if (pattern.test(path)) {
-        forbiddenPatternMatches.push(path);
+export function main(tarballPath) {
+  const isCI = Boolean(process.env.CI);
+  let failed = false;
+
+  // 1. Obtain pack metadata
+  let packResult;
+  try {
+    if (tarballPath) {
+      if (!existsSync(tarballPath)) {
+        throw new Error(`Tarball not found: ${tarballPath}`);
       }
+      packResult = readTarballMetadata(tarballPath);
+    } else {
+      const stdout = execSync("npm pack --dry-run --ignore-scripts --json", {
+        encoding: "utf8",
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      const jsonStart = stdout.indexOf("[");
+      if (jsonStart === -1) throw new Error("No JSON array found in npm pack output");
+      packResult = JSON.parse(stdout.slice(jsonStart));
     }
+  } catch (e) {
+    log("PACK", `Failed to obtain pack metadata: ${e.message}`, "fail");
+    ciAnnotation("error", `Failed to obtain pack metadata: ${e.message}`);
+    process.exit(1);
   }
-  if (forbiddenPatternMatches.length > 0) {
-    for (const match of forbiddenPatternMatches) {
-      log("FORBIDDEN", `${match} found in tarball`, "fail");
-      ciAnnotation("error", `Forbidden pattern matched in tarball: ${match}`);
+
+  const struct = validatePackStructure(packResult);
+  if (struct.errors.length > 0) {
+    for (const err of struct.errors) {
+      log("PACK", err, "fail");
+      ciAnnotation("error", err);
     }
     failed = true;
   }
+  if (!struct.pkg) {
+    process.exit(1);
+  }
+  const pkg = struct.pkg;
+  const files = Array.isArray(pkg.files) ? pkg.files : [];
+  const tarballName = pkg.filename || "unknown.tgz";
 
-  // 8. Package.json audit (read local copy — it is included by npm automatically)
+  // 2. Read local package.json
+  let localPkg;
   try {
-    const localPkg = JSON.parse(readFileSync("package.json", "utf-8"));
-    if (!localPkg.name || !localPkg.version) {
-      log("PACKAGE", "name or version missing", "fail");
-      ciAnnotation("error", "package.json missing name or version");
-      failed = true;
-    } else {
-      log("PACKAGE", `${localPkg.name}@${localPkg.version}`, "ok");
-    }
-
-    if (!localPkg.bin || Object.keys(localPkg.bin).length === 0) {
-      log("PACKAGE", "No bin entry defined", "warn");
-    } else {
-      log("PACKAGE", `bin: ${Object.keys(localPkg.bin).join(", ")}`, "ok");
-    }
-
-    if (!localPkg.files || localPkg.files.length === 0) {
-      log("PACKAGE", "No files field defined (publishes everything)", "warn");
-    }
+    localPkg = JSON.parse(readFileSync("package.json", "utf-8"));
   } catch (e) {
     log("PACKAGE", `Could not read local package.json: ${e.message}`, "fail");
     ciAnnotation("error", `Could not read local package.json: ${e.message}`);
-    failed = true;
+    process.exit(1);
   }
 
-  // 9. CI Summary
+  const pathSet = new Set(files.map((f) => toPosix(f.path || "")));
+
+  failed = runValidator("METADATA", validateMetadata(localPkg, pkg), "METADATA") || failed;
+  failed = runValidator("REQUIRED", validateRequiredEntries(files, REQUIRED_ENTRIES), "REQUIRED") || failed;
+  failed = runValidator("FORBIDDEN", validateForbiddenEntries(files, FORBIDDEN_PATTERNS), "FORBIDDEN") || failed;
+  failed = runValidator("FILES_ALLOWLIST", validateFilesAllowlist(localPkg.files || [], pathSet), "FILES_ALLOWLIST") || failed;
+
+  const binEntries = localPkg.bin && typeof localPkg.bin === "object"
+    ? Object.entries(localPkg.bin)
+    : [];
+  failed = runValidator("BIN", validateBinTruth(binEntries, pathSet), "BIN") || failed;
+
+  // Dist drift
+  if (existsSync("src") && existsSync("dist")) {
+    const srcFiles = walkDir("src");
+    const distFiles = walkDir("dist");
+    failed = runValidator("DIST_DRIFT", validateDistDrift(srcFiles, distFiles, pathSet), "DIST_DRIFT") || failed;
+
+    const mapFiles = [...pathSet].filter(
+      (p) => p.endsWith(".js.map") || p.endsWith(".d.ts.map")
+    );
+    failed = runValidator("SOURCEMAP", validateSourcemapPaths(mapFiles), "SOURCEMAP") || failed;
+  } else {
+    log("DIST_DRIFT", "src/ or dist/ missing — skipping drift check", "warn");
+  }
+
+  // Markdown links
+  const markdownFiles = [];
+  if (existsSync("README.md")) markdownFiles.push("README.md");
+  if (existsSync("docs")) {
+    for (const f of walkDir("docs")) {
+      if (f.endsWith(".md")) markdownFiles.push(`docs/${f}`);
+    }
+  }
+  failed = runValidator("LINK", validateMarkdownLinks(markdownFiles, pathSet), "LINK") || failed;
+
+  // Size budgets
+  const sizeResult = validateSizeBudgets(files, pkg);
+  if (sizeResult.errors.length > 0) {
+    for (const err of sizeResult.errors) {
+      log("SIZE", err, "fail");
+      ciAnnotation("error", err);
+    }
+    failed = true;
+    sizeResult.largestFiles.sort((a, b) => b.size - a.size);
+    console.log("\n📦 Top 10 largest files in tarball:");
+    for (const f of sizeResult.largestFiles.slice(0, 10)) {
+      console.log(`   ${f.sizeMb.toFixed(2)} MB  ${f.path}`);
+    }
+  } else {
+    log("SIZE", "All size budgets within limits", "ok");
+  }
+
+  // CI Summary
+  const tarballSizeBytes = typeof pkg.size === "number" ? pkg.size : 0;
+  const unpackedSizeBytes = typeof pkg.unpackedSize === "number" ? pkg.unpackedSize : 0;
+  const entryCount = typeof pkg.entryCount === "number" ? pkg.entryCount : files.length;
+  const sizeMb = tarballSizeBytes / (1024 * 1024);
+  const unpackedMb = unpackedSizeBytes / (1024 * 1024);
+
   const summaryLines = [
     "## Package Audit Summary",
     `- Tarball: ${tarballName}`,
-    `- Size: ${sizeMb.toFixed(2)} MB`,
+    `- Size: ${sizeMb.toFixed(2)} MB (compressed) / ${unpackedMb.toFixed(2)} MB (unpacked)`,
     `- Entries: ${entryCount}`,
     `- Required: ${REQUIRED_ENTRIES.join(", ")}`,
-    `- Forbidden: ${FORBIDDEN_ENTRIES.join(", ")}`,
+    `- Forbidden patterns: ${FORBIDDEN_PATTERNS.length} rules`,
     `- Result: ${failed ? "FAILED" : "PASSED"}`,
   ];
-  if (isCI) {
-    console.log("");
-    for (const line of summaryLines) console.log(line);
-  }
+  console.log("");
+  for (const line of summaryLines) console.log(line);
   if (process.env.GITHUB_STEP_SUMMARY) {
     try {
-      appendFileSync(process.env.GITHUB_STEP_SUMMARY, summaryLines.join("\n") + "\n", "utf-8");
+      appendFileSync(
+        process.env.GITHUB_STEP_SUMMARY,
+        summaryLines.join("\n") + "\n",
+        "utf-8"
+      );
     } catch {
       // ignore
     }
@@ -181,4 +683,15 @@ function main() {
   log("AUDIT", "Package audit passed", "ok");
 }
 
-main();
+function parseTarballArg() {
+  const args = process.argv.slice(2);
+  const idx = args.indexOf("--tarball");
+  if (idx !== -1 && args[idx + 1]) {
+    return args[idx + 1];
+  }
+  return undefined;
+}
+
+if (fileURLToPath(import.meta.url) === process.argv[1]) {
+  main(parseTarballArg());
+}

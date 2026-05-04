@@ -288,6 +288,7 @@ export function renderParallelCockpit(
   // Section 4 — Action
   const hasBlockers = vm.blocker != null || vm.progress.failed > 0 || vm.progress.blocked > 0;
   const allSettled = vm.progress.settled === vm.progress.total && vm.progress.total > 0;
+  const doneWithoutEvidence = vm.workers.filter((w) => w.state === "done" && !w.lastEvidence);
 
   if (hasBlockers) {
     lines.push(style.pinkBold("▸ Blockers"));
@@ -317,19 +318,41 @@ export function renderParallelCockpit(
         lines.push(`  ${style.pink("✕")} ${style.creamBold(w.label)} failed`);
       }
     }
-    const doneWithoutEvidence = vm.workers.filter((w) => w.state === "done" && !w.lastEvidence);
     if (doneWithoutEvidence.length > 0) {
       lines.push(`  ${style.orange("⚠")} ${doneWithoutEvidence.length} done node(s) missing evidence`);
     }
     lines.push("");
   } else if (allSettled) {
     const success = vm.progress.failed === 0 && vm.progress.blocked === 0;
-    lines.push(success ? style.mintBold("▸ Complete") : style.pinkBold("▸ Complete (with issues)"));
-    lines.push(`  ${success ? style.mint("✓ All workers finished successfully") : style.pink("✕ Some workers failed or blocked")}`);
+    if (success && doneWithoutEvidence.length > 0) {
+      lines.push(style.orangeBold("▸ Complete (with warnings)"));
+      lines.push(`  ${style.orange("⚠")} ${doneWithoutEvidence.length} done node(s) missing evidence`);
+    } else if (success) {
+      lines.push(style.mintBold("▸ Complete"));
+      lines.push(`  ${style.mint("✓ All workers finished successfully")}`);
+    } else {
+      lines.push(style.pinkBold("▸ Complete (with issues)"));
+      lines.push(`  ${style.pink("✕ Some workers failed or blocked")}`);
+    }
     if (options.statePath) {
       lines.push(`  ${style.gray("State:")} ${style.cream(options.statePath)}`);
     }
     lines.push(`  ${style.gray("Next:")} ${style.cream("omk summary")} ${style.gray("|")} ${style.cream("omk verify")} ${style.gray("|")} ${style.cream("omk chat --run-id")}`);
+    lines.push("");
+  }
+
+  // Section 5 — Final failure summary (when run ended with failures)
+  if (allSettled && hasBlockers) {
+    lines.push(style.pinkBold("▸ Failure Summary"));
+    for (const item of vm.blockers ?? []) {
+      const icon = item.status === "failed" ? style.pink("✕") : style.orangeBold("⊘");
+      lines.push(`  ${icon} ${style.creamBold(item.nodeId)}`);
+      lines.push(`    ${style.gray("Reason:")} ${style.gray(truncate(item.reason, termWidth - 14))}`);
+      if (vm.runId) {
+        lines.push(`    ${style.gray("Log:")} ${style.gray(`.omk/runs/${vm.runId}/logs/${item.nodeId}.log`)}`);
+      }
+    }
+    lines.push(`  ${style.gray("Next:")} ${style.cream("omk summary")} ${style.gray("|")} ${style.cream("omk verify")} ${style.gray("|")} ${style.cream(`omk chat --run-id ${vm.runId ?? "<run-id>"}`)}`);
     lines.push("");
   }
 

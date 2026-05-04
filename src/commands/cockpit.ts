@@ -3,10 +3,9 @@
  */
 
 import { readFile, readdir, stat as fsStat } from "fs/promises";
-import { join } from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { getOmkPath, getProjectRoot, pathExists } from "../util/fs.js";
+import { getProjectRoot, pathExists, getRunPath, getRunsDir } from "../util/fs.js";
 import {
   buildRunViewModel,
   parseRunStateResult,
@@ -24,7 +23,6 @@ import {
 } from "../util/theme.js";
 import { getKimiUsage } from "../kimi/usage.js";
 import { parseGitStatusPorcelain, listRunCandidates } from "./hud.js";
-import { discoverRoutingInventory } from "../orchestration/routing.js";
 import { readTodos, deriveTodosFromState } from "../util/todo-sync.js";
 import { readSessionMeta, type SessionMeta } from "../util/session.js";
 
@@ -34,14 +32,34 @@ export interface CockpitCommandOptions {
   runId?: string;
   watch?: boolean;
   refreshMs?: number;
+  height?: number;
 }
 
 export interface CockpitRenderOptions {
   runId?: string;
   terminalWidth?: number;
+  cache?: CockpitCache;
+  quick?: boolean;
+  showHistory?: boolean;
+  height?: number;
 }
 
-// Local helpers mirrored from hud.ts to keep cockpit self-contained.
+// ── Cache types ──
+
+interface CacheEntry<T> {
+  value: T;
+  ts: number;
+}
+
+export interface CockpitCache {
+  stateTodos?: CacheEntry<Awaited<ReturnType<typeof readTodos>> | null>;
+  gitChanges?: CacheEntry<{ status: string; path: string }[] | null>;
+  history?: CacheEntry<string[]>;
+  kimiUsage?: CacheEntry<NonNullable<Awaited<ReturnType<typeof getKimiUsage>>> | null>;
+  systemUsage?: CacheEntry<ReturnType<typeof getSystemUsage>>;
+}
+
+// ── Local helpers ──
 
 const ANSI_REGEX = /\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])/g;
 
@@ -191,7 +209,117 @@ function clearScreen(): void {
   process.stdout.write("\x1b[2J\x1b[H");
 }
 
-// Core rendering
+// ── Cache helpers ──
+
+function getCacheEntry<T>(entry: CacheEntry<T> | undefined, ttlMs: number, now: number): T | undefined {
+  if (!entry) return undefined;
+  if (now - entry.ts > ttlMs) return undefined;
+  return entry.value;
+}
+
+// ── Renderer ──
+
+export type RenderMode = "diff" | "full" | "append";
+
+export class CockpitRenderer {
+  private prevLines: string[] = [];
+  mode: RenderMode = "diff";
+  paused = false;
+  refreshMs: number;
+  showHistory = true;
+  stopped = false;
+  resized = false;
+  height: number;
+  private keyHandler?: (chunk: Buffer) => void;
+
+  constructor(refreshMs: number, height?: number) {
+    this.refreshMs = refreshMs;
+    this.height = Math.max(14, Math.min(40, height ?? 18));
+  }
+
+  setupKeyboard(): void {
+    if (!process.stdin.isTTY) return;
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    this.keyHandler = (key: Buffer) => {
+      const char = key.toString();
+      if (char === "\u0003" || char === "q") {
+        this.stopped = true;
+      } else if (char === " ") {
+        this.paused = !this.paused;
+        this.resized = true; // force redraw to show pause state
+      } else if (char === "r") {
+        this.resized = true;
+      } else if (char === "+") {
+        this.height = Math.min(40, this.height + 1);
+        this.resized = true;
+      } else if (char === "-") {
+        this.height = Math.max(14, this.height - 1);
+        this.resized = true;
+      } else if (char === "f") {
+        this.mode = this.mode === "diff" ? "full" : this.mode === "full" ? "append" : "diff";
+        this.resized = true;
+      } else if (char === "h") {
+        this.showHistory = !this.showHistory;
+        this.resized = true;
+      }
+    };
+    process.stdin.on("data", this.keyHandler);
+  }
+
+  teardown(): void {
+    if (process.stdin.isTTY && this.keyHandler) {
+      process.stdin.off("data", this.keyHandler);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+    }
+  }
+
+  render(frame: string): void {
+    const newLines = frame.split("\n");
+
+    if (this.mode === "full") {
+      clearScreen();
+      process.stdout.write(frame + "\n");
+      this.prevLines = [...newLines];
+      return;
+    }
+
+    if (this.mode === "append") {
+      process.stdout.write(frame + "\n");
+      this.prevLines = [...newLines];
+      return;
+    }
+
+    // diff mode
+    const parts: string[] = ["\x1b[H"];
+    const maxLen = Math.max(newLines.length, this.prevLines.length);
+
+    for (let i = 0; i < maxLen; i++) {
+      const newLine = newLines[i] ?? "";
+      const oldLine = this.prevLines[i] ?? "";
+
+      if (i < newLines.length) {
+        if (newLine !== oldLine) {
+          parts.push(newLine + "\x1b[K");
+        }
+      } else {
+        // Extra old line to clear
+        parts.push("\x1b[K");
+      }
+
+      if (i < maxLen - 1) {
+        parts.push("\r\n");
+      }
+    }
+
+    process.stdout.write(parts.join(""));
+    this.prevLines = [...newLines];
+  }
+
+}
+
+// ── Core rendering ──
 
 function getTerminalWidth(requested?: number): number {
   if (requested != null && Number.isFinite(requested) && requested > 0) {
@@ -202,17 +330,42 @@ function getTerminalWidth(requested?: number): number {
   return 36;
 }
 
+const DEFAULT_COCKPIT_HEIGHT = 18;
+const MIN_COCKPIT_HEIGHT = 14;
+
+/** Ensure an array of lines exactly matches a target count (truncate or pad). */
+function fitLines(lines: string[], count: number): string[] {
+  const result = lines.slice(0, count);
+  while (result.length < count) result.push("");
+  return result;
+}
+
 export async function renderCockpit(options: CockpitRenderOptions = {}) {
   const width = getTerminalWidth(options.terminalWidth);
   const targetWidth = Math.max(34, Math.min(60, width));
+  const targetBodyHeight = Math.max(MIN_COCKPIT_HEIGHT, options.height ?? DEFAULT_COCKPIT_HEIGHT) - 2;
   const root = getProjectRoot();
-  const gitChangesResult = await getGitChanges(root);
-  const gitChanges = gitChangesResult ?? [];
+  const now = Date.now();
+  const cache = options.cache;
+  const quick = options.quick ?? false;
+  const showHistory = options.showHistory ?? true;
 
-  const runsDir = getOmkPath("runs");
-  let vm: RunViewModel = buildRunViewModel(null);
-  let stateError: RunViewModel["stateError"] = "missing";
+  // ── Fetch git changes (cached) ──
+  const gitChangesPromise = quick
+    ? Promise.resolve(cache?.gitChanges?.value ?? [])
+    : (async () => {
+        const cached = getCacheEntry(cache?.gitChanges, 5000, now);
+        if (cached !== undefined) return cached;
+        const result = await getGitChanges(root);
+        const value = result ?? [];
+        if (cache) cache.gitChanges = { value, ts: now };
+        return value;
+      })();
+
+  // ── Resolve latest run + state (always fast, uncached) ──
+  const runsDir = getRunsDir();
   let latestRunName: string | null = options.runId ?? null;
+  let stateContent: string | null = null;
   let sessionMeta: SessionMeta | null = null;
 
   if (await pathExists(runsDir)) {
@@ -221,10 +374,10 @@ export async function renderCockpit(options: CockpitRenderOptions = {}) {
       const dirs = entries.filter((e) => e.isDirectory());
       const stats = await Promise.all(
         dirs.map(async (d) => {
-          const statePath = join(runsDir, d.name, "state.json");
+          const statePath = getRunPath(d.name, "state.json");
           const [hasState, s] = await Promise.all([
             pathExists(statePath),
-            fsStat(join(runsDir, d.name)).catch(() => null),
+            fsStat(statePath).catch(() => null),
           ]);
           if (!hasState) return null;
           return s ? { name: d.name, mtime: s.mtimeMs } : null;
@@ -236,169 +389,163 @@ export async function renderCockpit(options: CockpitRenderOptions = {}) {
       latestRunName = best?.name ?? null;
     }
     if (latestRunName) {
-      const [stateContent, sessionMetaResult] = await Promise.all([
-        readFile(join(runsDir, latestRunName, "state.json"), "utf-8").catch(() => null),
+      const [sc, sm] = await Promise.all([
+        readFile(getRunPath(latestRunName, "state.json"), "utf-8").catch(() => null),
         readSessionMeta(latestRunName).catch(() => null),
       ]);
-      if (stateContent) {
-        const result = parseRunStateResult(stateContent);
-        stateError = result.error;
-        vm = buildRunViewModel(result.state, { changedFiles: gitChanges.map((c) => c.path) });
-      }
-      sessionMeta = sessionMetaResult;
+      stateContent = sc;
+      sessionMeta = sm;
     }
   }
 
+  const gitChanges = (await gitChangesPromise) ?? [];
 
+  let vm = buildRunViewModel(null);
+  let stateError: RunViewModel["stateError"] = "missing";
 
-  const lines: string[] = [];
+  if (stateContent) {
+    const result = parseRunStateResult(stateContent);
+    stateError = result.error;
+    vm = buildRunViewModel(result.state, { changedFiles: gitChanges.map((c) => c.path) });
+  }
 
-  // Header
-  lines.push(gradient("OMK Cockpit"));
-  lines.push("");
+  // ── Fetch todos (cached) ──
+  const todosPromise = (async () => {
+    if (!latestRunName) return null;
+    const cached = getCacheEntry(cache?.stateTodos, 750, now);
+    if (cached !== undefined) return cached;
+    const value = await readTodos(latestRunName).catch(() => null) ?? await deriveTodosFromState(latestRunName).catch(() => null);
+    if (cache) cache.stateTodos = { value, ts: now };
+    return value;
+  })();
 
-  // Compact Kimi usage (moved to top)
-  try {
-    const usage = await getKimiUsage();
-    const account = usage.oauth.loggedIn ? usage.oauth.displayId : "/login";
+  // ── Fetch Kimi usage (cached) ──
+  const kimiPromise = quick
+    ? Promise.resolve(cache?.kimiUsage?.value ?? null)
+    : (async () => {
+        const cached = getCacheEntry(cache?.kimiUsage, 60000, now);
+        if (cached !== undefined) return cached;
+        try {
+          const value = await getKimiUsage();
+          if (cache) cache.kimiUsage = { value, ts: now };
+          return value;
+        } catch {
+          return null;
+        }
+      })();
+
+  const [todos, kimiUsage] = await Promise.all([todosPromise, kimiPromise]);
+
+  // ── System usage (cached) ──
+  let sysUsage: ReturnType<typeof getSystemUsage> | null = null;
+  if (!quick) {
+    const cached = getCacheEntry(cache?.systemUsage, 3000, now);
+    if (cached !== undefined) {
+      sysUsage = cached;
+    } else {
+      try {
+        sysUsage = getSystemUsage();
+        if (cache) cache.systemUsage = { value: sysUsage, ts: now };
+      } catch { /* ignore */ }
+    }
+  } else {
+    sysUsage = cache?.systemUsage?.value ?? null;
+  }
+
+  // ── Build sections as separate arrays ──
+
+  // Header (fixed 2 rows)
+  const headerLines: string[] = [gradient("OMK Cockpit"), ""];
+
+  // Info section — compact priority-ordered lines
+  const infoLines: string[] = [];
+
+  const displayRunId = latestRunName ?? "--";
+  const healthStr = vm.health.toUpperCase();
+  const progressStr = `${vm.progress.settled}/${vm.progress.total}`;
+  infoLines.push(
+    `${style.gray("run")} ${style.creamBold(truncateText(displayRunId, targetWidth - 6))}`
+  );
+
+  if (kimiUsage) {
+    const account = kimiUsage.oauth.loggedIn ? kimiUsage.oauth.displayId : "/login";
     const fiveHourPercent =
-      usage.quota.fiveHour?.remainingPercent != null
-        ? Math.min(100, Math.max(0, 100 - usage.quota.fiveHour.remainingPercent))
+      kimiUsage.quota.fiveHour?.remainingPercent != null
+        ? Math.min(100, Math.max(0, 100 - kimiUsage.quota.fiveHour.remainingPercent))
         : null;
     const weeklyPercent =
-      usage.quota.weekly?.remainingPercent != null
-        ? Math.min(100, Math.max(0, 100 - usage.quota.weekly.remainingPercent))
+      kimiUsage.quota.weekly?.remainingPercent != null
+        ? Math.min(100, Math.max(0, 100 - kimiUsage.quota.weekly.remainingPercent))
         : null;
     const fiveHour =
       fiveHourPercent != null
         ? `${fiveHourPercent}%`
-        : `${Math.round(usage.totalSecondsLast5Hours / 60)}m`;
+        : `${Math.round(kimiUsage.totalSecondsLast5Hours / 60)}m`;
     const weekly =
       weeklyPercent != null
         ? `${weeklyPercent}%`
-        : `${Math.round(usage.totalSecondsWeek / 60)}m`;
-    lines.push(`${style.gray("kimi")} ${account} 5h:${fiveHour} wk:${weekly}`);
-    lines.push("");
-  } catch (err) {
-    if (process.env.OMK_DEBUG === "1") {
-      console.error(`[OMK_DEBUG] usage error:`, err);
-    }
-    lines.push(`${style.gray("kimi")} ${style.gray("unavailable")} 5h:${style.gray("?")} wk:${style.gray("?")}`);
-    lines.push("");
+        : `${Math.round(kimiUsage.totalSecondsWeek / 60)}m`;
+    const sysPart = sysUsage
+      ? `${style.gray("sys")} ${style.gray("cpu")}${style.mintBold(`${sysUsage.cpuPercent}%`)} ${style.gray("mem")}${style.mintBold(`${sysUsage.memPercent}%`)}`
+      : "";
+    infoLines.push(
+      `${style.gray("kimi")} ${truncateText(account, 16)} 5h:${fiveHour} wk:${weekly}  ${sysPart}`.trimEnd()
+    );
+  } else {
+    const sysPart = sysUsage
+      ? `${style.gray("sys")} ${style.gray("cpu")}${style.mintBold(`${sysUsage.cpuPercent}%`)} ${style.gray("mem")}${style.mintBold(`${sysUsage.memPercent}%`)}`
+      : `${style.gray("sys")} ${style.gray("--")}`;
+    infoLines.push(`${style.gray("kimi")} ${style.gray("unavailable")}  ${sysPart}`.trimEnd());
   }
 
-  // Run ID
-  const displayRunId = latestRunName ?? "--";
-  lines.push(`${style.gray("run")} ${style.creamBold(truncateText(displayRunId, targetWidth - 6))}`);
-
-  // Session type badge
+  const goalLineParts: string[] = [];
   if (sessionMeta?.type === "chat") {
-    lines.push(`${style.gray("type")} ${style.purpleBold("💬 Chat")}`);
+    goalLineParts.push(`${style.gray("type")} ${style.purpleBold("💬 Chat")}`);
   }
-
-  // Run duration
+  if (vm.goalTitle) {
+    const scoreBadge = vm.goalScore != null ? style.creamBold(` ${vm.goalScore}%`) : "";
+    goalLineParts.push(`${style.gray("goal")} ${truncateText(vm.goalTitle, targetWidth - 10 - sanitizeTerminalText(scoreBadge).length)}${scoreBadge}`);
+  }
   if (vm.startedAt) {
     const startedMs = Date.parse(vm.startedAt);
     if (!Number.isNaN(startedMs)) {
       const duration = formatElapsed(Date.now() - startedMs);
-      lines.push(`${style.gray("duration")} ${style.gray(duration)}`);
+      goalLineParts.push(`${style.gray("dur")} ${style.gray(duration)}`);
     }
   }
-
-  // Goal title + score
-  if (vm.goalTitle) {
-    const scoreBadge = vm.goalScore != null ? style.creamBold(` ${vm.goalScore}%`) : "";
-    lines.push(`${style.gray("goal")} ${truncateText(vm.goalTitle, targetWidth - 8 - sanitizeTerminalText(scoreBadge).length)}${scoreBadge}`);
+  if (goalLineParts.length > 0) {
+    infoLines.push(goalLineParts.join("  "));
   }
 
-  // Health
-  const healthStr = vm.health.toUpperCase();
-  lines.push(`${style.gray("health")} ${healthColor(vm.health)(healthStr)}`);
+  const statusParts: string[] = [];
+  statusParts.push(`${style.gray("health")} ${healthColor(vm.health)(healthStr)}`);
+  statusParts.push(`${style.gray("progress")} ${style.mintBold(progressStr)} ${style.gray(`settled, ${vm.progress.running} active`)}`);
+  if (vm.activeNode) {
+    const activeName = truncateText(vm.activeNode.name, targetWidth - 20);
+    statusParts.push(`${style.gray("active")} ${style.purpleBold("▶")} ${activeName}`);
+  }
+  if (statusParts.length > 0) {
+    infoLines.push(statusParts.join("  "));
+  }
 
-  // Next action
+  const extraParts: string[] = [];
   if (vm.nextAction && vm.nextAction !== "Run complete" && vm.nextAction !== "Ready") {
-    lines.push(`${style.gray("next")} ${style.cream(truncateText(vm.nextAction, targetWidth - 8))}`);
+    extraParts.push(`${style.gray("next")} ${style.cream(truncateText(vm.nextAction, targetWidth - 8))}`);
   }
-
-  // Progress
-  lines.push(
-    `${style.gray("progress")} ${style.mintBold(`${vm.progress.settled}/${vm.progress.total}`)} ${style.gray(`settled, ${vm.progress.running} active`)}`
-  );
-
-  // System usage
-  try {
-    const sys = getSystemUsage();
-    lines.push(
-      `${style.gray("sys")} ${style.gray("cpu")}${style.mintBold(`${sys.cpuPercent}%`)} ${style.gray("mem")}${style.mintBold(`${sys.memPercent}%`)}`
-    );
-  } catch { /* ignore */ }
-
-  // ETA
   if (vm.eta) {
     const confBadge = vm.etaConfidence ? style.gray(` (${vm.etaConfidence})`) : "";
-    lines.push(`${style.gray("ETA")} ${style.cream(vm.eta)}${confBadge}`);
+    extraParts.push(`${style.gray("ETA")} ${style.cream(vm.eta)}${confBadge}`);
   }
-
-  // Active node
-  if (vm.activeNode) {
-    const activeName = truncateText(vm.activeNode.name, targetWidth - 12);
-    lines.push(`${style.gray("active")} ${style.purpleBold("▶")} ${activeName}`);
-    if (vm.activeNode.thinking) {
-      const thinking = truncateText(sanitizeTerminalText(vm.activeNode.thinking), targetWidth - 10);
-      lines.push(`  ${style.gray("→")} ${thinking}`);
-    }
-  }
-
-  // Iteration count (for iterative goals)
-  if (vm.iterationCount != null && vm.maxIterations != null && vm.maxIterations > 0) {
-    const iterText = `${vm.iterationCount}/${vm.maxIterations}`;
-    lines.push(`${style.gray("iteration")} ${style.creamBold(iterText)}`);
-  }
-
-  // Last activity age
-  if (vm.lastActivityAt) {
-    const lastMs = Date.parse(vm.lastActivityAt);
-    if (!Number.isNaN(lastMs)) {
-      const age = formatElapsed(Date.now() - lastMs);
-      lines.push(`${style.gray("updated")} ${style.gray(`${age} ago`)}`);
-    }
-  }
-
-  // Blocker
   if (vm.blocker) {
-    const blockerText = truncateText(
-      `${vm.blocker.reason} (${vm.blocker.nodeId})`,
-      targetWidth - 12
-    );
-    const retryInfo = !vm.blocker.recoverable
-      ? style.red(" [max retries]")
-      : vm.blocker.retryCount > 0
-        ? style.orange(` [retry ${vm.blocker.retryCount}/${vm.blocker.maxRetries}]`)
-        : "";
-    lines.push(`${style.gray("blocker")} ${style.red("■")} ${blockerText}${retryInfo}`);
+    const blockerText = truncateText(`${vm.blocker.reason} (${vm.blocker.nodeId})`, targetWidth - 12);
+    extraParts.push(`${style.gray("blocker")} ${style.red("■")} ${blockerText}`);
+  }
+  if (extraParts.length > 0) {
+    infoLines.push(extraParts.join("  "));
   }
 
-  // Additional blockers (up to 3)
-  if (vm.blockers && vm.blockers.length > 1) {
-    const extras = vm.blockers.slice(1, 4);
-    for (const b of extras) {
-      const icon = b.status === "blocked" ? style.orange("■") : style.red("⚠");
-      const text = truncateText(`${b.reason} (${b.nodeId})`, targetWidth - 14);
-      const hint =
-        b.status === "failed"
-          ? `run: omk verify --run ${vm.runId ?? "<runId>"}`
-          : "check dependency outputs";
-      lines.push(`${style.gray("blocker")} ${icon} ${text}`);
-      lines.push(`  ${style.gray("hint:")} ${style.cream(hint)}`);
-    }
-  }
-
-  lines.push(separator(targetWidth));
-
-  // ── Parallel Agents / Workers ──
-  const todos = latestRunName
-    ? ((await readTodos(latestRunName)) ?? (await deriveTodosFromState(latestRunName)))
-    : null;
+  // ── Worker / TODO section ──
+  const workerLines: string[] = [];
   const sortedNodes = [...(vm.workers ?? [])].sort((a, b) => {
     const rank = statusRank(a.state) - statusRank(b.state);
     return rank !== 0 ? rank : a.id.localeCompare(b.id);
@@ -412,158 +559,68 @@ export async function renderCockpit(options: CockpitRenderOptions = {}) {
     const totalCount = sessionMeta?.todoCount ?? sortedTodos.length;
     const pct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
     const chatPrefix = sessionMeta?.type === "chat" ? "💬 " : "";
-    lines.push(
+    workerLines.push(
       `${style.pinkBold(`${chatPrefix}TODO`)} ${miniProgressBar(doneCount, totalCount)} ${style.creamBold(`${pct}%`)} ` +
         `${style.gray(`(${doneCount}/${totalCount})`)}`
     );
 
-    for (const todo of sortedTodos.slice(0, 10)) {
+    for (const todo of sortedTodos) {
       const marker = todoMarker(todo.status);
       const elapsed = todo.elapsedMs ? style.gray(formatElapsed(todo.elapsedMs)) : "";
       const agentBadge = todo.agent ? style.gray(`[${truncateText(todo.agent, 8)}]`) : "";
       const base = `${marker} ${agentBadge} ${truncateText(todo.title, targetWidth - 14)} ${elapsed}`.replace(/\s+/g, " ").trim();
-      lines.push(`  ${base}`);
-
-      if (todo.role || todo.description) {
-        const meta = [todo.role ? `role:${todo.role}` : "", todo.description || ""].filter(Boolean).join(" | ");
-        if (meta) lines.push(`    ${style.gray(truncateText(meta, targetWidth - 8))}`);
-      }
-      if ((todo.status === "failed" || todo.status === "blocked") && todo.evidence) {
-        lines.push(`    ${style.red("→")} ${truncateText(todo.evidence, targetWidth - 8)}`);
-      }
+      workerLines.push(`  ${base}`);
     }
 
-    if (sortedTodos.length > 10) {
-      lines.push(`  ${style.gray(`… ${sortedTodos.length - 10} more`)}`);
+    if (sortedTodos.length > 0) {
+      workerLines.push(`  ${style.gray(`\u2026 ${sortedTodos.length} total`)}`);
     }
   } else if (sortedNodes.length > 0) {
-    // Summary bar
     const { done, total, running, failed, blocked, skipped, settled } = vm.progress;
     const pct = total > 0 ? Math.round((settled / total) * 100) : 0;
-    lines.push(
+    workerLines.push(
       `${style.pinkBold("AGENTS")} ${miniProgressBar(settled, total)} ${style.creamBold(`${pct}%`)} ` +
         `${style.gray(`(${running}▶ ${done}✓ ${failed}✕ ${blocked}■ ${skipped}⊘ / ${total})`)}`
     );
 
-    for (const node of sortedNodes.slice(0, 10)) {
+    for (const node of sortedNodes) {
       const stateLabel = workerStateColor(node.state)(node.state.toUpperCase());
       const elapsed = formatElapsed(node.elapsedMs);
       const base = `${stateLabel} ${style.gray(elapsed)} ${truncateText(node.label || node.id, targetWidth - 16)}`;
 
       if (node.state === "running") {
-        lines.push(`  ${base}`);
+        workerLines.push(`  ${base}`);
         if (node.phase) {
-          lines.push(`    ${style.gray("→")} ${truncateText(node.phase, targetWidth - 8)}`);
+          workerLines.push(`    ${style.gray("→")} ${truncateText(node.phase, targetWidth - 8)}`);
         } else if (node.currentNode) {
-          lines.push(`    ${style.gray("→")} ${truncateText(node.currentNode, targetWidth - 8)}`);
+          workerLines.push(`    ${style.gray("→")} ${truncateText(node.currentNode, targetWidth - 8)}`);
         }
         if (node.lastActivityAgeMs != null && node.lastActivityAgeMs > 30_000) {
           const staleText = `stale ${formatElapsed(node.lastActivityAgeMs)}`;
-          lines.push(`    ${style.orange("⚠")} ${style.orange(staleText)}`);
+          workerLines.push(`    ${style.orange("⚠")} ${style.orange(staleText)}`);
         }
       } else if ((node.state === "failed" || node.state === "blocked") && node.lastEvidence) {
         const evidence = truncateText(node.lastEvidence.message || node.lastEvidence.gate, targetWidth - 10);
         const retryBadge = node.retryCount > 0 ? style.orange(` [retry ${node.retryCount}]`) : "";
-        lines.push(`  ${base}${retryBadge}`);
-        lines.push(`    ${style.red("→")} ${evidence}`);
+        workerLines.push(`  ${base}${retryBadge}`);
+        workerLines.push(`    ${style.red("→")} ${evidence}`);
       } else {
-        lines.push(`  ${base}`);
+        workerLines.push(`  ${base}`);
       }
     }
 
-    if (sortedNodes.length > 10) {
-      lines.push(`  ${style.gray(`… ${sortedNodes.length - 10} more agents`)}`);
+    if (sortedNodes.length > 0) {
+      workerLines.push(`  ${style.gray(`\u2026 ${sortedNodes.length} total`)}`);
     }
   } else {
-    lines.push(style.gray("No parallel agents active — waiting for work"));
+    workerLines.push(style.gray("No parallel agents active — waiting for work"));
   }
 
-  lines.push(separator(targetWidth));
+  // ── Changed / History / State section ──
+  const changedLines: string[] = [];
 
-  // Changed files — up to 8
-  if (gitChanges.length > 0) {
-    lines.push(style.pinkBold(`Changed (${gitChanges.length})`));
-    for (const change of gitChanges.slice(0, 8)) {
-      lines.push(`  ${gitMarker(change.status)} ${truncateText(change.path, targetWidth - 6)}`);
-    }
-    if (gitChanges.length > 8) {
-      lines.push(`  ${style.gray(`… ${gitChanges.length - 8} more`)}`);
-    }
-  } else {
-    lines.push(style.mint("✓ clean worktree"));
-  }
-
-  lines.push(separator(targetWidth));
-
-  // Recent Runs (excluding current)
-  try {
-    if (await pathExists(runsDir)) {
-      const candidates = await listRunCandidates(runsDir);
-      const sorted = candidates
-        .filter((c) => c.name !== latestRunName)
-        .sort((a, b) => b.stateUpdatedAtMs - a.stateUpdatedAtMs)
-        .slice(0, 5);
-      if (sorted.length > 0) {
-        lines.push(style.pinkBold("History"));
-        const historyLines = await Promise.all(
-          sorted.map(async (c) => {
-            let st = style.gray("?");
-            try {
-              const raw = await readFile(join(runsDir, c.name, "state.json"), "utf-8");
-              const parsed = parseRunStateResult(raw);
-              if (parsed.state) {
-                const stateVm = buildRunViewModel(parsed.state);
-                if (stateVm.health === "ok" && stateVm.progress.settled === stateVm.progress.total && stateVm.progress.total > 0) {
-                  st = style.mint("✓");
-                } else if (stateVm.health === "failed") {
-                  st = style.red("✕");
-                } else if (stateVm.health === "blocked") {
-                  st = style.orange("■");
-                } else if (stateVm.progress.running > 0) {
-                  st = style.purple("▶");
-                } else {
-                  st = style.gray("?");
-                }
-              }
-            } catch { /* ignore */ }
-            let goalTitle = "";
-            try {
-              const goalRaw = await readFile(join(runsDir, c.name, "goal.md"), "utf-8");
-              const firstLine = goalRaw.split(/\r?\n/)[0]?.trim() ?? "";
-              goalTitle = firstLine.replace(/^#+\s*/, "").slice(0, 24);
-            } catch { /* ignore */ }
-            const date = new Date(c.stateUpdatedAtMs);
-            const dateStr = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-            const name = truncateText(c.name, targetWidth - 20);
-            const titlePart = goalTitle ? style.gray(`  → ${goalTitle}`) : "";
-            return `  ${st} ${name} ${style.gray(dateStr)}${titlePart}`;
-          })
-        );
-        lines.push(...historyLines);
-        lines.push(separator(targetWidth));
-      }
-    }
-  } catch { /* ignore */ }
-
-  // Verbose: routing inventory (skills + MCP)
-  if (process.env.OMK_COCKPIT_VERBOSE === "1") {
-    try {
-      const inventory = discoverRoutingInventory(root);
-      const skills = [...inventory.skills.keys()].slice(0, 8);
-      const mcps = [...inventory.mcpServers.keys()].slice(0, 6);
-      if (skills.length > 0) {
-        lines.push(`${style.gray("skills")} ${style.cream(skills.join(", "))}`);
-      }
-      if (mcps.length > 0) {
-        lines.push(`${style.gray("mcp")} ${style.cream(mcps.join(", "))}`);
-      }
-    } catch { /* ignore */ }
-  }
-
-  // State error recovery hint
   if (stateError !== "ok") {
-    lines.push("");
-    lines.push(`${style.orangeBold("⚠ state")} ${style.orange(stateError)}`);
+    changedLines.push(`${style.orangeBold("⚠ state")} ${style.orange(stateError)}`);
     const isChatRun = (latestRunName ?? "").startsWith("chat-");
     const recovery =
       stateError === "missing"
@@ -573,77 +630,193 @@ export async function renderCockpit(options: CockpitRenderOptions = {}) {
         : stateError === "corrupt"
           ? `omk run --run-id ${latestRunName ?? "<run-id>"}`
           : `omk verify --run ${latestRunName ?? "<run-id>"}`;
-    lines.push(`${style.gray("hint:")} ${style.cream(recovery)}`);
+    changedLines.push(`${style.gray("hint:")} ${style.cream(recovery)}`);
   }
 
-  const content = lines.map((l) => truncateLine(l, targetWidth));
+  if (gitChanges.length > 0) {
+    changedLines.push(style.pinkBold(`Changed (${gitChanges.length})`));
+    for (const change of gitChanges) {
+      changedLines.push(`  ${gitMarker(change.status)} ${truncateText(change.path, targetWidth - 6)}`);
+    }
+    if (gitChanges.length > 0) {
+      changedLines.push(`  ${style.gray(`\u2026 ${gitChanges.length} total`)}`);
+    }
+  } else if (stateError === "ok") {
+    changedLines.push(style.mint("✓ clean worktree"));
+  }
+
+  if (!quick && showHistory && stateError === "ok") {
+    const cached = getCacheEntry(cache?.history, 10000, now);
+    let historyLines: string[] = [];
+    if (cached !== undefined) {
+      historyLines = cached;
+    } else {
+      try {
+        if (await pathExists(runsDir)) {
+          const candidates = await listRunCandidates(runsDir);
+          const sorted = candidates
+            .filter((c) => c.name !== latestRunName)
+            .sort((a, b) => b.stateUpdatedAtMs - a.stateUpdatedAtMs)
+            .slice(0, 5);
+          if (sorted.length > 0) {
+            historyLines = await Promise.all(
+              sorted.map(async (c) => {
+                let st = style.gray("?");
+                try {
+                  const raw = await readFile(getRunPath(c.name, "state.json"), "utf-8");
+                  const parsed = parseRunStateResult(raw);
+                  if (parsed.state) {
+                    const stateVm = buildRunViewModel(parsed.state);
+                    if (stateVm.health === "ok" && stateVm.progress.settled === stateVm.progress.total && stateVm.progress.total > 0) {
+                      st = style.mint("✓");
+                    } else if (stateVm.health === "failed") {
+                      st = style.red("✕");
+                    } else if (stateVm.health === "blocked") {
+                      st = style.orange("■");
+                    } else if (stateVm.progress.running > 0) {
+                      st = style.purple("▶");
+                    } else {
+                      st = style.gray("?");
+                    }
+                  }
+                } catch { /* ignore */ }
+                let goalTitle = "";
+                try {
+                  const goalRaw = await readFile(getRunPath(c.name, "goal.md"), "utf-8");
+                  const firstLine = goalRaw.split(/\r?\n/)[0]?.trim() ?? "";
+                  goalTitle = firstLine.replace(/^#+\s*/, "").slice(0, 24);
+                } catch { /* ignore */ }
+                const date = new Date(c.stateUpdatedAtMs);
+                const dateStr = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+                const name = truncateText(c.name, targetWidth - 20);
+                const titlePart = goalTitle ? style.gray(`  → ${goalTitle}`) : "";
+                return `  ${st} ${name} ${style.gray(dateStr)}${titlePart}`;
+              })
+            );
+          }
+        }
+      } catch { /* ignore */ }
+      if (cache) cache.history = { value: historyLines, ts: now };
+    }
+
+    if (historyLines.length > 0) {
+      changedLines.push(style.pinkBold("History"));
+      changedLines.push(...historyLines);
+    }
+  }
+
+  // ── Assemble fixed-height rectangle ──
+  const sep = separator(targetWidth);
+
+  const headerRows = 2;
+  const footerRows = 1;
+  const sepRows = 2;
+  const available = targetBodyHeight - headerRows - footerRows - sepRows;
+
+  const infoBudget = Math.max(2, Math.round(available * 0.35));
+  const todoBudget = Math.max(2, Math.round(available * 0.40));
+  const changedBudget = Math.max(2, available - infoBudget - todoBudget);
+
+  const footerLine = `[${style.gray("h")}]istory [${style.gray("+")}]height [${style.gray("-")}]height [${style.gray("space")}]pause [${style.gray("q")}]uit`;
+
+  const body: string[] = [
+    ...headerLines,
+    ...fitLines(infoLines, infoBudget),
+    sep,
+    ...fitLines(workerLines, todoBudget),
+    sep,
+    ...fitLines(changedLines, changedBudget),
+    footerLine,
+  ];
+
+  while (body.length < targetBodyHeight) body.push("");
+  if (body.length > targetBodyHeight) body.length = targetBodyHeight;
+
+  const content = body.map((l) => truncateLine(l, targetWidth));
   return panel(content);
 }
+// ── Watch command ──
 
 export async function cockpitCommand(options: CockpitCommandOptions = {}): Promise<void> {
   const refreshMs = normalizeRefreshMs(options.refreshMs);
 
   if (!options.watch) {
-    console.log(await renderCockpit({ runId: options.runId }));
+    console.log(await renderCockpit({ runId: options.runId, height: options.height }));
     return;
   }
 
-  let stopped = false;
-  let resized = false;
+  const renderer = new CockpitRenderer(refreshMs, options.height);
+  const cache: CockpitCache = {};
+
   const stop = (): void => {
-    stopped = true;
+    renderer.stopped = true;
   };
   const onResize = (): void => {
-    resized = true;
+    renderer.resized = true;
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   process.on("SIGWINCH", onResize);
 
-  let keyHandler: ((chunk: Buffer) => void) | undefined;
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    keyHandler = (key: Buffer) => {
-      const char = key.toString();
-      if (char === "\u0003" || char === "q") {
-        stopped = true;
-      } else if (char === "r") {
-        resized = true; // trigger immediate refresh
-      }
-    };
-    process.stdin.on("data", keyHandler);
-  }
+  renderer.setupKeyboard();
 
   try {
-    while (!stopped) {
-      const frame = await renderCockpit({ runId: options.runId, terminalWidth: process.stdout.columns });
-      clearScreen();
-      process.stdout.write(frame + "\n");
-      if (stopped) break;
+    // First paint: render immediately from local state without waiting for slow ops
+    let firstPaint = true;
 
-      // Wait for refresh interval or resize event
+    while (!renderer.stopped) {
+      const frame = await renderCockpit({
+        runId: options.runId,
+        terminalWidth: process.stdout.columns,
+        cache,
+        quick: firstPaint,
+        showHistory: renderer.showHistory,
+        height: renderer.height,
+      });
+
+      if (firstPaint) {
+        // Full clear on first paint so subsequent diff frames have a known baseline
+        renderer.mode = "full";
+        renderer.render(frame);
+        renderer.mode = "diff";
+        firstPaint = false;
+      } else {
+        renderer.render(frame);
+      }
+
+      if (renderer.stopped) break;
+
+      // Wait for refresh interval or resize/refresh event
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, refreshMs);
+        const timer = setTimeout(resolve, renderer.refreshMs);
         const interval = setInterval(() => {
-          if (stopped || resized) {
+          if (renderer.stopped || renderer.resized) {
             clearTimeout(timer);
             clearInterval(interval);
-            resized = false;
+            renderer.resized = false;
             resolve();
           }
         }, 100);
       });
+
+      // When paused, skip timer-based re-renders but keep listening for keys
+      while (renderer.paused && !renderer.stopped && !renderer.resized) {
+        await new Promise<void>((resolve) => {
+          const interval = setInterval(() => {
+            if (renderer.stopped || renderer.resized) {
+              clearInterval(interval);
+              renderer.resized = false;
+              resolve();
+            }
+          }, 100);
+        });
+      }
     }
   } finally {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
     process.off("SIGWINCH", onResize);
-    if (process.stdin.isTTY && keyHandler) {
-      process.stdin.off("data", keyHandler);
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-    }
+    renderer.teardown();
   }
 
   process.stdout.write("\n");

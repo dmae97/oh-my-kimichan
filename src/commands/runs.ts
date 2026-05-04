@@ -144,6 +144,10 @@ export async function runsCommand(options: RunsCommandOptions = {}): Promise<voi
   const runsDir = getOmkPath("runs");
 
   if (!(await pathExists(runsDir))) {
+    if (options.json) {
+      console.log(JSON.stringify([]));
+      return;
+    }
     console.log(status.warn(t("runs.noRunsDir")));
     return;
   }
@@ -151,6 +155,10 @@ export async function runsCommand(options: RunsCommandOptions = {}): Promise<voi
   const doRender = async (): Promise<void> => {
     const candidates = await listRunCandidates(runsDir);
     if (candidates.length === 0) {
+      if (options.json) {
+        console.log(JSON.stringify([]));
+        return;
+      }
       console.log(t("runs.noRuns"));
       return;
     }

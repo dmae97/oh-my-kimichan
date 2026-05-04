@@ -3,7 +3,7 @@
 ## Install
 
 ```bash
-npm install -g oh-my-kimi
+npm install -g @oh-my-kimi/cli
 ```
 
 ## Initialize a project

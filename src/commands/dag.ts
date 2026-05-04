@@ -1,7 +1,7 @@
 import { readFile, readdir, stat } from "fs/promises";
 import { join } from "path";
 import { style, header, status, label } from "../util/theme.js";
-import { getProjectRoot, pathExists, readTextFile, getOmkPath } from "../util/fs.js";
+import { getProjectRoot, pathExists, readTextFile, getOmkPath, getRunPath, getRunsDir } from "../util/fs.js";
 import { createDag } from "../orchestration/dag.js";
 import { createStatePersister } from "../orchestration/state-persister.js";
 import { checkEvidenceGates } from "../orchestration/evidence-gate.js";
@@ -46,7 +46,7 @@ export async function dagValidateCommand(filePath?: string): Promise<void> {
 
 export async function dagShowCommand(runId: string): Promise<void> {
   const root = getProjectRoot();
-  const persister = createStatePersister(join(root, ".omk", "runs"));
+  const persister = createStatePersister(getRunsDir(root));
   const state = await persister.load(runId);
 
   if (!state) {
@@ -119,15 +119,15 @@ export async function dagReplayCommand(
   options?: { node?: string; fromFailure?: boolean; dryRun?: boolean }
 ): Promise<void> {
   const root = getProjectRoot();
-  const resolvedRunId = runId === "latest" ? await resolveLatestRunId(join(root, ".omk", "runs")) : runId;
+  const resolvedRunId = runId === "latest" ? await resolveLatestRunId(getRunsDir(root)) : runId;
 
   if (!resolvedRunId) {
     console.error(status.error(t("run.replayNotFound", runId)));
     process.exit(1);
   }
 
-  const runDir = join(root, ".omk", "runs", resolvedRunId);
-  const persister = createStatePersister(join(root, ".omk", "runs"));
+  const runDir = getRunPath(resolvedRunId, undefined, root);
+  const persister = createStatePersister(getRunsDir(root));
   const state = await persister.load(resolvedRunId);
 
   if (!state) {
@@ -320,7 +320,7 @@ export async function dagReplayCommand(
   // ── Set up DAG and executor ──
   const dag = createExecutableDagFromState(routedState);
   const executor = createExecutor({
-    persister: createStatePersister(join(root, ".omk", "runs")),
+    persister: createStatePersister(getRunsDir(root)),
     resumeFromState: routedState,
   });
 

@@ -7,6 +7,84 @@ import type { RunState } from "../contracts/orchestration.js";
 
 const execFileAsync = promisify(execFile);
 
+const ALLOWED_PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+const SCRIPT_NAME_PATTERN = /^[A-Za-z0-9:_-]+$/;
+const BLOCKED_EXECUTABLES = new Set([
+  "node", "node.exe", "powershell", "powershell.exe", "cmd", "cmd.exe",
+  "sh", "bash", "zsh", "curl", "wget", "python", "python3", "ruby", "perl",
+]);
+
+interface ValidatedCommand {
+  ok: true;
+  command: string;
+  args: string[];
+}
+
+interface BlockedCommand {
+  ok: false;
+  reason: string;
+}
+
+function validateArtifactCommand(path: string): ValidatedCommand | BlockedCommand {
+  const parts = path.trim().split(/\s+/);
+  if (parts.length === 0) {
+    return { ok: false, reason: "empty command" };
+  }
+
+  const executable = parts[0]!;
+  const baseExec = executable.replace(/\\/g, "/").split("/").pop() ?? executable;
+
+  // Block absolute paths and traversal
+  if (executable.startsWith("/") || executable.startsWith("\\") || /^[A-Za-z]:/.test(executable)) {
+    return { ok: false, reason: "absolute paths are not allowed" };
+  }
+  if (executable.includes("..") || executable.includes("./") || executable.includes(".\\")) {
+    return { ok: false, reason: "path traversal is not allowed" };
+  }
+
+  // Block dangerous executables
+  if (BLOCKED_EXECUTABLES.has(baseExec.toLowerCase())) {
+    return { ok: false, reason: `"${baseExec}" is not an allowed executable` };
+  }
+
+  // Only allow package-manager run commands
+  if (!ALLOWED_PACKAGE_MANAGERS.has(baseExec.toLowerCase())) {
+    return { ok: false, reason: `"${baseExec}" is not an allowed package manager` };
+  }
+
+  // Validate args pattern: must be "run <script>" or "<script>" (yarn only)
+  const args = parts.slice(1);
+  if (baseExec.toLowerCase() === "yarn") {
+    // yarn <script> or yarn run <script>
+    if (args.length === 1) {
+      const script = args[0]!;
+      if (!SCRIPT_NAME_PATTERN.test(script)) {
+        return { ok: false, reason: `invalid script name: ${script}` };
+      }
+      return { ok: true, command: executable, args };
+    }
+    if (args.length === 2 && args[0] === "run") {
+      const script = args[1]!;
+      if (!SCRIPT_NAME_PATTERN.test(script)) {
+        return { ok: false, reason: `invalid script name: ${script}` };
+      }
+      return { ok: true, command: executable, args };
+    }
+    return { ok: false, reason: "yarn command must be 'yarn <script>' or 'yarn run <script>'" };
+  }
+
+  // npm/pnpm/bun run <script>
+  if (args.length === 2 && args[0] === "run") {
+    const script = args[1]!;
+    if (!SCRIPT_NAME_PATTERN.test(script)) {
+      return { ok: false, reason: `invalid script name: ${script}` };
+    }
+    return { ok: true, command: executable, args };
+  }
+
+  return { ok: false, reason: "command must be '<pkg-manager> run <script>' or 'yarn <script>'" };
+}
+
 export interface GoalEvidenceContext {
   root: string;
   runState: RunState;
@@ -49,7 +127,11 @@ async function checkArtifactGate(
     }
     case "command-pass": {
       try {
-        await execFileAsync("sh", ["-c", artifact.path], { cwd: root, timeout: 60_000 });
+        const validated = validateArtifactCommand(artifact.path);
+        if (!validated.ok) {
+          return { passed: false, message: `Command blocked: ${artifact.path} — ${validated.reason}` };
+        }
+        await execFileAsync(validated.command, validated.args, { cwd: root, timeout: 60_000 });
         return { passed: true, message: `Command passed: ${artifact.path}` };
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);

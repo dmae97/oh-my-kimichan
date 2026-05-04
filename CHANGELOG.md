@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.1.0 — Release readiness & cross-platform hardening (2026-05-04)
+
+### Fixed
+
+- **Package audit link resolver** — `resolveLink` now uses pure POSIX path resolution, eliminating Windows absolute drive-path bugs (`M:/...`) that broke markdown link validation on Windows
+- **Secret scan reliability** — `git ls-files` invocations now include `-c safe.directory=<cwd>` to survive container/CI ownership mismatches; filesystem fallback activates when git is unavailable, with zero-scan pass strictly prevented
+- **Version truth alignment** — `package.json`, `package-lock.json`, `README.md`, `CHANGELOG.md`, preset, and test fixtures all aligned to `1.1.0`
+- **README claim accuracy** — test count corrected to **234** across all language sections; command maturity tables aligned with actual CLI (`omk sync` → Alpha, `omk agent`/`omk skill` → Experimental, `omk update`/`omk menu`/`omk runs` added); Mermaid architecture diagrams updated to reflect actual router topology
+- **`cockpit-render` test timeout** — `renderCockpit` test calls now pass `quick: true` to skip slow network/git I/O, eliminating the 60-second timeout that caused test cancellation on slower environments
+
+## v1.0.1 — CLI contract hardening & UI/UX stabilization (2025-05-04)
+
+### Fixed
+
+- **CLI JSON contract** — `goal --json`, `runs --json`, `verify --json` now guarantee single parseable JSON document on stdout with no ANSI/human text leakage
+- **Command result contract** — `process.exit` removed from `goal`, `verify`, `parallel`, `review` commands; typed `CommandResult` with `CliError` hierarchy introduced
+- **Chat/Cockpit first paint** — `state.json` created before tmux launch; cockpit child suppresses star prompt, HUD preview, and history noise
+- **Parallel UI** — lifecycle nodes (bootstrap, coordinator, reviewer) exposed separately; done-without-evidence renders as warning instead of success
+- **Onboarding consistency** — Kimi install guidance unified to canonical `curl -LsSf https://code.kimi.com/install.sh | bash`; `--help` grouped by maturity (Start Here, Stable, Alpha, Experimental)
+- **Build hygiene** — fixed pre-existing type errors in `mcp.ts` and `sync.ts`; all release gates green (lint, typecheck, build, test, secret-scan, package-audit)
+
 ## v1.0.0 — Kimi-native orchestration & chat harness (2025-05-03)
 
 OMK reaches 1.0 as a stable Kimi CLI orchestration and chat harness.

@@ -1,6 +1,9 @@
-import { resolve } from "path";
+import { resolve, join } from "path";
+import { mkdir, writeFile } from "fs/promises";
 import { runShell, type ShellResult } from "./shell.js";
-import { getProjectRoot } from "./fs.js";
+import { getProjectRoot, getRunPath, pathExists } from "./fs.js";
+import { writeSessionMeta } from "./session.js";
+import { writeTodos } from "./todo-sync.js";
 
 export async function detectTmux(): Promise<boolean> {
   const result: ShellResult = await runShell("tmux", ["-V"], { timeout: 3000 });
@@ -15,6 +18,92 @@ export interface LaunchChatCockpitOptions {
   runId?: string;
   brand?: string;
   cwd?: string;
+  agentFile?: string;
+  workers?: string;
+  maxStepsPerTurn?: string;
+  cockpitRefresh?: string;
+  cockpitRedraw?: "diff" | "full" | "append";
+  cockpitHistory?: "off" | "static" | "watch";
+  cockpitSideWidth?: string;
+  cockpitHeight?: string;
+}
+
+export async function ensureChatRunState(root: string, runId: string): Promise<void> {
+  const runDir = getRunPath(runId, undefined, root);
+  await mkdir(runDir, { recursive: true });
+  const statePath = join(runDir, "state.json");
+  if (!(await pathExists(statePath))) {
+    const state = {
+      schemaVersion: 1,
+      runId,
+      status: "running",
+      nodes: [
+        {
+          id: "chat",
+          name: "Chat Session",
+          role: "chat",
+          dependsOn: [],
+          status: "running",
+          retries: 0,
+          maxRetries: 0,
+          startedAt: new Date().toISOString(),
+        },
+      ],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await writeFile(statePath, JSON.stringify(state, null, 2));
+    // Write initial session metadata and empty todos
+    try {
+      const now = new Date().toISOString();
+      await writeSessionMeta(runId, { runId, type: "chat", status: "active", startedAt: now, updatedAt: now, todoCount: 0, todoDoneCount: 0 });
+      await writeTodos(runId, []);
+    } catch {
+      // ignore initialization failures
+    }
+  }
+}
+
+function parseCockpitRefreshMs(value?: string): number {
+  const defaultMs = 2000;
+  if (value === undefined) return defaultMs;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return defaultMs;
+  return Math.min(60_000, Math.max(750, parsed));
+}
+
+function parseCockpitSideWidth(value?: string): number {
+  const defaultPct = 40;
+  if (value === undefined) return defaultPct;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return defaultPct;
+  return Math.min(80, Math.max(20, parsed));
+}
+
+function parseCockpitHeight(value?: string): number {
+  const defaultHeight = 18;
+  if (value === undefined) return defaultHeight;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return defaultHeight;
+  return Math.min(40, Math.max(14, parsed));
+}
+
+export function buildRightPaneCommand(options: {
+  nodeCmd: string;
+  cliCmd: string;
+  runId: string;
+  refreshMs: number;
+  redraw?: "diff" | "full" | "append";
+  height?: number;
+}): string {
+  let cmd = `${options.nodeCmd} ${options.cliCmd} cockpit --run-id ${shellQuote(options.runId)} --watch --refresh ${options.refreshMs}`;
+  if (options.redraw && options.redraw !== "diff") {
+    cmd += ` --redraw ${shellQuote(options.redraw)}`;
+  }
+  if (options.height) {
+    cmd += ` --height ${options.height}`;
+  }
+  return cmd;
 }
 
 export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}): Promise<void> {
@@ -23,10 +112,13 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
   }
 
   const runId = options.runId ?? `chat-${Date.now()}`;
+  const cwd = options.cwd ?? getProjectRoot();
+
+  // Ensure run state exists before launching tmux so the right pane can read it
+  await ensureChatRunState(cwd, runId);
   const sanitized = runId.replace(/[^a-zA-Z0-9]/g, "-");
   const session = `omk-chat-${sanitized}`;
-  const cwd = options.cwd ?? getProjectRoot();
-  const brand = options.brand ?? "kimichan";
+  const brand = options.brand ?? "kimicat";
   const omkCli = process.argv[1] ? resolve(process.argv[1]) : "omk";
   const nodeCmd = process.execPath ? shellQuote(process.execPath) : "node";
   const cliCmd = shellQuote(omkCli);
@@ -48,8 +140,14 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
   }
 
   // 2. Build commands
-  const leftCmd = buildLeftPaneCommand({ nodeCmd, cliCmd, runId, brand });
-  const rightTopCmd = `${nodeCmd} ${cliCmd} cockpit --run-id ${shellQuote(runId)} --watch --refresh 1500`;
+  const refreshMs = parseCockpitRefreshMs(options.cockpitRefresh);
+  const sideWidth = parseCockpitSideWidth(options.cockpitSideWidth);
+  const redraw = options.cockpitRedraw ?? "diff";
+  const history = options.cockpitHistory ?? "static";
+
+  const leftCmd = buildLeftPaneCommand({ nodeCmd, cliCmd, runId, brand, agentFile: options.agentFile, workers: options.workers, maxStepsPerTurn: options.maxStepsPerTurn });
+  const cockpitHeight = parseCockpitHeight(options.cockpitHeight);
+  const rightTopCmd = buildRightPaneCommand({ nodeCmd, cliCmd, runId, refreshMs, redraw, height: cockpitHeight });
   const rightBottomCmd = `${nodeCmd} ${cliCmd} runs --watch --limit 15 --refresh 5000`;
 
   // 3. Create detached tmux session with left-pane command already running
@@ -59,7 +157,8 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
     { cwd, timeout: 10000 }
   );
   if (createResult.failed) {
-    console.warn(`Failed to create tmux session: ${createResult.stderr || createResult.stdout}`);
+    console.error(`Failed to create tmux session: ${createResult.stderr || createResult.stdout}`);
+    process.exitCode = 1;
     return;
   }
 
@@ -70,7 +169,8 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
     { cwd, timeout: 5000 }
   );
   if (originalPanesResult.failed) {
-    console.warn(`Failed to list panes: ${originalPanesResult.stderr || originalPanesResult.stdout}`);
+    console.error(`Failed to list panes: ${originalPanesResult.stderr || originalPanesResult.stdout}`);
+    process.exitCode = 1;
     return;
   }
   const originalPaneIds = originalPanesResult.stdout
@@ -82,17 +182,18 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
     throw new Error("No pane found in newly created tmux session");
   }
 
-  // 5. Split window vertically for right pane (30–35%) with command already running
+  // 5. Split window vertically for right pane using configured side width
   // Use -P -F #{pane_id} to capture the new pane ID regardless of pane-base-index.
+  const sideWidthArg = `${sideWidth}%`;
   let splitResult = await runShell(
     "tmux",
-    ["split-window", "-h", "-P", "-F", "#{pane_id}", "-t", `${session}:chat`, "-l", "35%", rightTopCmd],
+    ["split-window", "-h", "-P", "-F", "#{pane_id}", "-t", `${session}:chat`, "-l", sideWidthArg, rightTopCmd],
     { cwd, timeout: 5000 }
   );
   if (splitResult.failed) {
     splitResult = await runShell(
       "tmux",
-      ["split-window", "-h", "-P", "-F", "#{pane_id}", "-t", `${session}:chat`, "-p", "35", rightTopCmd],
+      ["split-window", "-h", "-P", "-F", "#{pane_id}", "-t", `${session}:chat`, "-p", String(sideWidth), rightTopCmd],
       { cwd, timeout: 5000 }
     );
   }
@@ -104,11 +205,14 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
     console.warn(msg);
   }
 
-  // 6. Split right pane horizontally for bottom history pane (50% height)
-  if (rightTopPaneId) {
+  // 6. Split right pane horizontally for bottom history pane only when there's enough space
+  const terminalWidth = process.stdout.columns ?? 0;
+  const terminalHeight = process.stdout.rows ?? 0;
+  const minHistoryPaneHeight = 5;
+  if (history === "watch" && terminalWidth >= 80 && terminalHeight >= cockpitHeight + minHistoryPaneHeight && rightTopPaneId) {
     let bottomSplitResult = await runShell(
       "tmux",
-      ["split-window", "-v", "-P", "-F", "#{pane_id}", "-t", rightTopPaneId, "-l", "50%", rightBottomCmd],
+      ["split-window", "-v", "-P", "-F", "#{pane_id}", "-t", rightTopPaneId, "-l", String(cockpitHeight), rightBottomCmd],
       { cwd, timeout: 5000 }
     );
     if (bottomSplitResult.failed) {
@@ -146,7 +250,7 @@ export async function launchChatCockpit(options: LaunchChatCockpitOptions = {}):
   // 8. Set a hook so the session is destroyed when the chat pane dies
   const hookResult = await runShell(
     "tmux",
-    ["set-hook", "-t", session, "pane-died", `kill-session -t ${session}`],
+    ["set-hook", "-t", leftPaneId, "pane-died", `if-shell -F '#{==:#{hook_pane},${leftPaneId}}' 'kill-session -t ${session}'`],
     { cwd, timeout: 5000 }
   );
   if (hookResult.failed) {
@@ -177,9 +281,16 @@ export function buildLeftPaneCommand(options: {
   cliCmd: string;
   runId: string;
   brand: string;
+  agentFile?: string;
+  workers?: string;
+  maxStepsPerTurn?: string;
 }): string {
-  const { nodeCmd, cliCmd, runId, brand } = options;
-  return `${nodeCmd} ${cliCmd} chat --layout plain --run-id ${shellQuote(runId)} --brand ${shellQuote(brand)}`;
+  const { nodeCmd, cliCmd, runId, brand, agentFile, workers, maxStepsPerTurn } = options;
+  let cmd = `${nodeCmd} ${cliCmd} chat --layout plain --run-id ${shellQuote(runId)} --brand ${shellQuote(brand)}`;
+  if (agentFile) cmd += ` --agent-file ${shellQuote(agentFile)}`;
+  if (workers) cmd += ` --workers ${shellQuote(workers)}`;
+  if (maxStepsPerTurn) cmd += ` --max-steps-per-turn ${shellQuote(maxStepsPerTurn)}`;
+  return cmd;
 }
 
 export function shellQuote(value: string): string {

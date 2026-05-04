@@ -1,7 +1,8 @@
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
-import { getProjectRoot } from "../util/fs.js";
+import { getProjectRoot, getRunsDir, getRunPath } from "../util/fs.js";
 import { style, header, status, label } from "../util/theme.js";
+import { NotFoundError, VerificationError, emitError } from "../util/cli-contract.js";
 
 import { createGoalPersister } from "../goal/persistence.js";
 import { normalizeGoal, updateGoalStatus } from "../goal/intake.js";
@@ -17,7 +18,8 @@ function getGoalBasePath(): string {
   return join(getProjectRoot(), ".omk", "goals");
 }
 
-function printAlphaWarning(): void {
+function printAlphaWarning(json?: boolean): void {
+  if (json) return;
   if (!process.env.OMK_GOAL_ALPHA) {
     console.log(style.orange("⚠️  Goal feature is alpha. Set OMK_GOAL_ALPHA=1 to suppress this warning."));
   }
@@ -93,7 +95,7 @@ export async function goalCreateCommand(
   rawPrompt: string,
   options: { json?: boolean; title?: string; objective?: string; risk?: string }
 ): Promise<void> {
-  printAlphaWarning();
+  printAlphaWarning(options.json);
   const root = getProjectRoot();
   await mkdir(join(root, ".omk", "goals"), { recursive: true });
 
@@ -130,7 +132,7 @@ export async function goalCreateCommand(
 }
 
 export async function goalListCommand(options: { json?: boolean }): Promise<void> {
-  printAlphaWarning();
+  printAlphaWarning(options.json);
   const persister = createPersister();
   const ids = await persister.list();
 
@@ -157,13 +159,14 @@ export async function goalListCommand(options: { json?: boolean }): Promise<void
 }
 
 export async function goalShowCommand(goalId: string, options: { json?: boolean }): Promise<void> {
-  printAlphaWarning();
+  printAlphaWarning(options.json);
   const persister = createPersister();
   const spec = await persister.load(goalId);
 
   if (!spec) {
-    console.error(status.error(`Goal not found: ${goalId}`));
-    process.exit(1);
+    const msg = `Goal not found: ${goalId}`;
+    emitError(msg, Boolean(options.json));
+    throw new NotFoundError(msg);
   }
 
   if (options.json) {
@@ -180,8 +183,9 @@ export async function goalPlanCommand(goalId: string): Promise<void> {
   const spec = await persister.load(goalId);
 
   if (!spec) {
-    console.error(status.error(`Goal not found: ${goalId}`));
-    process.exit(1);
+    const msg = `Goal not found: ${goalId}`;
+    console.error(status.error(msg));
+    throw new NotFoundError(msg);
   }
 
   const updated = updateGoalStatus(spec, "planned", { planRevision: spec.planRevision + 1 });
@@ -216,8 +220,9 @@ export async function goalRunCommand(
   const spec = await persister.load(goalId);
 
   if (!spec) {
-    console.error(status.error(`Goal not found: ${goalId}`));
-    process.exit(1);
+    const msg = `Goal not found: ${goalId}`;
+    console.error(status.error(msg));
+    throw new NotFoundError(msg);
   }
 
   const updated = updateGoalStatus(spec, "running");
@@ -233,7 +238,7 @@ export async function goalRunCommand(
   let runState: RunState | undefined;
   if (updated.runIds.length > 0) {
     const latestRunId = updated.runIds[updated.runIds.length - 1];
-    const statePersister = createStatePersister(join(root, ".omk", "runs"));
+    const statePersister = createStatePersister(getRunsDir(root));
     runState = (await statePersister.load(latestRunId)) ?? undefined;
   }
 
@@ -253,19 +258,15 @@ export async function goalRunCommand(
 }
 
 export async function goalVerifyCommand(goalId: string, options: { json?: boolean }): Promise<void> {
-  printAlphaWarning();
+  printAlphaWarning(options.json);
   const root = getProjectRoot();
   const persister = createPersister();
   const spec = await persister.load(goalId);
 
   if (!spec) {
     const msg = `Goal not found: ${goalId}`;
-    if (options.json) {
-      console.log(JSON.stringify({ error: msg }));
-    } else {
-      console.error(status.error(msg));
-    }
-    process.exit(1);
+    emitError(msg, Boolean(options.json));
+    throw new NotFoundError(msg);
   }
 
   const updated = updateGoalStatus(spec, "verifying");
@@ -275,7 +276,7 @@ export async function goalVerifyCommand(goalId: string, options: { json?: boolea
   let runState: import("../contracts/orchestration.js").RunState | undefined;
   if (spec.runIds.length > 0) {
     const latestRunId = spec.runIds[spec.runIds.length - 1];
-    const statePersister = createStatePersister(join(root, ".omk", "runs"));
+    const statePersister = createStatePersister(getRunsDir(root));
     runState = (await statePersister.load(latestRunId)) ?? undefined;
   }
 
@@ -283,10 +284,12 @@ export async function goalVerifyCommand(goalId: string, options: { json?: boolea
   const score = scoreGoal(updated, evidence);
 
   let finalStatus: GoalSpec["status"];
+  let verifyFailed = false;
   if (score.overall === "pass") {
     finalStatus = "done";
   } else if (score.overall === "fail") {
     finalStatus = "failed";
+    verifyFailed = true;
   } else {
     finalStatus = "verifying";
   }
@@ -302,23 +305,26 @@ export async function goalVerifyCommand(goalId: string, options: { json?: boolea
 
   if (options.json) {
     console.log(JSON.stringify({ goalId, score, status: closed.status, evidence }, null, 2));
-    return;
+  } else {
+    console.log(header("Goal Verification"));
+    console.log(label("ID", closed.goalId));
+    console.log(label("Status", closed.status));
+    console.log(label("Overall", score.overall));
+    console.log(label("Required", `${score.requiredPassed}/${score.requiredTotal}`));
+    if (score.optionalScore > 0) {
+      console.log(label("Optional", String(score.optionalScore)));
+    }
+    console.log(label("Quality gate", score.qualityGatePassed ? "passed" : "failed"));
+    console.log("");
+    console.log(style.purpleBold("Evidence"));
+    for (const ev of evidence) {
+      const icon = ev.passed ? style.mint("✓") : style.pink("✗");
+      console.log(`  ${icon} ${ev.criterionId}: ${ev.message ?? ""}`);
+    }
   }
 
-  console.log(header("Goal Verification"));
-  console.log(label("ID", closed.goalId));
-  console.log(label("Status", closed.status));
-  console.log(label("Overall", score.overall));
-  console.log(label("Required", `${score.requiredPassed}/${score.requiredTotal}`));
-  if (score.optionalScore > 0) {
-    console.log(label("Optional", String(score.optionalScore)));
-  }
-  console.log(label("Quality gate", score.qualityGatePassed ? "passed" : "failed"));
-  console.log("");
-  console.log(style.purpleBold("Evidence"));
-  for (const ev of evidence) {
-    const icon = ev.passed ? style.mint("✓") : style.pink("✗");
-    console.log(`  ${icon} ${ev.criterionId}: ${ev.message ?? ""}`);
+  if (verifyFailed) {
+    throw new VerificationError("Goal verification failed", [`overall: ${score.overall}`]);
   }
 }
 
@@ -331,8 +337,9 @@ export async function goalCloseCommand(
   const spec = await persister.load(goalId);
 
   if (!spec) {
-    console.error(status.error(`Goal not found: ${goalId}`));
-    process.exit(1);
+    const msg = `Goal not found: ${goalId}`;
+    console.error(status.error(msg));
+    throw new NotFoundError(msg);
   }
 
   const evidence = await persister.loadEvidence(goalId);
@@ -369,8 +376,9 @@ export async function goalBlockCommand(goalId: string, options: { reason: string
   const spec = await persister.load(goalId);
 
   if (!spec) {
-    console.error(status.error(`Goal not found: ${goalId}`));
-    process.exit(1);
+    const msg = `Goal not found: ${goalId}`;
+    console.error(status.error(msg));
+    throw new NotFoundError(msg);
   }
 
   const updated = updateGoalStatus(spec, "blocked");
@@ -404,7 +412,7 @@ export async function goalContinueCommand(
   if (!spec) {
     const msg = goalId ? `Goal not found: ${goalId}` : "No active goal found.";
     console.error(status.error(msg));
-    process.exit(1);
+    throw new NotFoundError(msg);
   }
 
   const effectiveGoalId = spec.goalId;
@@ -417,7 +425,7 @@ export async function goalContinueCommand(
     effectiveRunId = spec.runIds[spec.runIds.length - 1];
   }
   if (effectiveRunId) {
-    const statePersister = createStatePersister(join(root, ".omk", "runs"));
+    const statePersister = createStatePersister(getRunsDir(root));
     runState = (await statePersister.load(effectiveRunId)) ?? undefined;
   }
 
@@ -432,7 +440,7 @@ export async function goalContinueCommand(
 
   // Write plan.md to run directory if runId is available
   if (effectiveRunId) {
-    const runDir = join(root, ".omk", "runs", effectiveRunId);
+    const runDir = getRunPath(effectiveRunId, undefined, root);
     await mkdir(runDir, { recursive: true });
     await writeFile(join(runDir, "plan.md"), nextResult.prompt);
   }

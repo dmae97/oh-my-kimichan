@@ -1,6 +1,6 @@
 # Built-in LSP
 
-oh-my-kimichan ships a bundled TypeScript LSP launcher for open-source projects.
+oh-my-kimi ships a bundled TypeScript LSP launcher for open-source projects.
 
 ## Commands
 

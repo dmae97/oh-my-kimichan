@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { existsSync, readFileSync, statSync, readdirSync } from "node:fs";
+import { basename, join } from "node:path";
 
 const SKIP_PREFIXES = [
   "node_modules/",
@@ -37,19 +37,35 @@ const LITERAL_PATTERNS = [
   ["gitlab_pat", /glpat-[A-Za-z0-9\-_]{20,}/],
   ["openai_key", /\bsk-[A-Za-z0-9]{20,}\b/],
   ["stripe_key", /\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}\b/],
-  ["maintainer_private_path", /\.config\/opencode\/secrets\.env|\/home\/dmae|\/mnt\/m\/oh-my-kimichan/],
+  ["maintainer_private_path", /\.config\/opencode\/secrets\.env|\/home\/dmae|\/mnt\/m\/oh-my-kimi/],
 ];
 
 const GENERIC_ASSIGNMENT = /\b(api[_-]?key|secret|token|password|private[_-]?key)\b\s*[:=]\s*["']?([^"'\s;,]{20,})/i;
 const GENERIC_ALLOWLIST = /\$\{|<|YOUR_|REPLACE_|NPM_TOKEN|GITHUB_TOKEN|NODE_AUTH_TOKEN|process\.env|env\.|readSetting|parseOptional|parsed\.password|\*\*\*|placeholder|example|sample|redacted|maintainer-local|secret leakage|secret leak|secrets? from|Do not store secrets|Do not send secrets/i;
 
+function walkDirectory(dir, prefix = "") {
+  const results = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (shouldSkip(relPath)) continue;
+    if (entry.isDirectory()) {
+      results.push(...walkDirectory(join(dir, entry.name), relPath));
+    } else if (entry.isFile()) {
+      results.push(relPath);
+    }
+  }
+  return results;
+}
+
 function gitList(args) {
   try {
-    return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+    const cwd = process.cwd();
+    return execFileSync("git", ["-c", `safe.directory=${cwd}`, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
       .split("\0")
       .filter(Boolean);
-  } catch {
-    return [];
+  } catch (e) {
+    console.warn("secret-scan: git listing failed, falling back to filesystem scan");
+    return walkDirectory(process.cwd());
   }
 }
 
