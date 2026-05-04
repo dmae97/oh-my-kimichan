@@ -26,11 +26,16 @@ jobs:
       - run: npm run check
       - run: npm run build
       - run: |
-          set -o pipefail
-          node --test --test-timeout=120000 --test-concurrency=1 test/*.test.mjs 2>&1 | tee test-output.txt
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: test-output-${{ matrix.os }}-node${{ matrix.node-version }}
-          path: test-output.txt
+          failed=0
+          for f in test/*.test.mjs; do
+            echo ""
+            echo "========================================"
+            echo "Running: $f"
+            echo "========================================"
+            if ! node --test --test-timeout=120000 "$f"; then
+              echo "FAILED: $f"
+              failed=1
+            fi
+          done
+          exit $failed
       - run: npm run audit:package
