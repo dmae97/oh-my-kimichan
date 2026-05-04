@@ -26,10 +26,12 @@ jobs:
       - run: npm run secret:scan
       - run: npm run check
       - run: npm run build
-      - run: node --test --test-timeout=120000 test/*.test.mjs
+      - run: |
+          set -o pipefail
+          node --test --test-timeout=120000 --test-concurrency=1 test/*.test.mjs 2>&1 | tee test-output.txt
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: failed-tests-${{ matrix.os }}-node${{ matrix.node-version }}
-          path: failed-tests.txt
+          name: test-output-${{ matrix.os }}-node${{ matrix.node-version }}
+          path: test-output.txt
       - run: npm run audit:package
