@@ -5,6 +5,7 @@
 
 import { getCurrentMode, setCurrentMode, getModePresets, type OmkMode } from "./mode-preset.js";
 import { style } from "./theme.js";
+import { enableRawTerminalInput, restoreTerminalInputState } from "./terminal-input.js";
 
 const MODES: OmkMode[] = ["agent", "plan", "chat", "debugging", "review"];
 
@@ -32,19 +33,12 @@ export async function promptModeCycle(): Promise<OmkMode> {
 
   return new Promise((resolve, reject) => {
     const stdin = process.stdin;
+    const terminalInputState = enableRawTerminalInput(stdin);
+    let cleaned = false;
+    let cleanup: () => void = () => undefined;
 
-    stdin.setRawMode(true);
-    stdin.resume();
-    stdin.setEncoding("utf8");
-
-    const cleanup = () => {
-      stdin.removeAllListeners("data");
-      stdin.setRawMode(false);
-      stdin.pause();
-    };
-
-    const onData = (data: string) => {
-      const key = data;
+    const onData = (data: string | Buffer) => {
+      const key = typeof data === "string" ? data : data.toString("utf8");
       if (key === "\t") {
         idx = (idx + 1) % MODES.length;
         renderBadge();
@@ -74,6 +68,13 @@ export async function promptModeCycle(): Promise<OmkMode> {
         process.stdout.write("\n");
         process.exit(0);
       }
+    };
+
+    cleanup = (): void => {
+      if (cleaned) return;
+      cleaned = true;
+      stdin.off("data", onData);
+      restoreTerminalInputState(stdin, terminalInputState);
     };
 
     stdin.on("data", onData);

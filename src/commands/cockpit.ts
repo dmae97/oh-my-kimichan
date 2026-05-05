@@ -25,6 +25,7 @@ import { getKimiUsage } from "../kimi/usage.js";
 import { parseGitStatusPorcelain, listRunCandidates } from "./hud.js";
 import { readTodos, deriveTodosFromState } from "../util/todo-sync.js";
 import { readSessionMeta, type SessionMeta } from "../util/session.js";
+import { enableRawTerminalInput, restoreTerminalInputState, type TerminalInputState } from "../util/terminal-input.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -231,6 +232,7 @@ export class CockpitRenderer {
   resized = false;
   height: number;
   private keyHandler?: (chunk: Buffer) => void;
+  private terminalInputState?: TerminalInputState;
 
   constructor(refreshMs: number, height?: number) {
     this.refreshMs = refreshMs;
@@ -238,9 +240,8 @@ export class CockpitRenderer {
   }
 
   setupKeyboard(): void {
-    if (!process.stdin.isTTY) return;
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
+    if (!process.stdin.isTTY || this.keyHandler) return;
+    this.terminalInputState = enableRawTerminalInput(process.stdin);
     this.keyHandler = (key: Buffer) => {
       const char = key.toString();
       if (char === "\u0003" || char === "q") {
@@ -268,10 +269,13 @@ export class CockpitRenderer {
   }
 
   teardown(): void {
-    if (process.stdin.isTTY && this.keyHandler) {
+    if (this.keyHandler) {
       process.stdin.off("data", this.keyHandler);
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
+      this.keyHandler = undefined;
+      if (this.terminalInputState) {
+        restoreTerminalInputState(process.stdin, this.terminalInputState);
+        this.terminalInputState = undefined;
+      }
     }
   }
 

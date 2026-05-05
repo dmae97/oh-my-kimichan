@@ -13,6 +13,7 @@ import { getOmkResourceSettings, type OmkRuntimeScope } from "../util/resource-p
 import { KimiStatusLineEnhancer } from "./statusline.js";
 import { formatOmkVersionFooter } from "../util/version.js";
 import { prepareIsolatedKimiHome, cleanupIsolatedKimiHome } from "./isolated-home.js";
+import { enableRawTerminalInput, restoreTerminalInputState } from "../util/terminal-input.js";
 
 export async function runKimiInteractive(
   args: string[],
@@ -36,20 +37,25 @@ export async function runKimiInteractive(
   });
   const bugFilter = new KimiBugFilter();
   const statusLine = await KimiStatusLineEnhancer.create();
-  const originalRawMode = process.stdin.isTTY ? process.stdin.isRaw : undefined;
 
   const tmpHome = await prepareIsolatedKimiHome();
   const env = options?.env
     ? { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile, HOME: tmpHome, USERPROFILE: tmpHome, HOMEDRIVE: "", HOMEPATH: tmpHome, ...options.env }
     : { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile, HOME: tmpHome, USERPROFILE: tmpHome, HOMEDRIVE: "", HOMEPATH: tmpHome };
 
-  const ptyProcess = pty.spawn("kimi", args, {
-    name: "xterm-256color",
-    cols: process.stdout.columns || 80,
-    rows: process.stdout.rows || 24,
-    cwd: options?.cwd ?? process.cwd(),
-    env,
-  });
+  let ptyProcess: ReturnType<typeof pty.spawn>;
+  try {
+    ptyProcess = pty.spawn("kimi", args, {
+      name: "xterm-256color",
+      cols: process.stdout.columns || 80,
+      rows: process.stdout.rows || 24,
+      cwd: options?.cwd ?? process.cwd(),
+      env,
+    });
+  } catch (err) {
+    await cleanupIsolatedKimiHome(tmpHome);
+    throw err;
+  }
 
   // ── Backpressure-safe stdout writer ──
   // Prevents process.stdout.write from blocking the event loop when the
@@ -117,12 +123,8 @@ export async function runKimiInteractive(
   });
 
   // stdin → pty (Buffer passthrough for lower latency)
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-  process.stdin.setEncoding("utf8");
-  process.stdin.resume();
-  process.stdin.on("data", (data: string | Buffer) => {
+  const terminalInputState = enableRawTerminalInput(process.stdin);
+  const handleStdinData = (data: string | Buffer): void => {
     const text = typeof data === "string" ? data : data.toString("utf8");
 
     // Ctrl+V (0x16) — default: pass-through to Kimi native paste.
@@ -156,25 +158,40 @@ export async function runKimiInteractive(
 
 
     ptyProcess.write(text);
-  });
+  };
+  process.stdin.on("data", handleStdinData);
 
   // 터미널 리사이즈 → pty 동기화
-  process.stdout.on("resize", () => {
+  const handleStdoutResize = (): void => {
     ptyProcess.resize(process.stdout.columns || 80, process.stdout.rows || 24);
-  });
+  };
+  process.stdout.on("resize", handleStdoutResize);
 
   // 종료 대기
   return new Promise<number>((resolve) => {
+    let cleaned = false;
+    const cleanupRuntime = (): void => {
+      if (cleaned) return;
+      cleaned = true;
+      try {
+        process.stdin.off("data", handleStdinData);
+        process.stdout.off("resize", handleStdoutResize);
+      } finally {
+        try {
+          statusLine.dispose();
+        } finally {
+          restoreTerminalInputState(process.stdin, terminalInputState);
+        }
+      }
+      void cleanupIsolatedKimiHome(tmpHome);
+    };
+
     ptyProcess.onExit(({ exitCode }) => {
       const bugRest = bugFilter.forceFlush();
       if (bugRest) writeStdout(statusLine.process(bugRest));
       const replacerRest = replacer.forceFlush();
       if (replacerRest) writeStdout(statusLine.process(replacerRest));
-      statusLine.dispose();
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(originalRawMode ?? false);
-      }
-      process.stdin.pause();
+      cleanupRuntime();
       // Do NOT process.exit here — the caller should decide when to exit.
       // Returning the exit code via resolve is enough for the wrapper to handle.
       if (exitCode !== 0) {
@@ -182,7 +199,6 @@ export async function runKimiInteractive(
         const resumeHint = runId ? ` • resume: omk chat --run-id ${runId}` : "";
         process.stderr.write(style.red(`[omk] kimi exited with code ${exitCode}${resumeHint}\n`));
       }
-      void cleanupIsolatedKimiHome(tmpHome);
       resolve(exitCode);
     });
   });
@@ -306,6 +322,7 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
           timeout: effectiveTimeout,
           env: mergedEnv,
           logPath,
+          input: "",
           onStdout: thinkingHandler,
         });
       } finally {

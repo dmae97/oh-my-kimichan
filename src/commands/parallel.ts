@@ -15,6 +15,7 @@ import { createStatePersister } from "../orchestration/state-persister.js";
 import { ParallelLiveRenderer, renderCompactParallelFrame, type ParallelViewMode } from "../orchestration/parallel-ui.js";
 import { formatOmkVersionFooter } from "../util/version.js";
 import { UsageError } from "../util/cli-contract.js";
+import { captureTerminalInputState, restoreTerminalInputState } from "../util/terminal-input.js";
 import type { RunState, UserIntent } from "../contracts/orchestration.js";
 import type { Dag } from "../orchestration/dag.js";
 
@@ -141,6 +142,7 @@ export async function parallelCommand(
   const dag = createExecutableDagFromState(routedState);
   const abortController = new AbortController();
   let shuttingDown = false;
+  let forceExitTimer: ReturnType<typeof setTimeout> | undefined;
   function handleSignal(): void {
     if (shuttingDown) {
       if (options.noPause !== true) {
@@ -153,7 +155,8 @@ export async function parallelCommand(
     // Force exit if graceful shutdown hangs (e.g. long-running node)
     // In programmatic mode (noPause=true) we skip force-exit so callers can handle abort.
     if (options.noPause !== true) {
-      setTimeout(() => process.exit(1), 5000);
+      forceExitTimer = setTimeout(() => process.exit(1), 5000);
+      forceExitTimer.unref?.();
     }
   }
   process.once("SIGINT", handleSignal);
@@ -251,22 +254,29 @@ export async function parallelCommand(
     },
   });
 
-  const result = await executor.execute(dag, runner, {
-    runId,
-    workers: workerCount,
-    approvalPolicy: approvalPolicy as "interactive" | "auto" | "yolo" | "block",
-    nodeTimeoutMs: options.timeoutPreset ? undefined : 600_000,
-    timeoutPreset: options.timeoutPreset,
-  });
+  let result: Awaited<ReturnType<typeof executor.execute>>;
+  try {
+    result = await executor.execute(dag, runner, {
+      runId,
+      workers: workerCount,
+      approvalPolicy: approvalPolicy as "interactive" | "auto" | "yolo" | "block",
+      nodeTimeoutMs: options.timeoutPreset ? undefined : 600_000,
+      timeoutPreset: options.timeoutPreset,
+    });
+  } finally {
+    liveRenderer.stop();
 
-  liveRenderer.stop();
+    process.off("SIGINT", handleSignal);
+    process.off("SIGTERM", handleSignal);
+    if (forceExitTimer) {
+      clearTimeout(forceExitTimer);
+      forceExitTimer = undefined;
+    }
 
-  process.off("SIGINT", handleSignal);
-  process.off("SIGTERM", handleSignal);
-
-  // Restore original terminal screen before printing results
-  if (useAlternateScreen && isTTY) {
-    process.stdout.write("\x1b[?1049l");
+    // Restore original terminal screen before printing results/errors.
+    if (useAlternateScreen && isTTY) {
+      process.stdout.write("\x1b[?1049l");
+    }
   }
 
   console.log("");
@@ -288,12 +298,18 @@ export async function parallelCommand(
   // Pause so the user can read the result before the process exits
   if (shouldPause) {
     console.log(style.gray("\n  Press Enter to continue..."));
+    const terminalInputState = captureTerminalInputState(process.stdin);
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+    }
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     await new Promise<void>((resolve) => {
       rl.once("line", () => {
-        rl.close();
         resolve();
       });
+    }).finally(() => {
+      rl.close();
+      restoreTerminalInputState(process.stdin, terminalInputState);
     });
   }
 
