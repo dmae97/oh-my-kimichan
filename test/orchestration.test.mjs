@@ -17,6 +17,30 @@ async function tempWorktree() {
   return mkdtemp(join(tmpdir(), "omk-ensemble-"));
 }
 
+async function withRoutingSkills(skills, fn) {
+  const projectRoot = await mkdtemp(join(tmpdir(), "omk-routing-skills-"));
+  const previousRoot = process.env.OMK_PROJECT_ROOT;
+  const previousSkillsScope = process.env.OMK_SKILLS_SCOPE;
+  process.env.OMK_PROJECT_ROOT = projectRoot;
+  process.env.OMK_SKILLS_SCOPE = "project";
+  resetRoutingInventoryCache();
+
+  try {
+    for (const skill of skills) {
+      const dir = join(projectRoot, ".agents", "skills", skill);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "SKILL.md"), `# ${skill}\n`);
+    }
+    resetRoutingInventoryCache();
+    return await fn(projectRoot);
+  } finally {
+    resetRoutingInventoryCache();
+    restoreEnv("OMK_PROJECT_ROOT", previousRoot);
+    restoreEnv("OMK_SKILLS_SCOPE", previousSkillsScope);
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+}
+
 test("task graph returns runnable nodes in deterministic topological order", () => {
   const dag = createDag({
     nodes: [
@@ -45,27 +69,29 @@ test("task graph ranks critical-path runnable nodes before low-impact siblings",
   assert.deepEqual(createScheduler().getRunnableNodes(dag).map((node) => node.id), ["root", "side"]);
 });
 
-test("createDag adds bounded Kimi routing hints without changing node contract", () => {
-  const dag = createDag({
-    nodes: [
-      {
-        id: "route-research",
-        name: "Verify Kimi paper and official API docs before planner handoff",
-        role: "researcher",
-        dependsOn: [],
-        maxRetries: 1,
-        outputs: [{ name: "citation notes", gate: "summary" }],
-      },
-    ],
-  });
-  const routing = dag.nodes[0].routing;
+test("createDag adds bounded Kimi routing hints without changing node contract", async () => {
+  await withRoutingSkills(["omk-research-verify"], async () => {
+    const dag = createDag({
+      nodes: [
+        {
+          id: "route-research",
+          name: "Verify Kimi paper and official API docs before planner handoff",
+          role: "researcher",
+          dependsOn: [],
+          maxRetries: 1,
+          outputs: [{ name: "citation notes", gate: "summary" }],
+        },
+      ],
+    });
+    const routing = dag.nodes[0].routing;
 
-  assert.ok(routing?.skills?.includes("omk-research-verify"));
-  assert.ok(routing?.tools?.includes("SearchWeb"));
-  assert.ok((routing?.skills?.length ?? 0) <= 3);
-  assert.ok((routing?.tools?.length ?? 0) <= 4);
-  assert.equal(routing?.contextBudget, "small");
-  assert.equal(routing?.evidenceRequired, true);
+    assert.ok(routing?.skills?.includes("omk-research-verify"));
+    assert.ok(routing?.tools?.includes("SearchWeb"));
+    assert.ok((routing?.skills?.length ?? 0) <= 3);
+    assert.ok((routing?.tools?.length ?? 0) <= 4);
+    assert.equal(routing?.contextBudget, "small");
+    assert.equal(routing?.evidenceRequired, true);
+  });
 });
 
 test("routing inventory discovers project skills and MCP without global scope", async () => {
@@ -127,21 +153,23 @@ test("project MCP scope excludes global Kimi MCP config", async () => {
   }
 });
 
-test("run state routing helper enriches synthetic CLI nodes", () => {
-  const state = createRoutedRunState({
-    runId: "run-state-test",
-    startedAt: "2026-05-01T00:00:00.000Z",
-    workerCount: 2,
-    nodes: [
-      { id: "coordinator", name: "Coordinate DAG team", role: "orchestrator", dependsOn: [], maxRetries: 1 },
-      { id: "review", name: "Review quality gate", role: "reviewer", dependsOn: ["coordinator"], maxRetries: 1 },
-    ],
-  });
+test("run state routing helper enriches synthetic CLI nodes", async () => {
+  await withRoutingSkills(["omk-adaptorch-dag", "omk-quality-gate"], async () => {
+    const state = createRoutedRunState({
+      runId: "run-state-test",
+      startedAt: "2026-05-01T00:00:00.000Z",
+      workerCount: 2,
+      nodes: [
+        { id: "coordinator", name: "Coordinate DAG team", role: "orchestrator", dependsOn: [], maxRetries: 1 },
+        { id: "review", name: "Review quality gate", role: "reviewer", dependsOn: ["coordinator"], maxRetries: 1 },
+      ],
+    });
 
-  assert.equal(state.nodes[0].status, "pending");
-  assert.ok(state.nodes[0].routing?.skills?.includes("omk-adaptorch-dag"));
-  assert.ok(state.nodes[1].routing?.skills?.includes("omk-quality-gate"));
-  assert.equal(state.estimate?.totalNodes, 2);
+    assert.equal(state.nodes[0].status, "pending");
+    assert.ok(state.nodes[0].routing?.skills?.includes("omk-adaptorch-dag"));
+    assert.ok(state.nodes[1].routing?.skills?.includes("omk-quality-gate"));
+    assert.equal(state.estimate?.totalNodes, 2);
+  });
 });
 
 test("run state estimate can be refreshed after synthetic status changes", () => {
@@ -163,27 +191,29 @@ test("run state estimate can be refreshed after synthetic status changes", () =>
   assert.equal(state.estimate?.runningNodes, 1);
 });
 
-test("routeRunState preserves runtime status while refreshing routing metadata", () => {
-  const routed = routeRunState({
-    runId: "resume-test",
-    startedAt: "2026-05-01T00:00:00.000Z",
-    nodes: [
-      {
-        id: "root",
-        name: "Coordinate resumed DAG",
-        role: "orchestrator",
-        dependsOn: [],
-        status: "running",
-        retries: 0,
-        maxRetries: 1,
-        startedAt: "2026-05-01T00:00:01.000Z",
-      },
-    ],
-  });
+test("routeRunState preserves runtime status while refreshing routing metadata", async () => {
+  await withRoutingSkills(["omk-adaptorch-dag"], async () => {
+    const routed = routeRunState({
+      runId: "resume-test",
+      startedAt: "2026-05-01T00:00:00.000Z",
+      nodes: [
+        {
+          id: "root",
+          name: "Coordinate resumed DAG",
+          role: "orchestrator",
+          dependsOn: [],
+          status: "running",
+          retries: 0,
+          maxRetries: 1,
+          startedAt: "2026-05-01T00:00:01.000Z",
+        },
+      ],
+    });
 
-  assert.equal(routed.nodes[0].status, "running");
-  assert.equal(routed.nodes[0].startedAt, "2026-05-01T00:00:01.000Z");
-  assert.ok(routed.nodes[0].routing?.skills?.includes("omk-adaptorch-dag"));
+    assert.equal(routed.nodes[0].status, "running");
+    assert.equal(routed.nodes[0].startedAt, "2026-05-01T00:00:01.000Z");
+    assert.ok(routed.nodes[0].routing?.skills?.includes("omk-adaptorch-dag"));
+  });
 });
 
 test("scheduler blocks descendants after a terminal failed dependency", () => {
@@ -379,51 +409,53 @@ test("ETA estimator uses completed durations and worker count", () => {
 });
 
 test("executor records agent timings and passes ETA environment", async () => {
-  const savedStates = [];
-  const seenEnv = [];
-  const executor = createExecutor({
-    ensemble: false,
-    persister: {
-      async load() {
-        return null;
+  await withRoutingSkills(["omk-adaptorch-dag", "omk-typescript-strict"], async () => {
+    const savedStates = [];
+    const seenEnv = [];
+    const executor = createExecutor({
+      ensemble: false,
+      persister: {
+        async load() {
+          return null;
+        },
+        async save(state) {
+          savedStates.push(JSON.parse(JSON.stringify(state)));
+        },
       },
-      async save(state) {
-        savedStates.push(JSON.parse(JSON.stringify(state)));
+    });
+    const dag = createDag({
+      nodes: [
+        { id: "plan", name: "Plan DAG implementation", role: "planner", dependsOn: [], maxRetries: 1 },
+        { id: "code", name: "Implement TypeScript routing", role: "coder", dependsOn: ["plan"], maxRetries: 1 },
+      ],
+    });
+    const runner = {
+      async run(_node, env) {
+        seenEnv.push({ ...env });
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { success: true, stdout: "", stderr: "" };
       },
-    },
-  });
-  const dag = createDag({
-    nodes: [
-      { id: "plan", name: "Plan DAG implementation", role: "planner", dependsOn: [], maxRetries: 1 },
-      { id: "code", name: "Implement TypeScript routing", role: "coder", dependsOn: ["plan"], maxRetries: 1 },
-    ],
-  });
-  const runner = {
-    async run(_node, env) {
-      seenEnv.push({ ...env });
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      return { success: true, stdout: "", stderr: "" };
-    },
-  };
+    };
 
-  const result = await executor.execute(dag, runner, {
-    runId: "eta-test",
-    workers: 1,
-    approvalPolicy: "yolo",
-  });
+    const result = await executor.execute(dag, runner, {
+      runId: "eta-test",
+      workers: 1,
+      approvalPolicy: "yolo",
+    });
 
-  assert.equal(result.success, true);
-  assert.equal(result.state.estimate.completedNodes, 2);
-  assert.equal(result.state.estimate.estimatedRemainingMs, 0);
-  assert.ok(result.state.nodes.every((node) => typeof node.startedAt === "string"));
-  assert.ok(result.state.nodes.every((node) => typeof node.completedAt === "string"));
-  assert.ok(result.state.nodes.every((node) => typeof node.durationMs === "number"));
-  assert.ok(result.state.nodes.every((node) => node.attempts?.length === 1));
-  assert.ok(seenEnv.every((env) => typeof env.OMK_ETA_REMAINING_MS === "string"));
-  assert.ok(seenEnv.every((env) => typeof env.OMK_SKILL_HINTS === "string"));
-  assert.ok(seenEnv.some((env) => env.OMK_SKILL_HINTS.includes("omk-adaptorch-dag")));
-  assert.ok(seenEnv.some((env) => env.OMK_SKILL_HINTS.includes("omk-typescript-strict")));
-  assert.ok(savedStates.some((state) => state.estimate?.runningNodes === 1));
+    assert.equal(result.success, true);
+    assert.equal(result.state.estimate.completedNodes, 2);
+    assert.equal(result.state.estimate.estimatedRemainingMs, 0);
+    assert.ok(result.state.nodes.every((node) => typeof node.startedAt === "string"));
+    assert.ok(result.state.nodes.every((node) => typeof node.completedAt === "string"));
+    assert.ok(result.state.nodes.every((node) => typeof node.durationMs === "number"));
+    assert.ok(result.state.nodes.every((node) => node.attempts?.length === 1));
+    assert.ok(seenEnv.every((env) => typeof env.OMK_ETA_REMAINING_MS === "string"));
+    assert.ok(seenEnv.every((env) => typeof env.OMK_SKILL_HINTS === "string"));
+    assert.ok(seenEnv.some((env) => env.OMK_SKILL_HINTS.includes("omk-adaptorch-dag")));
+    assert.ok(seenEnv.some((env) => env.OMK_SKILL_HINTS.includes("omk-typescript-strict")));
+    assert.ok(savedStates.some((state) => state.estimate?.runningNodes === 1));
+  });
 });
 
 function restoreEnv(name, value) {

@@ -25,5 +25,5 @@ jobs:
       - run: npm run secret:scan
       - run: npm run check
       - run: npm run build
-      - run: npm test -- --test-timeout=120000
+      - run: npm test
       - run: npm run audit:package
