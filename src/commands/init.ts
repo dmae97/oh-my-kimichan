@@ -1,5 +1,7 @@
-import { mkdir, writeFile, readFile, copyFile, readdir } from "fs/promises";
+import type { Dirent } from "node:fs";
+import { mkdir, writeFile, readFile, copyFile, readdir, stat } from "fs/promises";
 import { join, dirname } from "path";
+import { homedir } from "os";
 import { fileURLToPath } from "node:url";
 import { getProjectRoot, pathExists } from "../util/fs.js";
 import { getOmkVersionSync } from "../util/version.js";
@@ -145,6 +147,18 @@ agent:
   name: omk-researcher
   system_prompt_args:
     OMK_ROLE: "researcher"
+`,
+  ontology: `version: 1
+agent:
+  extend: ../okabe.yaml
+  name: omk-ontology
+  system_prompt_args:
+    OMK_ROLE: "ontology"
+  description: >
+    Kuzu-backed ontology curator. Creates ontology node/relationship tables,
+    ingests project concepts, and answers Cypher/GraphQL-lite queries against
+    the local graph. Use omk_graph_query, omk_memory_ontology, and
+    omk_memory_mindmap tools to inspect and evolve the project ontology.
 `,
   "vision-debugger": `version: 1
 agent:
@@ -316,15 +330,41 @@ Risk:
 \`\`\`
 `;
 
+function hasErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
+async function getCopyEntryKind(srcPath: string, entry: Dirent): Promise<"directory" | "file" | null> {
+  if (entry.isDirectory()) return "directory";
+  if (entry.isFile()) return "file";
+  if (!entry.isSymbolicLink()) return null;
+
+  try {
+    const targetStats = await stat(srcPath);
+    if (targetStats.isDirectory()) return "directory";
+    if (targetStats.isFile()) return "file";
+    return null;
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return null;
+    throw error;
+  }
+}
+
 async function copyTemplateDir(src: string, dest: string): Promise<void> {
   const entries = await readdir(src, { withFileTypes: true });
   for (const entry of entries) {
     const srcPath = join(src, entry.name);
     const destPath = join(dest, entry.name);
-    if (entry.isDirectory()) {
+    const kind = await getCopyEntryKind(srcPath, entry);
+    if (kind === "directory") {
       await mkdir(destPath, { recursive: true });
       await copyTemplateDir(srcPath, destPath);
-    } else {
+    } else if (kind === "file") {
       await mkdir(dirname(destPath), { recursive: true });
       await copyFile(srcPath, destPath);
     }
@@ -485,16 +525,22 @@ command = ".omk/hooks/stop-verify.sh"
 timeout = 30
 `;
 
-const MCP_JSON = {
-  mcpServers: {
-    // Safe default for open-source scaffolds: local project server only.
-    // Remote MCPs that require API keys should be added explicitly by the user.
-    "omk-project": {
-      command: "node",
-      args: [join(packageRoot, "dist/mcp/omk-project-server.js")],
+const MCP_JSON = (() => {
+  const serverPath = join(packageRoot, "dist/mcp/omk-project-server.js");
+  // Use bash login shell on Unix so that GUI-launched Kimi instances
+  // inherit the user's PATH (e.g. nvm, volta, asdf) and can find node.
+  const isWin = process.platform === "win32";
+  return {
+    mcpServers: {
+      // Safe default for open-source scaffolds: local project server only.
+      // Remote MCPs that require API keys should be added explicitly by the user.
+      "omk-project": {
+        command: isWin ? "node" : "bash",
+        args: isWin ? [serverPath] : ["-lc", `exec node "${serverPath}"`],
+      },
     },
-  },
-};
+  };
+})();
 
 const CONFIG_TOML = `# oh-my-kimi project settings
 [project]
@@ -510,8 +556,8 @@ yolo_mode = false                # safe guards still block secrets/destructive s
 [runtime]
 # auto chooses lite on <=18GB RAM hosts to make 16GB laptops usable.
 resource_profile = "auto"        # auto | lite | standard
-mcp_scope = "project"            # limit MCP discovery to project scope
-skills_scope = "project"         # limit skills discovery to project scope
+mcp_scope = "all"                # all | project | none — default all for existing Kimi users
+skills_scope = "all"             # all | project | none — default all for existing Kimi users
 max_workers = 1                  # can override with OMK_MAX_WORKERS
 max_output_mb = 4                # cap buffered shell/quality output
 wire_output_mb = 1               # cap per-task retained wire output
@@ -531,8 +577,8 @@ build = "auto"
 
 [memory]
 # Project-local ontology graph is the default source of truth for project/session memory.
-# Optional external Neo4j credentials must stay in env vars or a secret manager.
-backend = "local_graph"    # file | local_graph | neo4j | dual | kuzu
+# Use backend = "kuzu" for the embedded Kuzu ontology graph backend.
+backend = "local_graph"    # local_graph | kuzu
 scope = "project-session"
 strict = true               # fail memory writes if the selected graph backend is unavailable
 mirror_files = true         # keep .omk/memory/*.md as readable mirrors
@@ -543,15 +589,6 @@ path = ".omk/memory/graph-state.json"
 ontology = "omk-ontology-mindmap-v1"
 query = "graphql-lite"
 
-[neo4j]
-uri_env = "OMK_NEO4J_URI"
-username_env = "OMK_NEO4J_USERNAME"
-password_env = "OMK_NEO4J_PASSWORD"
-database_env = "OMK_NEO4J_DATABASE"
-uri = "bolt://localhost:7687"
-username = "neo4j"
-database = "neo4j"
-auth = "basic"             # basic | none
 
 [locale]
 # UI language: en (default) | ko | ja
@@ -644,10 +681,18 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   // 4. Write prompts
   await writeFile(join(root, ".omk/prompts/root.md"), ROOT_PROMPT_MD);
 
-  // 5+6. Copy skills from package templates (parallel)
+  // 5+6. Copy skills from global ~/.kimi/skills and package templates (parallel)
+  const globalSkillsSrc = join(homedir(), ".kimi", "skills");
   const kimiSkillsSrc = join(packageRoot, "templates", "skills", "kimi");
   const agentsSkillsSrc = join(packageRoot, "templates", "skills", "agents");
   const skillCopies = [];
+
+  // First: copy global skills so existing Kimi users keep their skills
+  if (await pathExists(globalSkillsSrc)) {
+    console.log(style.purple("   📦 Importing global ~/.kimi/skills..."));
+    skillCopies.push(copyTemplateDir(globalSkillsSrc, join(root, ".kimi", "skills")));
+  }
+
   if (await pathExists(kimiSkillsSrc)) {
     console.log(style.purple(t("init.copyKimiSkills")));
     skillCopies.push(copyTemplateDir(kimiSkillsSrc, join(root, ".kimi", "skills")));
@@ -674,11 +719,24 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   await writeFile(join(root, ".omk/config.toml"), CONFIG_TOML);
   await writeFile(join(root, ".omk/kimi.config.toml"), KIMI_CONFIG_TOML);
   await writeFile(join(root, ".omk/mcp.json"), JSON.stringify(MCP_JSON, null, 2) + "\n");
-  const kimiMcpJsonPath = join(root, ".kimi/mcp.json");
-  if (!(await pathExists(kimiMcpJsonPath))) {
+
+  // Project-local MCP config must not import global server definitions by default:
+  // global configs can contain inline headers/env secrets that should stay in the user scope.
+  const projectMcpPath = join(root, ".kimi", "mcp.json");
+  const projectMcpServers: Record<string, unknown> = {
+    "omk-project": MCP_JSON.mcpServers["omk-project"],
+  };
+  const existingProjectMcp = await readFile(projectMcpPath, "utf-8").catch(() => null);
+  const shouldWriteProjectMcp =
+    existingProjectMcp === null ||
+    existingProjectMcp.includes("Merged from ~/.kimi/mcp.json + omk-project");
+  if (shouldWriteProjectMcp) {
     await writeFile(
-      kimiMcpJsonPath,
-      JSON.stringify({ _comment: "SearchWeb and FetchURL are built-in Kimi tools.", mcpServers: {} }, null, 2) + "\n"
+      projectMcpPath,
+      JSON.stringify({
+        _comment: "Project-local MCP config. Global MCP servers remain in ~/.kimi/mcp.json; import explicitly only after secret review.",
+        mcpServers: projectMcpServers,
+      }, null, 2) + "\n"
     );
   }
   await writeFile(join(root, ".omk/lsp.json"), defaultLspConfigJson());
@@ -754,13 +812,11 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   console.log("- AGENTS.md is loaded into Kimi root prompt.");
   console.log("- Todo list is required for multi-step work.");
   console.log("- Subagents are required for non-trivial work.");
-  console.log("- Skills are auto-discovered.");
-  console.log("- MCP tools are used when configured.");
+  console.log("- Skills are auto-discovered (global + project).");
+  console.log("- MCP tools are used when configured (global + project).");
   console.log("- Built-in tools: SearchWeb, FetchURL (no config required).");
 
-  // Global ~/.kimi/ sync is opt-in only for open-source safety.
-  // Users can run `omk sync --global` explicitly after init if they want global config.
-  console.log(style.gray("  Global config sync skipped. Run `omk sync --global` to write to ~/.kimi/"));
+  console.log(style.gray("  Global MCP/skills are enabled by default for existing Kimi users."));
 
   // ── Shell integration & PATH check ──
   const pathCheck = await checkOmkInPath();

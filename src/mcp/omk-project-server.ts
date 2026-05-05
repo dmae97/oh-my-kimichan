@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createInterface } from "readline";
+import { writeSync } from "fs";
 import { readFile, writeFile, readdir, access, realpath } from "fs/promises";
 import { join, resolve, relative } from "path";
 import { execFileSync } from "child_process";
@@ -455,10 +456,7 @@ async function handleMemoryStatus(): Promise<{
   lastSync: string | null;
 }> {
   const status = await MEMORY_STORE.status();
-  const healthy =
-    (status.backend === "local_graph" && status.localGraph.configured) ||
-    (status.backend === "neo4j" && status.neo4j.configured) ||
-    (status.backend === "dual" && (status.localGraph.configured || status.neo4j.configured));
+  let healthy = status.backend === "local_graph" && status.localGraph.configured;
 
   let nodeCounts: Record<string, number> = {};
   const lastSync: string | null = null;
@@ -466,6 +464,7 @@ async function handleMemoryStatus(): Promise<{
   try {
     const mindmap = await MEMORY_STORE.mindmap("", 1);
     if (mindmap) {
+      if (status.backend === "kuzu") healthy = true;
       nodeCounts = mindmap.nodes.reduce((acc, node) => {
         acc[node.type] = (acc[node.type] ?? 0) + 1;
         return acc;
@@ -1082,7 +1081,7 @@ const TOOLS: Tool[] = [
   {
     name: "omk_graph_query",
     description:
-      "Run read-only queries over the graph memory backend. local_graph supports GraphQL-lite (ontology, memory, memories, mindmap, nodes). neo4j and kuzu support read-only Cypher queries.",
+      "Run read-only queries over the graph memory backend. local_graph supports GraphQL-lite (ontology, memory, memories, mindmap, nodes). kuzu supports read-only Cypher queries.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1098,7 +1097,7 @@ const TOOLS: Tool[] = [
   // ── Memory search / status / ontology / mindmap ──
   {
     name: "omk_search_memory",
-    description: "Search local graph memory (and Neo4j if dual mode) for nodes matching query",
+    description: "Search the configured local graph or Kuzu memory backend for nodes matching query",
     inputSchema: {
       type: "object",
       properties: {
@@ -1149,7 +1148,7 @@ const TOOLS: Tool[] = [
   {
     name: "omk_compress_context",
     description:
-      "Prepare a hallucination-resistant context briefing by pulling the neo4j ontology, mindmap, and recent ensemble decisions before calling ctx_compress. Returns a grounded summary that should be prepended to the ctx_compress call.",
+      "Prepare a hallucination-resistant context briefing by pulling the ontology, mindmap, and recent ensemble decisions before calling ctx_compress. Returns a grounded summary that should be prepended to the ctx_compress call.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1318,7 +1317,12 @@ async function handleToolCall(name: string, args: unknown): Promise<unknown> {
 // ─── Server loop ────────────────────────────────────────────────────────
 
 function sendResponse(res: JsonRpcResponse): void {
-  process.stdout.write(JSON.stringify(res) + "\n");
+  const data = JSON.stringify(res) + "\n";
+  try {
+    writeSync(process.stdout.fd ?? 1, data);
+  } catch {
+    process.stdout.write(data);
+  }
 }
 
 function sendError(id: string | number, code: number, message: string, data?: unknown): void {
@@ -1461,22 +1465,45 @@ async function handleRequest(req: JsonRpcRequest): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Ensure synchronous stdout in piped environments (MCP stdio)
+  try {
+    // @ts-expect-error Node internal API not in types
+    process.stdout._handle?.setBlocking?.(true);
+  } catch {
+    // ignore if unavailable
+  }
+
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
 
   for await (const line of rl) {
     const trimmed = line.trim();
     if (!trimmed) continue;
+    let req: JsonRpcRequest | undefined;
     try {
-      const req = JSON.parse(trimmed) as JsonRpcRequest;
-      if (req.jsonrpc !== "2.0") continue;
-      await handleRequest(req);
+      req = JSON.parse(trimmed) as JsonRpcRequest;
     } catch {
-      // Ignore malformed JSON lines
+      // Not valid JSON — can't reply without an id, so ignore
+      continue;
     }
+    if (req.jsonrpc !== "2.0") continue;
+    try {
+      await handleRequest(req);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      sendError(req.id, -32603, `Internal error: ${message}`);
+    }
+  }
+
+  // Gracefully flush remaining stdout before the process exits
+  try {
+    process.stdout.end?.();
+  } catch {
+    // ignore
   }
 }
 
 main().catch((err) => {
   console.error("Fatal error:", err);
-  process.exit(1);
+  // Do NOT process.exit(1) — MCP clients treat hard exits as failures.
+  // The error has already been logged to stderr; let the event loop drain.
 });

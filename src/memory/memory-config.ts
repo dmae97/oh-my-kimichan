@@ -8,8 +8,7 @@ import {
   redactEmbeddingConfig,
 } from "./embedding.js";
 
-export type MemoryBackend = "local_graph" | "neo4j" | "dual" | "kuzu";
-export type Neo4jAuthMode = "basic" | "none";
+export type MemoryBackend = "local_graph" | "kuzu";
 
 export interface MemorySettings {
   backend: MemoryBackend;
@@ -32,15 +31,6 @@ export interface MemorySettings {
     query: "graphql-lite";
     configured: boolean;
   };
-  neo4j: {
-    uri: string;
-    username: string;
-    password?: string;
-    database: string;
-    auth: Neo4jAuthMode;
-    configured: boolean;
-    missing: string[];
-  };
   embedding: EmbeddingConfig;
 }
 
@@ -59,14 +49,6 @@ export interface MemoryStatus {
     ontology: string;
     query: "graphql-lite";
   };
-  neo4j: {
-    configured: boolean;
-    uri: string;
-    username: string;
-    database: string;
-    auth: Neo4jAuthMode;
-    missing: string[];
-  };
   embedding: Omit<EmbeddingConfig, "apiKey">;
 }
 
@@ -78,9 +60,9 @@ const FALLBACK_SESSION_ID = `process-${process.pid}-${new Date().toISOString().r
 
 export const GLOBAL_MEMORY_CONFIG_TOML = `# oh-my-kimi global memory policy
 # Default is project-local graph memory: open-source friendly, no daemon, no secrets.
-# Optional external Neo4j credentials must stay in env vars, never in this file.
+# Use backend = "kuzu" when you want the embedded Kuzu graph backend.
 [memory]
-backend = "local_graph"    # local_graph | neo4j | dual | kuzu
+backend = "local_graph"    # local_graph | kuzu
 scope = "project-session"
 strict = true               # fail memory writes if the selected graph backend is unavailable
 force = true                # global policy wins over project-local backend overrides
@@ -91,16 +73,6 @@ migrate_files = true        # seed the graph from existing .omk/memory files on 
 path = ".omk/memory/graph-state.json"
 ontology = "omk-ontology-mindmap-v1"
 query = "graphql-lite"
-
-[neo4j]
-uri_env = "OMK_NEO4J_URI"
-username_env = "OMK_NEO4J_USERNAME"
-password_env = "OMK_NEO4J_PASSWORD"
-database_env = "OMK_NEO4J_DATABASE"
-uri = "bolt://localhost:7687"
-username = "neo4j"
-database = "neo4j"
-auth = "basic"             # basic | none
 `;
 
 export function getGlobalMemoryConfigPath(): string {
@@ -108,15 +80,11 @@ export function getGlobalMemoryConfigPath(): string {
 }
 
 export function isGraphMemoryBackend(backend: MemoryBackend): boolean {
-  return backend === "local_graph" || backend === "neo4j" || backend === "dual" || backend === "kuzu";
+  return backend === "local_graph" || backend === "kuzu";
 }
 
 export function usesLocalGraphBackend(backend: MemoryBackend): boolean {
   return backend === "local_graph";
-}
-
-export function usesExternalNeo4jBackend(backend: MemoryBackend): boolean {
-  return backend === "neo4j" || backend === "dual";
 }
 
 export function usesKuzuBackend(backend: MemoryBackend): boolean {
@@ -156,29 +124,6 @@ export async function loadMemorySettings(projectRoot = process.cwd(), env: Env =
   );
   const localGraphOntology = env.OMK_LOCAL_GRAPH_ONTOLOGY ?? readSetting("local_graph.ontology") ?? "omk-ontology-mindmap-v1";
 
-  const uriEnv = readSetting("neo4j.uri_env") ?? "OMK_NEO4J_URI";
-  const usernameEnv = readSetting("neo4j.username_env") ?? "OMK_NEO4J_USERNAME";
-  const passwordEnv = readSetting("neo4j.password_env") ?? "OMK_NEO4J_PASSWORD";
-  const databaseEnv = readSetting("neo4j.database_env") ?? "OMK_NEO4J_DATABASE";
-  const auth = normalizeAuth(readSetting("neo4j.auth"));
-
-  // Neo4j credentials ONLY from environment variables — never from config files.
-  const uri = env[uriEnv] ?? env.NEO4J_URI ?? "bolt://localhost:7687";
-  const username = env[usernameEnv] ?? env.NEO4J_USERNAME ?? "neo4j";
-  const password = env[passwordEnv] ?? env.NEO4J_PASSWORD;
-  const database = env[databaseEnv] ?? env.NEO4J_DATABASE ?? "neo4j";
-
-  if (globalConfig["neo4j.password"] || projectConfig["neo4j.password"] || globalConfig["neo4j.username"] || projectConfig["neo4j.username"]) {
-    console.warn("[memory-config] Neo4j credentials found in config file are ignored. Use environment variables only.");
-  }
-
-  const missing: string[] = [];
-  if (!uri) missing.push(uriEnv);
-  if (auth === "basic") {
-    if (!username) missing.push(usernameEnv);
-    if (!password) missing.push(passwordEnv);
-  }
-
   const embedding = loadEmbeddingConfig(env);
 
   return {
@@ -202,15 +147,6 @@ export async function loadMemorySettings(projectRoot = process.cwd(), env: Env =
       query: "graphql-lite",
       configured: true,
     },
-    neo4j: {
-      uri,
-      username,
-      password,
-      database,
-      auth,
-      configured: missing.length === 0,
-      missing,
-    },
     embedding,
   };
 }
@@ -230,14 +166,6 @@ export function summarizeMemorySettings(settings: MemorySettings): MemoryStatus 
       path: settings.localGraph.path,
       ontology: settings.localGraph.ontology,
       query: settings.localGraph.query,
-    },
-    neo4j: {
-      configured: settings.neo4j.configured,
-      uri: redactUri(settings.neo4j.uri),
-      username: settings.neo4j.username,
-      database: settings.neo4j.database,
-      auth: settings.neo4j.auth,
-      missing: settings.neo4j.missing,
     },
     embedding: redactEmbeddingConfig(settings.embedding),
   };
@@ -300,13 +228,11 @@ function normalizeTomlValue(value: string): string {
 }
 
 function normalizeBackend(value: string | undefined): MemoryBackend {
-  if (value === "local_graph" || value === "neo4j" || value === "dual" || value === "kuzu") return value;
+  if (value === "local_graph" || value === "kuzu") return value;
   if (value === "graph" || value === "local-graph") return "local_graph";
+  // Legacy external graph-database settings are intentionally downgraded to the
+  // local ontology graph. Kuzu remains available through backend = "kuzu".
   return "local_graph";
-}
-
-function normalizeAuth(value: string | undefined): Neo4jAuthMode {
-  return value === "none" ? "none" : "basic";
 }
 
 function parseOptionalBoolean(value: string | undefined): boolean | undefined {
@@ -327,18 +253,4 @@ function toEnvKey(key: string): string {
 
 function hashShort(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
-}
-
-function redactUri(uri: string): string {
-  try {
-    const parsed = new URL(uri);
-    if (parsed.username || parsed.password) {
-      parsed.username = parsed.username ? "***" : "";
-      parsed.password = parsed.password ? "***" : "";
-      return parsed.toString();
-    }
-  } catch {
-    // Non-URL-ish Bolt strings should be safe enough as long as credentials are not embedded.
-  }
-  return uri;
 }

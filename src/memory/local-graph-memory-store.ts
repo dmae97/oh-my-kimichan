@@ -44,7 +44,7 @@ export interface GraphQueryResult {
   data: unknown;
   extensions: {
     dialect: "omk-graphql-lite-v1" | "cypher";
-    backend: "local_graph" | "neo4j" | "kuzu";
+    backend: "local_graph" | "kuzu";
     statePath?: string;
     database?: string;
   };
@@ -199,7 +199,7 @@ export class LocalGraphMemoryStore {
       ? { ...(options.env ?? process.env), OMK_SESSION_ID: options.sessionId }
       : options.env ?? process.env;
     const settings = await loadMemorySettings(options.projectRoot, env);
-    if (!usesLocalGraphBackend(settings.backend) && settings.backend !== "dual") return null;
+    if (!usesLocalGraphBackend(settings.backend)) return null;
     return new LocalGraphMemoryStore(settings, options.source ?? "omk-local-graph-memory");
   }
 

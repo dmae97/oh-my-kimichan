@@ -10,7 +10,7 @@ Okabe/D-Mail is the fast context-safety layer:
 - send D-Mail before risky refactors, dependency migrations, long-running multi-agent handoffs, or `/compact`;
 - keep D-Mail notes short and future-facing so rollback/recovery knows the goal, changed files, tests, blockers, and next action.
 
-Project-local ontology graph memory is the durable project/session memory layer. D-Mail is for checkpoint recovery; graph memory is for long-term recall. External Neo4j remains optional.
+Project-local ontology graph memory is the durable project/session memory layer. D-Mail is for checkpoint recovery; graph memory is for long-term recall. Embedded Kuzu remains available when Cypher-style graph queries are needed.
 
 ## Generated agent default
 

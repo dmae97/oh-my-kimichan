@@ -12,7 +12,7 @@ import { orchestratePrompt } from "../orchestration/orchestrate-prompt.js";
 export async function runCommand(
   flow: string | undefined,
   goal: string | undefined,
-  options: { workers?: string; runId?: string; goalId?: string }
+  options: { workers?: string; runId?: string; goalId?: string; timeoutPreset?: string }
 ): Promise<void> {
   const root = getProjectRoot();
   const resources = await getOmkResourceSettings();
@@ -157,12 +157,17 @@ export async function runCommand(
     process.exit(1);
   }
 
+  if (options.timeoutPreset) {
+    process.env.OMK_NODE_TIMEOUT_PRESET = options.timeoutPreset;
+  }
+
   try {
     await orchestratePrompt(rawPrompt, {
       sourceCommand: "run",
       runId,
       workers: String(workerCount),
       goalId: options.goalId,
+      timeoutPreset: options.timeoutPreset,
     });
   } catch (err) {
     console.error(status.error(String(err)));

@@ -114,10 +114,12 @@ const en: Record<string, string> = {
   "cmd.planDesc": "[Stable] Plan-only execution",
   "cmd.runDesc": "[Alpha] DAG-based long-running task execution",
   "cmd.runWorkersOption": "worker count (auto = resource profile based)",
+  "cmd.runTimeoutPresetOption": "timeout preset for DAG nodes (default | quick | standard | long-running | unlimited)",
   "cmd.teamDesc": "[Experimental] tmux-based multi-agent team execution",
   "cmd.teamWorkersOption": "worker window count (auto = resource profile based)",
   "cmd.parallelDesc": "[Alpha] Run Kimi CLI with parallel agents (coordinator + workers + reviewer)",
   "cmd.parallelWorkersOption": "Number of worker slots (auto = resource-profile based)",
+  "cmd.parallelTimeoutPresetOption": "timeout preset for DAG nodes (default | quick | standard | long-running | unlimited)",
   "cmd.parallelWatchOption": "Live refresh UI",
   "cmd.parallelApprovalOption": "approval policy (interactive | auto | yolo | block)",
   "cmd.parallelNoWatchOption": "Disable live UI",
@@ -280,7 +282,6 @@ const en: Record<string, string> = {
   "doctor.globalSkillsMissing": "~/.kimi/skills/ missing",
   "doctor.memorySynced": "~/.kimi/omk.memory.toml synced",
   "doctor.memoryMissing": "~/.kimi/omk.memory.toml missing — omk sync recommended",
-  "doctor.memoryNeo4jBackend": "backend={0}, required env missing: {1}",
   "doctor.memoryFileBackend": "file backend in use",
   "doctor.globalPollution": "Unexpected files in ~/.kimi — check omk --global opt-in",
   "doctor.globalClean": "~/.kimi clean",
@@ -342,6 +343,8 @@ const en: Record<string, string> = {
   // Chat command
   "chat.notInitialized": "omk environment is not initialized or the path is wrong. Proceeding with automatic initialization...",
   "chat.autoInitComplete": "Auto-initialization complete. Continuing chat.\n",
+  "chat.bootstrapReady": "Chat bootstrap ready for {0}: {1} artifact(s) created.",
+  "chat.bootstrapWarning": "Chat bootstrap warning: {0}",
   "chat.scrollUpForHud": "  ── Scroll up to see the full HUD ──\n",
 
   // Design command
@@ -414,6 +417,23 @@ const en: Record<string, string> = {
   "lgm.constraint": "Constraint",
   "lgm.question": "Question",
   "lgm.answer": "Answer",
+
+  // Mode preset
+  "cmd.modeDesc": "[Stable] Switch OMK execution mode (agent | plan | chat | debugging | review)",
+  "cmd.modeListDesc": "List available modes",
+  "mode.currentHeader": "Current Mode",
+  "mode.listHeader": "Available Modes",
+  "mode.name": "Mode",
+  "mode.description": "Description",
+  "mode.invalid": "Invalid mode: {0}",
+  "mode.validValues": "Valid modes:",
+  "mode.alreadySet": "Already in {0} mode",
+  "mode.switched": "Switched from {0} to {1} mode",
+  "mode.switchHint": "Switch with: omk mode <agent|plan|chat|debugging|review>",
+  "mode.planApprovePrompt": "Execute this plan?",
+  "mode.planApproved": "Plan approved — proceeding to execution",
+  "mode.planSkipped": "Plan saved. Run 'omk run' or 'omk parallel' to execute later.",
+  "cli.menuMode": "mode     — Switch execution mode",
 };
 
 const ko: Record<string, string> = {
@@ -512,6 +532,8 @@ const ko: Record<string, string> = {
   "cmd.cockpitRefreshOption": "Refresh interval in milliseconds",
   "chat.cockpitTmuxNotFound": "tmux is required for cockpit layout but was not found.",
   "chat.cockpitTmuxInstallHint": "Install tmux or use --layout inline for a single-pane chat.",
+  "chat.bootstrapReady": "{0} chat bootstrap 준비 완료: {1}개 artifact 생성.",
+  "chat.bootstrapWarning": "Chat bootstrap 경고: {0}",
   "chat.intro.kimicat": "Kimicat Chat ready",
   "chat.intro.minimal": "OMK Chat ready",
   "chat.intro.plain": "Chat ready",
@@ -522,10 +544,12 @@ const ko: Record<string, string> = {
   "cmd.planDesc": "[Stable] 계획 전용 실행",
   "cmd.runDesc": "[Alpha] DAG 기반 장기 작업 실행",
   "cmd.runWorkersOption": "worker 수 (auto면 resource profile 기반)",
+  "cmd.runTimeoutPresetOption": "DAG 노드 timeout preset (default | quick | standard | long-running | unlimited)",
   "cmd.teamDesc": "[Experimental] tmux 기반 다중 에이전트 팀 실행",
   "cmd.teamWorkersOption": "worker 창 수 (auto면 resource profile 기반)",
   "cmd.parallelDesc": "[Alpha] 병렬 에이전트로 Kimi CLI 실행 (coordinator + workers + reviewer)",
   "cmd.parallelWorkersOption": "워커 슬롯 수 (auto = 리소스 프로필 기반)",
+  "cmd.parallelTimeoutPresetOption": "DAG 노드 timeout preset (default | quick | standard | long-running | unlimited)",
   "cmd.parallelWatchOption": "실시간 UI 새로고침",
   "cmd.parallelApprovalOption": "승인 정책 (interactive | auto | yolo | block)",
   "cmd.parallelNoWatchOption": "라이브 UI 비활성화",
@@ -688,7 +712,6 @@ const ko: Record<string, string> = {
   "doctor.globalSkillsMissing": "~/.kimi/skills/ 없음",
   "doctor.memorySynced": "~/.kimi/omk.memory.toml 동기화됨",
   "doctor.memoryMissing": "~/.kimi/omk.memory.toml 없음 — omk sync 실행 권장",
-  "doctor.memoryNeo4jBackend": "backend={0}, 필수 env 누락: {1}",
   "doctor.memoryFileBackend": "file backend 사용 중",
   "doctor.globalPollution": "~/.kimi에 예상外 파일 존재 — omk --global opt-in 확인",
   "doctor.globalClean": "~/.kimi 정상",
@@ -822,6 +845,23 @@ const ko: Record<string, string> = {
   "lgm.constraint": "Constraint",
   "lgm.question": "Question",
   "lgm.answer": "Answer",
+
+  // Mode preset
+  "cmd.modeDesc": "[Stable] OMK 실행 모드 전환 (agent | plan | chat | debugging | review)",
+  "cmd.modeListDesc": "사용 가능한 모드 목록",
+  "mode.currentHeader": "현재 모드",
+  "mode.listHeader": "사용 가능한 모드",
+  "mode.name": "모드",
+  "mode.description": "설명",
+  "mode.invalid": "잘못된 모드: {0}",
+  "mode.validValues": "유효한 모드:",
+  "mode.alreadySet": "이미 {0} 모드입니다",
+  "mode.switched": "{0}에서 {1} 모드로 전환되었습니다",
+  "mode.switchHint": "전환: omk mode <agent|plan|chat|debugging|review>",
+  "mode.planApprovePrompt": "이 계획을 실행하시겠습니까?",
+  "mode.planApproved": "계획 승인됨 — 실행을 계속합니다",
+  "mode.planSkipped": "계획이 저장되었습니다. 나중에 'omk run' 또는 'omk parallel'로 실행하세요.",
+  "cli.menuMode": "mode     — 실행 모드 전환",
 };
 
 const dictionaries: Record<string, Record<string, string>> = { en, ko };

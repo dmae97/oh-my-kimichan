@@ -14,6 +14,7 @@ import type {
   GraphQueryResult,
 } from "./local-graph-memory-store.js";
 import { extractConcepts, ONTOLOGY } from "./local-graph-memory-store.js";
+import { buildKuzuOntologySchema } from "./ontology-model.js";
 
 // Lazy-load kuzu to avoid hard dependency at import time
 type KuzuMod = typeof import("kuzu");
@@ -131,6 +132,31 @@ export class KuzuMemoryStore {
     ];
 
     for (const ddl of relTables) {
+      const tableName = extractTableName(ddl);
+      if (!tables.has(tableName)) {
+        try {
+          await this.conn.query(ddl);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes("already exists")) throw err;
+        }
+      }
+    }
+
+    // Ontology node / relationship tables
+    const ontologySchema = buildKuzuOntologySchema();
+    for (const ddl of ontologySchema.nodeTables) {
+      const tableName = extractTableName(ddl);
+      if (!tables.has(tableName)) {
+        try {
+          await this.conn.query(ddl);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes("already exists")) throw err;
+        }
+      }
+    }
+    for (const ddl of ontologySchema.relTables) {
       const tableName = extractTableName(ddl);
       if (!tables.has(tableName)) {
         try {

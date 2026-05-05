@@ -1,22 +1,5 @@
-# Graph memory and optional Neo4j
+# Graph memory and Kuzu
 
-OMK now defaults to project-local ontology graph memory. See [`docs/local-graph-memory.md`](./local-graph-memory.md) for the default open-source setup, mind-map ontology, and GraphQL-lite MCP queries.
+OMK uses project-local ontology graph memory by default and supports the embedded Kuzu backend for Cypher-style graph queries. See [`docs/local-graph-memory.md`](./local-graph-memory.md) for the current memory policy, mind-map ontology, and MCP query examples.
 
-External Neo4j is optional. Enable it only when you want a running Neo4j server as the graph backend:
-
-```toml
-[memory]
-backend = "neo4j"
-
-[neo4j]
-uri_env = "OMK_NEO4J_URI"
-username_env = "OMK_NEO4J_USERNAME"
-password_env = "OMK_NEO4J_PASSWORD"
-database_env = "OMK_NEO4J_DATABASE"
-uri = "bolt://localhost:7687"
-username = "neo4j"
-database = "neo4j"
-auth = "basic"
-```
-
-Credentials must stay in environment variables or a secret manager. Never commit Neo4j passwords or memory secrets.
+Neo4j support has been removed from the runtime path; stale `[neo4j]` config blocks are ignored and should be deleted from local config files.

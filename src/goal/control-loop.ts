@@ -114,7 +114,7 @@ export async function evaluateGoalProgressEnsemble(
     nextAction = "continue";
   }
 
-  // Persist important ensemble decisions to neo4j/local memory
+  // Persist important ensemble decisions to the configured graph memory backend.
   if (ensemble.confidence >= 0.5) {
     await saveEnsembleDecision(goal, runState, ensemble, root).catch(() => {
       // ignore persistence failures

@@ -10,6 +10,8 @@ import { style, status } from "../util/theme.js";
 import { MemoryStore } from "../memory/memory-store.js";
 import type { ParallelCommandOptions } from "../commands/parallel.js";
 import type { GoalSpec } from "../contracts/goal.js";
+import { getCurrentMode } from "../util/mode-preset.js";
+import { t } from "../util/i18n.js";
 
 export interface OrchestrateOptions {
   runId?: string;
@@ -18,6 +20,7 @@ export interface OrchestrateOptions {
   watch?: boolean;
   view?: string;
   goalId?: string;
+  timeoutPreset?: string;
   sourceCommand: "chat" | "run" | "parallel" | "goal-run" | "goal-continue" | "default";
 }
 
@@ -157,7 +160,60 @@ export async function orchestratePrompt(
   await mkdir(goalDir, { recursive: true });
   await writeFile(join(goalDir, "next-prompt.md"), enrichedPrompt);
 
-  // ── Always execute via parallel DAG ──
+  // ── Mode-aware execution ──
+  const currentMode = await getCurrentMode();
+
+  if (currentMode === "chat") {
+    // Chat mode: skip orchestration, go straight to interactive chat
+    console.log(style.purpleBold("💬 Chat mode — starting interactive session"));
+    const { chatCommand } = await import("../commands/chat.js");
+    await chatCommand({
+      runId: goalId,
+      workers: options.workers,
+    });
+    return;
+  }
+
+  if (currentMode === "plan") {
+    // Plan mode: save enriched prompt and wait for approval
+    console.log(style.purpleBold("📐 Plan mode — review the generated plan"));
+    console.log("");
+    console.log(enrichedPrompt);
+    console.log("");
+    console.log(status.ok(`Plan saved to: ${join(goalDir, "next-prompt.md")}`));
+
+    if (process.stdout.isTTY && process.stdin.isTTY) {
+      const { select } = await import("@inquirer/prompts");
+      const approve = await select(
+        {
+          message: t("mode.planApprovePrompt"),
+          choices: [
+            { name: "Yes — execute now", value: "yes" },
+            { name: "No — save and exit", value: "no" },
+          ],
+        },
+        { signal: AbortSignal.timeout(60_000) }
+      );
+      if (approve !== "yes") {
+        console.log(status.ok(t("mode.planSkipped")));
+        return;
+      }
+      console.log(status.ok(t("mode.planApproved")));
+    } else {
+      console.log(style.gray("Non-TTY: plan saved. Run with 'omk run' or 'omk parallel' to execute."));
+      return;
+    }
+  }
+
+  if (currentMode === "debugging") {
+    console.log(style.purpleBold("🐛 Debugging mode — focused on reproduction, root-cause, and minimal fix"));
+  } else if (currentMode === "review") {
+    console.log(style.purpleBold("🔍 Review mode — focused on audit, security scan, and quality assessment"));
+  } else if (currentMode === "agent") {
+    console.log(style.purpleBold("🤖 Agent mode — full orchestration"));
+  }
+
+  // ── Always execute via parallel DAG (default + approved plan) ──
   const { parallelCommand } = await import("../commands/parallel.js");
   const parallelOpts: ParallelCommandOptions = {
     workers: options.workers ?? String(resources.maxWorkers),
@@ -167,6 +223,7 @@ export async function orchestratePrompt(
     view: options.view ?? "cockpit",
     goalId,
     intent,
+    timeoutPreset: options.timeoutPreset,
   };
 
   const { runId: generatedRunId } = await parallelCommand(enrichedPrompt, parallelOpts);

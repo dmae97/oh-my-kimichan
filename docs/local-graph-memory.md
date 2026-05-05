@@ -16,7 +16,7 @@ Readable Markdown mirrors still live under `.omk/memory/*.md` for diffs and manu
 
 ```toml
 [memory]
-backend = "local_graph"    # file | local_graph | neo4j | dual
+backend = "local_graph"    # local_graph | kuzu
 scope = "project-session"
 strict = true
 mirror_files = true
@@ -28,7 +28,7 @@ ontology = "omk-ontology-mindmap-v1"
 query = "graphql-lite"
 ```
 
-`strict = true` means memory write failures are surfaced instead of silently dropping recall state. Local graph memory has no password or daemon requirement. External Neo4j remains optional through `backend = "neo4j"` plus environment variables.
+`strict = true` means memory write failures are surfaced instead of silently dropping recall state. Local graph memory has no password or daemon requirement. Use `backend = "kuzu"` when you want the embedded Kuzu graph backend.
 
 ## Ontology mind map
 
@@ -90,23 +90,13 @@ query {
 }
 ```
 
-## Optional external Neo4j
+## Optional embedded Kuzu
 
-External Neo4j is still available for teams that want a real graph database:
+Kuzu is the supported embedded graph database backend for projects that want Cypher-style graph queries without an external daemon:
 
 ```toml
 [memory]
-backend = "neo4j"
-
-[neo4j]
-uri_env = "OMK_NEO4J_URI"
-username_env = "OMK_NEO4J_USERNAME"
-password_env = "OMK_NEO4J_PASSWORD"
-database_env = "OMK_NEO4J_DATABASE"
-uri = "bolt://localhost:7687"
-username = "neo4j"
-database = "neo4j"
-auth = "basic"
+backend = "kuzu"
 ```
 
-Do not store credentials in `.omk/config.toml`, `~/.kimi/omk.memory.toml`, or `.omk/memory/*`.
+Kuzu stores its database under `.omk/memory/kuzu.db` and uses the same ontology decomposition as local graph memory.

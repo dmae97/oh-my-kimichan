@@ -62,6 +62,7 @@ export interface DagNode {
   retries: number;
   maxRetries: number;
   timeoutMs?: number;
+  timeoutPreset?: string;
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;

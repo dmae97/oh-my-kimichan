@@ -6,6 +6,7 @@ import { dirname, join, isAbsolute, relative } from "path";
 import { homedir } from "os";
 import { writeTodos, readTodos, parseSetTodoListFromOutput, type TodoItem } from "../util/todo-sync.js";
 import { writeSessionMeta, readSessionMeta, createOmkSessionEnv, createOmkSessionId } from "../util/session.js";
+import type { OmkMode } from "../util/mode-preset.js";
 
 export async function updateChatHeartbeat(root: string, runId: string): Promise<void> {
   const statePath = getRunPath(runId, "state.json", root);
@@ -102,6 +103,7 @@ import { initCommand } from "./init.js";
 import { runKimiInteractive } from "../kimi/runner.js";
 import { t } from "../util/i18n.js";
 import { detectTmux, launchChatCockpit, isCockpitChild, ensureChatRunState } from "../util/chat-cockpit.js";
+import { ensureChatStartupArtifacts } from "../util/chat-startup.js";
 import {
   queueChatStatePatch,
   updateChatHeartbeat as enqueueChatHeartbeat,
@@ -138,7 +140,7 @@ function resolveLayout(requested: ChatLayout | undefined): ChatLayout {
 
 function renderChatIntro(
   brand: ChatBrand,
-  meta: { agent: string; runId?: string; layout: ChatLayout; trust: string }
+  meta: { agent: string; runId?: string; layout: ChatLayout; trust: string; mode?: string }
 ): string {
   const titleKey: Record<ChatBrand, string> = {
     kimicat: "chat.intro.kimichan",
@@ -162,6 +164,11 @@ function renderChatIntro(
     lines.push(
       `  ${style.gray(t("chat.intro.trust") + ":")} ${style.cream(meta.trust)}`
     );
+    if (meta.mode) {
+      lines.push(
+        `  ${style.gray("Mode:")} ${style.cream(meta.mode)}`
+      );
+    }
   }
   return lines.join("\n");
 }
@@ -174,6 +181,7 @@ export async function chatCommand(options: {
   maxStepsPerTurn?: string;
   layout?: ChatLayout;
   brand?: ChatBrand;
+  mode?: string;
   cockpitRefresh?: string;
   cockpitRedraw?: "diff" | "full" | "append";
   cockpitHistory?: "off" | "static" | "watch";
@@ -181,6 +189,21 @@ export async function chatCommand(options: {
   cockpitHeight?: string;
 }): Promise<void> {
   const root = getProjectRoot();
+  const { getCurrentMode, isValidMode } = await import("../util/mode-preset.js");
+  let currentMode: OmkMode = "agent";
+  if (options.mode) {
+    const m: string = options.mode.toLowerCase().trim();
+    if (m === "default") {
+      currentMode = "agent";
+    } else if (isValidMode(m)) {
+      currentMode = m as OmkMode;
+    } else {
+      console.log(status.warn(`Invalid mode: ${options.mode}. Falling back to current mode.`));
+      currentMode = await getCurrentMode();
+    }
+  } else {
+    currentMode = await getCurrentMode();
+  }
   const agentFile = options.agentFile ?? getOmkPath("agents/root.yaml");
   const sessionId = createOmkSessionId("chat");
   const runId = options.runId;
@@ -193,6 +216,18 @@ export async function chatCommand(options: {
     console.log(status.warn(t("chat.notInitialized")));
     await initCommand({ profile: "default" });
     console.log(status.ok(t("chat.autoInitComplete")));
+  }
+
+  try {
+    const bootstrap = await ensureChatStartupArtifacts({ root, runId: effectiveRunId });
+    if (!isCockpitChild() && layout !== "plain" && bootstrap.created.length > 0) {
+      console.log(status.ok(t("chat.bootstrapReady", bootstrap.date, bootstrap.created.length)));
+    }
+  } catch (err) {
+    if (!isCockpitChild() && layout !== "plain") {
+      const message = err instanceof Error ? err.message : String(err);
+      console.log(status.warn(t("chat.bootstrapWarning", message)));
+    }
   }
 
   // ── Star prompt at chat start (parent only, skipped in cockpit child) ──
@@ -242,12 +277,16 @@ export async function chatCommand(options: {
     const resources = await getOmkResourceSettings();
     const trust = `${resources.mcpScope} MCP / ${resources.skillsScope} skills`;
     const agentDisplay = relative(root, agentFile);
+    const { getModePreset } = await import("../util/mode-preset.js");
+    const modePreset = getModePreset(currentMode);
+    const modeDisplay = modePreset ? `${modePreset.icon} ${modePreset.label}` : currentMode;
     console.log(
       renderChatIntro(brand, {
         agent: agentDisplay,
         runId: effectiveRunId,
         layout: isPlain ? "plain" : "inline",
         trust,
+        mode: modeDisplay,
       }) + "\n"
     );
   }
@@ -258,7 +297,10 @@ export async function chatCommand(options: {
       const { renderHudDashboard } = await import("./hud.js");
       const hud = await renderHudDashboard({ runId: effectiveRunId, terminalWidth: process.stdout.columns });
       const lines = hud.split("\n");
-      const summary = lines.slice(0, Math.min(lines.length, 20)).join("\n");
+      // Use terminal height to show as much HUD as possible (reserve 4 lines for prompt)
+      const termRows = process.stdout.rows || 24;
+      const maxLines = Math.max(20, termRows - 4);
+      const summary = lines.slice(0, Math.min(lines.length, maxLines)).join("\n");
       console.log(summary);
       console.log(style.gray(t("chat.scrollUpForHud")));
     } catch {
@@ -356,6 +398,7 @@ export async function chatCommand(options: {
     }
 
     env.OMK_RUN_ID = effectiveRunId;
+    env.OMK_MODE = currentMode;
 
     let lastThinking = "";
     let exitCode = 0;

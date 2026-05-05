@@ -44,94 +44,11 @@ export async function createMemoryStore(
     const { LocalGraphMemoryStore } = await import("./local-graph-memory-store.js");
     return LocalGraphMemoryStore.create(options);
   }
-  if (backend === "neo4j") {
-    const { Neo4jMemoryStore } = await import("./neo4j-memory-store.js");
-    return Neo4jMemoryStore.create(options);
-  }
   if (backend === "kuzu") {
     const { KuzuMemoryStore } = await import("./kuzu-memory-store.js");
     return KuzuMemoryStore.create(options);
   }
-  if (backend === "dual") {
-    const [{ LocalGraphMemoryStore }, { Neo4jMemoryStore }] = await Promise.all([
-      import("./local-graph-memory-store.js"),
-      import("./neo4j-memory-store.js"),
-    ]);
-    const [local, neo4jStore] = await Promise.all([
-      LocalGraphMemoryStore.create(options),
-      Neo4jMemoryStore.create(options),
-    ]);
-    if (!local || !neo4jStore) return null;
-    return new DualMemoryStore(local, neo4jStore);
-  }
   return null;
-}
-
-class DualMemoryStore implements UnifiedMemoryStore {
-  constructor(
-    private readonly local: UnifiedMemoryStore,
-    private readonly neo4j: UnifiedMemoryStore
-  ) {}
-
-  get status(): MemoryStatus {
-    return this.local.status;
-  }
-
-  get strict(): boolean {
-    return this.local.strict;
-  }
-
-  get mirrorFiles(): boolean {
-    return this.local.mirrorFiles;
-  }
-
-  get migrateFiles(): boolean {
-    return this.local.migrateFiles;
-  }
-
-  async read(path: string): Promise<string> {
-    return this.local.read(path);
-  }
-
-  async write(path: string, content: string): Promise<void> {
-    const results = await Promise.allSettled([
-      this.local.write(path, content),
-      this.neo4j.write(path, content),
-    ]);
-    const firstError = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
-    if (firstError) throw firstError.reason;
-  }
-
-  async append(path: string, content: string): Promise<void> {
-    const results = await Promise.allSettled([
-      this.local.append(path, content),
-      this.neo4j.append(path, content),
-    ]);
-    const firstError = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
-    if (firstError) throw firstError.reason;
-  }
-
-  async search(query: string, limit?: number): Promise<MemorySearchResult[]> {
-    return this.local.search(query, limit);
-  }
-
-  async ontology(): Promise<MemoryOntology | null> {
-    return this.local.ontology?.() ?? null;
-  }
-
-  async mindmap(query?: string, limit?: number): Promise<MemoryMindmap | null> {
-    return this.local.mindmap?.(query, limit) ?? null;
-  }
-
-  async graphQuery(query: string): Promise<GraphQueryResult> {
-    if (this.local.graphQuery) {
-      return this.local.graphQuery(query);
-    }
-    if (this.neo4j.graphQuery) {
-      return this.neo4j.graphQuery(query);
-    }
-    throw new Error("omk_graph_query requires a graph memory backend (local_graph or neo4j)");
-  }
 }
 
 export class MemoryStore {
@@ -266,7 +183,7 @@ export class MemoryStore {
   async graphQuery(query: string): Promise<GraphQueryResult> {
     const graph = await this.getGraphStore();
     if (typeof graph?.graphQuery !== "function") {
-      throw new Error("omk_graph_query requires a graph memory backend (local_graph or neo4j)");
+      throw new Error("omk_graph_query requires a graph memory backend (local_graph or kuzu)");
     }
     return graph.graphQuery(query);
   }

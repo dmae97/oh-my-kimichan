@@ -1,6 +1,6 @@
 {
   "name": "@oh-my-kimi/cli",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Multi-agent orchestration harness for the Kimi Code CLI. Parallel coding teams, live quality gates, DESIGN.md-aware UI, and zero-config safety hooks on top of Kimi K2.6.",
   "type": "module",
   "bin": {
@@ -58,8 +58,7 @@
     "quality-gates",
     "yolo-mode",
     "local-first",
-    "graph-memory",
-    "neo4j"
+    "graph-memory"
   ],
   "author": "dmae97",
   "license": "MIT",
@@ -68,7 +67,6 @@
     "commander": "^14.0.0",
     "execa": "^9.0.0",
     "fs-extra": "^11.0.0",
-    "neo4j-driver": "^6.0.1",
     "node-pty": "^1.1.0",
     "terminal-image": "^4.3.0",
     "typescript": "^5.9.3",

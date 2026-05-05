@@ -6,7 +6,7 @@ import { getKimiCapabilities } from "../kimi/capability.js";
 import { pathExists, getKimiConfigPath, readTextFile, getProjectRoot } from "../util/fs.js";
 import { isGitAvailable, getCurrentBranch, getGitStatus } from "../util/git.js";
 import { style, status, header, separator } from "../util/theme.js";
-import { getGlobalMemoryConfigPath, isGraphMemoryBackend, loadMemorySettings, usesExternalNeo4jBackend, usesLocalGraphBackend, usesKuzuBackend } from "../memory/memory-config.js";
+import { getGlobalMemoryConfigPath, isGraphMemoryBackend, loadMemorySettings, usesLocalGraphBackend, usesKuzuBackend } from "../memory/memory-config.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { t } from "../util/i18n.js";
 import { formatBytes } from "../util/output-buffer.js";
@@ -817,19 +817,13 @@ async function memoryChecks(): Promise<CheckResult[]> {
 
   results.push({
     name: "Graph Memory",
-    status: isGraphMemoryBackend(memorySettings.backend)
-      ? usesExternalNeo4jBackend(memorySettings.backend)
-        ? memorySettings.neo4j.configured ? "ok" : memorySettings.strict ? "fail" : "warn"
-        : "ok"
-      : "info",
+    status: isGraphMemoryBackend(memorySettings.backend) ? "ok" : "info",
     message: isGraphMemoryBackend(memorySettings.backend)
       ? usesLocalGraphBackend(memorySettings.backend)
         ? `backend=local_graph, ontology=${memorySettings.localGraph.ontology}, state=${memorySettings.localGraph.path}`
         : usesKuzuBackend(memorySettings.backend)
           ? `backend=kuzu, path=${join(memorySettings.project.root, ".omk", "memory", "kuzu.db")}, project=${memorySettings.project.key}`
-          : memorySettings.neo4j.configured
-            ? `backend=${memorySettings.backend}, database=${memorySettings.neo4j.database}, project=${memorySettings.project.key}`
-            : t("doctor.memoryNeo4jBackend", memorySettings.backend, memorySettings.neo4j.missing.join(", "))
+          : `backend=${memorySettings.backend}, project=${memorySettings.project.key}`
       : t("doctor.memoryFileBackend"),
   });
 

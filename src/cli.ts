@@ -54,7 +54,10 @@ program
           terminalWidth: process.stdout.columns || 120,
         });
         const lines = hud.split("\n");
-        return lines.slice(0, Math.min(lines.length, 10)).join("\n");
+        // Use terminal height to show as much HUD as possible (reserve 6 lines for mode selector + prompt)
+        const termRows = process.stdout.rows || 24;
+        const maxLines = Math.max(10, termRows - 6);
+        return lines.slice(0, Math.min(lines.length, maxLines)).join("\n");
       } catch {
         return kimicatCliHero();
       }
@@ -127,13 +130,46 @@ program
       }
     }
 
+    // ── Mode selector: Tab to cycle, Enter to confirm ──
+    const { promptModeCycle } = await import("./util/mode-selector.js");
+    const selectedMode = await promptModeCycle();
+
+    const { getModePreset } = await import("./util/mode-preset.js");
+    const preset = getModePreset(selectedMode);
+    const launchCmd = preset?.launchCommand ?? "chat";
+
     const { spawnSync } = await import("child_process");
-    const chatArgs = [process.argv[1]!, "chat", "--layout", "auto", "--brand", "kimicat"];
-    if (globalOpts.runId) chatArgs.push("--run-id", globalOpts.runId);
-    if (globalOpts.workers) chatArgs.push("--workers", globalOpts.workers);
-    const result = spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
-    if (result.status && result.status !== 0) {
-      process.exitCode = result.status;
+
+    if (launchCmd === "menu") {
+      const menuArgs = [process.argv[1]!, "menu"];
+      if (globalOpts.runId) menuArgs.push("--run-id", globalOpts.runId);
+      if (globalOpts.workers) menuArgs.push("--workers", globalOpts.workers);
+      const result = spawnSync(process.execPath, menuArgs, { stdio: "inherit" });
+      if (result.status && result.status !== 0) {
+        process.exitCode = result.status;
+      }
+    } else if (launchCmd === "chat") {
+      const chatArgs = [process.argv[1]!, "chat", "--layout", "auto", "--brand", "kimicat"];
+      if (globalOpts.runId) chatArgs.push("--run-id", globalOpts.runId);
+      if (globalOpts.workers) chatArgs.push("--workers", globalOpts.workers);
+      chatArgs.push("--mode", selectedMode);
+      const result = spawnSync(process.execPath, chatArgs, { stdio: "inherit" });
+      if (result.status && result.status !== 0) {
+        process.exitCode = result.status;
+      }
+    } else if (launchCmd === "review") {
+      const reviewArgs = [process.argv[1]!, "review"];
+      if (globalOpts.runId) reviewArgs.push("--run-id", globalOpts.runId);
+      const result = spawnSync(process.execPath, reviewArgs, { stdio: "inherit" });
+      if (result.status && result.status !== 0) {
+        process.exitCode = result.status;
+      }
+    } else if (launchCmd === "doctor") {
+      const doctorArgs = [process.argv[1]!, "doctor"];
+      const result = spawnSync(process.execPath, doctorArgs, { stdio: "inherit" });
+      if (result.status && result.status !== 0) {
+        process.exitCode = result.status;
+      }
     }
   });
 
@@ -172,6 +208,15 @@ program
     const globalOpts = program.opts();
     const { menuCommand } = await import("./commands/menu.js");
     await menuCommand({ runId: globalOpts.runId, workers: globalOpts.workers });
+  });
+
+program
+  .command("mode [preset]")
+  .description(t("cmd.modeDesc"))
+  .option("-l, --list", t("cmd.modeListDesc"))
+  .action(async (preset, options) => {
+    const { modeCommand } = await import("./commands/mode.js");
+    await modeCommand(preset, { list: Boolean(options.list) });
   });
 
 program
@@ -416,7 +461,8 @@ program
   .option("--workers <n>", t("cmd.chatWorkersOption"), "auto")
   .option("--max-steps-per-turn <n>", t("cmd.chatMaxStepsOption"))
   .option("--layout <auto|tmux|inline|plain>", t("cmd.chatLayoutOption"), "auto")
-  .option("--brand <kimichan|minimal|plain>", t("cmd.chatBrandOption"), "kimicat")
+  .option("--brand <kimicat|minimal|plain>", t("cmd.chatBrandOption"), "kimicat")
+  .option("--mode <agent|plan|chat|debugging|review>", "OMK execution mode")
   .option("--cockpit-refresh <ms>", "Cockpit refresh interval in milliseconds", "2000")
   .option("--cockpit-redraw <diff|full|append>", "Cockpit redraw mode", "diff")
   .option("--cockpit-history <off|static|watch>", "Cockpit history pane mode", "static")
@@ -519,6 +565,7 @@ program
   .command("run [flow] [goal]")
   .description(t("cmd.runDesc"))
   .option("--workers <n>", t("cmd.runWorkersOption"), "auto")
+  .option("--timeout-preset <preset>", t("cmd.runTimeoutPresetOption"))
   .action(async (flow, goal, options) => {
     const globalOpts = program.opts();
     const { runCommand } = await import("./commands/run.js");
@@ -539,6 +586,7 @@ program
   .command("parallel [goal]")
   .description(t("cmd.parallelDesc"))
   .option("--workers <n>", t("cmd.parallelWorkersOption"), "auto")
+  .option("--timeout-preset <preset>", t("cmd.parallelTimeoutPresetOption"))
   .option("--approval-policy <policy>", t("cmd.parallelApprovalOption"), "interactive")
   .option("--watch", t("cmd.parallelWatchOption"))
   .option("--no-watch", t("cmd.parallelNoWatchOption"))
@@ -1115,6 +1163,44 @@ dag
   .action(async (runId, target, subtarget, options) => {
     const { dagReplayCommand } = await import("./commands/dag.js");
     await dagReplayCommand(runId, target, subtarget, options);
+  });
+
+const cron = program.command("cron").description("Manage scheduled cron jobs");
+cron
+  .command("list")
+  .description("List all configured cron jobs")
+  .action(async () => {
+    const { cronListCommand } = await import("./commands/cron.js");
+    await cronListCommand();
+  });
+cron
+  .command("run <job-name>")
+  .description("Run a cron job immediately")
+  .option("--dag-file <path>", "DAG file path for ad-hoc runs")
+  .action(async (jobName, options) => {
+    const { cronRunCommand } = await import("./commands/cron.js");
+    await cronRunCommand(jobName, options);
+  });
+cron
+  .command("logs <job-name>")
+  .description("Show recent runs for a cron job")
+  .action(async (jobName) => {
+    const { cronLogsCommand } = await import("./commands/cron.js");
+    await cronLogsCommand(jobName);
+  });
+cron
+  .command("enable <job-name>")
+  .description("Enable a cron job")
+  .action(async (jobName) => {
+    const { cronEnableCommand } = await import("./commands/cron.js");
+    await cronEnableCommand(jobName);
+  });
+cron
+  .command("disable <job-name>")
+  .description("Disable a cron job")
+  .action(async (jobName) => {
+    const { cronDisableCommand } = await import("./commands/cron.js");
+    await cronDisableCommand(jobName);
   });
 
 const screenshot = program.command("screenshot").description("Manage project screenshots from clipboard");

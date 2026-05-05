@@ -1,5 +1,53 @@
 # Changelog
 
+## v1.1.1 — Release hardening, cron execution, and ontology memory defaults (2026-05-05)
+
+### New
+
+- **Timeout Presets** — configurable, named timeout profiles for DAG nodes
+  - Built-in presets: `default` (2m), `quick` (30s), `standard` (2m), `long-running` (30m), `unlimited` (0)
+  - Custom presets via `.omk/config.toml` `[timeouts.<name>]` sections
+  - Per-node `timeoutPreset` and `timeoutMs` override support
+  - CLI flag `--timeout-preset` for `omk run` and `omk parallel`
+  - Environment variable `OMK_NODE_TIMEOUT_MS` global override
+  - Resolution priority: per-node `timeoutMs` > per-node `timeoutPreset` > CLI flag > env > built-in default
+
+- **Cron Jobs** — scheduled recurring DAG execution
+  - New `omk cron` command group: `list`, `run`, `logs`, `enable`, `disable`
+  - Configuration via `.omk/cron.yml` with `schedule`, `dagFile`, `concurrencyPolicy`, `enabled`, `catchup`
+  - Supports `@yearly`, `@monthly`, `@weekly`, `@daily`, `@hourly`, and `@every <duration>` schedules
+  - Concurrency policies: `allow`, `forbid`, `replace`
+  - Run persistence to `.omk/cron-runs/<job-name>/<timestamp>.json`
+  - In-process scheduler (no external cron daemon required)
+  - Manual `cron run` now executes the configured DAG instead of only checking file existence
+  - Cron job names are validated before filesystem IO to block traversal
+
+- **Release hardening** — init, docs, and CI safety fixes
+  - `omk init` no longer copies global `~/.kimi/mcp.json` servers into project `.kimi/mcp.json` by default, preventing accidental env/header token leaks
+  - Existing custom project `.kimi/mcp.json` files are preserved
+  - Generated daily docs ignore patterns are narrowed so authored `docs/` files remain visible to git
+  - Release workflow now fails when the test step fails while still uploading test output
+
+- **Ontology memory defaults** — local graph/Kuzu-focused memory configuration
+  - Neo4j runtime/config support removed from the default code path
+  - Stale Neo4j credentials in config are ignored without startup warnings
+  - Local graph memory remains the default, with embedded Kuzu available for ontology graph workflows
+
+- **Long-Running Task Monitor** — heartbeat-based health tracking
+  - Heartbeat emitted every 30 seconds while a DAG node is running
+  - Stall detection after 3× heartbeat interval (90s default)
+  - Automatic retry integration with node `failurePolicy.retryable`
+  - New types: `TimeoutPreset`, `CronJob`, `CronRun`, `NodeMonitor`
+
+### Changed
+
+- `src/kimi/runner.ts` — dynamic timeout resolution via `resolveTimeoutMs()` instead of hardcoded 120s
+- `src/orchestration/executor.ts` — integrated timeout presets, heartbeat emission, and node monitor engine
+- `src/orchestration/dag.ts` — added `timeoutPreset?: string` to `DagNode`
+- `src/contracts/orchestration.ts` — extended with preset, cron, and monitor types
+
+---
+
 ## v1.1.0 — Scoped package rename & cross-platform hardening (2026-05-04)
 
 ### Changed

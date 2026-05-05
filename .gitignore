@@ -23,6 +23,13 @@ lerna-debug.log*
 .specify/
 specs/
 
+# Generated docs / daily reports
+/docs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+/docs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-plan.md
+/docs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-improvements.md
+/docs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-critical-issues.md
+/docs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-init-checklist.md
+
 # Kimi / Agent local user settings
 .kimi/
 .agents/

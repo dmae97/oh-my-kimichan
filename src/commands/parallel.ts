@@ -31,6 +31,7 @@ export interface ParallelCommandOptions {
   noPause?: boolean;
   compact?: boolean;
   goalId?: string;
+  timeoutPreset?: string;
   /** Analyzed user intent for dynamic DAG construction and role routing. */
   intent?: UserIntent;
 }
@@ -254,7 +255,8 @@ export async function parallelCommand(
     runId,
     workers: workerCount,
     approvalPolicy: approvalPolicy as "interactive" | "auto" | "yolo" | "block",
-    nodeTimeoutMs: 600_000,
+    nodeTimeoutMs: options.timeoutPreset ? undefined : 600_000,
+    timeoutPreset: options.timeoutPreset,
   });
 
   liveRenderer.stop();

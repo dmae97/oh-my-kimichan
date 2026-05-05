@@ -1,9 +1,13 @@
-import { style, kimicatCliHero } from "../util/theme.js";
+import { style, kimicatCliHero, label, separator } from "../util/theme.js";
 import { t, initI18n } from "../util/i18n.js";
 import { orchestratePrompt } from "../orchestration/orchestrate-prompt.js";
+import { getCurrentMode, getModePresets } from "../util/mode-preset.js";
 
 export async function menuCommand(options: { runId?: string; workers?: string }): Promise<void> {
   await initI18n();
+
+  const currentMode = await getCurrentMode();
+  const preset = getModePresets().find((p) => p.name === currentMode);
 
   const { renderHudDashboard } = await import("./hud.js");
   try {
@@ -14,6 +18,13 @@ export async function menuCommand(options: { runId?: string; workers?: string })
     console.log(hud);
   } catch {
     console.log(kimicatCliHero());
+  }
+
+  // Show current mode badge
+  if (preset) {
+    console.log("");
+    console.log(label("Mode", `${preset.icon} ${preset.label} (${preset.name})`));
+    console.log(separator(50));
   }
 
   const hasTty = Boolean(process.stdout.isTTY && process.stdin.isTTY);
@@ -40,6 +51,7 @@ export async function menuCommand(options: { runId?: string; workers?: string })
           { name: t("cli.menuHud"), value: "2" },
           { name: t("cli.menuPlan"), value: "3" },
           { name: t("cli.menuParallel"), value: "4" },
+          { name: t("cli.menuMode"), value: "m" },
           { name: t("cli.menuPrevious"), value: "0" },
           { name: t("cli.menuHelp"), value: "5" },
           { name: t("cli.menuExit"), value: "q" },
@@ -127,6 +139,31 @@ export async function menuCommand(options: { runId?: string; workers?: string })
         await hudCommand({ runId: prevRunId, watch: true, refreshMs: 2000 });
       } else {
         console.log(style.gray("  No previous run found."));
+      }
+      break;
+    }
+    case "m":
+    case "mode": {
+      const { modeCommand } = await import("./mode.js");
+      await modeCommand(undefined, { list: false });
+      // After showing current mode, prompt to switch
+      const { select } = await import("@inquirer/prompts");
+      const presets = getModePresets();
+      const modeAnswer = await select(
+        {
+          message: "Select mode:",
+          choices: [
+            ...presets.map((p) => ({
+              name: `${p.icon} ${p.label} — ${p.description}`,
+              value: p.name,
+            })),
+            { name: "Cancel", value: "cancel" },
+          ],
+        },
+        { signal: AbortSignal.timeout(30_000) }
+      );
+      if (modeAnswer !== "cancel") {
+        await modeCommand(modeAnswer, { list: false });
       }
       break;
     }

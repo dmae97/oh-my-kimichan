@@ -1,5 +1,5 @@
 /**
- * Neo4j ontology model for OMK project memory.
+ * Ontology model for OMK project memory.
  *
  * Defines core node types, relationship types, project-isolation fields,
  * and schema helpers used across all graph-backed memory stores.
@@ -63,21 +63,21 @@ export interface OntologyNodeBase {
   updatedAt: string;
 }
 
-/** Legacy Project node managed by the Neo4j memory store. */
+/** Project node managed by graph memory stores. */
 export interface ProjectNode extends OntologyNodeBase {
   key: string;
   name: string;
   root: string;
 }
 
-/** Legacy Session node managed by the Neo4j memory store. */
+/** Session node managed by graph memory stores. */
 export interface SessionNode extends OntologyNodeBase {
   key: string;
   sessionId: string;
   projectKey: string;
 }
 
-/** Legacy Memory node managed by the Neo4j memory store. */
+/** Memory node managed by graph memory stores. */
 export interface MemoryNode extends OntologyNodeBase {
   key: string;
   path: string;
@@ -85,7 +85,7 @@ export interface MemoryNode extends OntologyNodeBase {
   source: string;
 }
 
-/** Legacy MemoryVersion node managed by the Neo4j memory store. */
+/** MemoryVersion node managed by graph memory stores. */
 export interface MemoryVersionNode extends OntologyNodeBase {
   key: string;
   path: string;
@@ -171,7 +171,7 @@ export interface OntologyConstraintExecutor {
 }
 
 /**
- * Create unique constraints in Neo4j for every ontology node type.
+ * Create unique constraints for every ontology node type.
  * Each constraint enforces uniqueness on `(projectId, id)` for the label.
  */
 export async function createOntologyConstraints(
@@ -188,6 +188,54 @@ export async function createOntologyConstraints(
       options
     );
   }
+}
+
+/** Kuzu DDL statements for the full OMK ontology schema. */
+export interface KuzuOntologySchema {
+  nodeTables: string[];
+  relTables: string[];
+}
+
+/** Build Kuzu CREATE NODE TABLE / CREATE REL TABLE DDLs from the ontology model. */
+export function buildKuzuOntologySchema(): KuzuOntologySchema {
+  const baseProps =
+    "id STRING PRIMARY KEY, projectId STRING, workspaceRootHash STRING, schemaVersion INT64, createdAt STRING, updatedAt STRING";
+
+  const nodeTables: string[] = [
+    `CREATE NODE TABLE OmkGoal (${baseProps}, goalId STRING, title STRING, objective STRING, status STRING, riskLevel STRING)`,
+    `CREATE NODE TABLE OmkCriterion (${baseProps}, criterionId STRING, description STRING, requirement STRING, weight INT64)`,
+    `CREATE NODE TABLE OmkEvidence (${baseProps}, evidenceId STRING, passed BOOLEAN, message STRING, checkedAt STRING)`,
+    `CREATE NODE TABLE OmkDecision (${baseProps}, decisionId STRING, description STRING, decidedAt STRING)`,
+    `CREATE NODE TABLE OmkTask (${baseProps}, taskId STRING, description STRING, status STRING, priority STRING)`,
+    `CREATE NODE TABLE OmkRisk (${baseProps}, riskId STRING, description STRING, level STRING)`,
+    `CREATE NODE TABLE OmkConstraint (${baseProps}, constraintId STRING, description STRING)`,
+    `CREATE NODE TABLE OmkFile (${baseProps}, path STRING, description STRING)`,
+    `CREATE NODE TABLE OmkSymbol (${baseProps}, symbolId STRING, name STRING, kind STRING)`,
+    `CREATE NODE TABLE OmkTest (${baseProps}, testId STRING, name STRING, status STRING)`,
+    `CREATE NODE TABLE OmkCommand (${baseProps}, commandId STRING, command STRING, description STRING)`,
+    `CREATE NODE TABLE OmkCommit (${baseProps}, commitId STRING, message STRING, author STRING)`,
+    `CREATE NODE TABLE OmkMCPServer (${baseProps}, name STRING, description STRING)`,
+    `CREATE NODE TABLE OmkSkill (${baseProps}, name STRING, description STRING)`,
+  ];
+
+  const relTables: string[] = [
+    `CREATE REL TABLE HAS_GOAL (FROM OmkProject TO OmkGoal)`,
+    `CREATE REL TABLE HAS_CRITERION (FROM OmkGoal TO OmkCriterion)`,
+    `CREATE REL TABLE HAS_EVIDENCE (FROM OmkCriterion TO OmkEvidence)`,
+    `CREATE REL TABLE HAS_DECISION (FROM OmkProject TO OmkDecision)`,
+    `CREATE REL TABLE HAS_TASK (FROM OmkProject TO OmkTask)`,
+    `CREATE REL TABLE DEPENDS_ON (FROM OmkTask TO OmkTask)`,
+    `CREATE REL TABLE HAS_RISK (FROM OmkProject TO OmkRisk)`,
+    `CREATE REL TABLE HAS_FILE (FROM OmkProject TO OmkFile)`,
+    `CREATE REL TABLE HAS_SYMBOL (FROM OmkFile TO OmkSymbol)`,
+    `CREATE REL TABLE HAS_TEST (FROM OmkProject TO OmkTest)`,
+    `CREATE REL TABLE HAS_COMMAND (FROM OmkProject TO OmkCommand)`,
+    `CREATE REL TABLE HAS_COMMIT (FROM OmkProject TO OmkCommit)`,
+    `CREATE REL TABLE USES_MCP (FROM OmkProject TO OmkMCPServer)`,
+    `CREATE REL TABLE USES_SKILL (FROM OmkProject TO OmkSkill)`,
+  ];
+
+  return { nodeTables, relTables };
 }
 
 /** Cypher write keywords rejected by the read-only graph query guard. */

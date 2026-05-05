@@ -14,12 +14,50 @@ export interface TaskResult {
   metadata?: Record<string, unknown>;
 }
 
+export interface TimeoutPreset {
+  name: string;
+  timeoutMs: number;
+  description?: string;
+}
+
+export interface CronJob {
+  name: string;
+  schedule: string;
+  dagFile: string;
+  concurrencyPolicy: "allow" | "forbid" | "replace";
+  enabled: boolean;
+  catchup: boolean;
+  lastRunAt?: string;
+  nextRunAt?: string;
+  timeoutPreset?: string;
+}
+
+export interface CronRun {
+  jobName: string;
+  startedAt: string;
+  completedAt?: string;
+  success: boolean;
+  runId: string;
+  logPath: string;
+  error?: string;
+}
+
+export interface NodeMonitor {
+  nodeId: string;
+  runId: string;
+  lastHeartbeatAt: string;
+  stallThresholdMs: number;
+  status: "healthy" | "stalled" | "recovered";
+}
+
 export interface RunOptions {
   runId: string;
   workers: number;
   approvalPolicy: ApprovalPolicy;
   worktreeRoot?: string;
   nodeTimeoutMs?: number;
+  timeoutPreset?: string;
+  heartbeatIntervalMs?: number;
 }
 
 export type TaskType =

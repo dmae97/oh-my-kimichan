@@ -32,7 +32,7 @@ Completed in the current working tree:
 - `omk_write_config` is now disabled by default and requires explicit `OMK_MCP_ALLOW_WRITE_CONFIG=1` for trusted local sessions.
 - Open-source scaffold defaults now use `approval_policy = "yolo"` plus `yolo_mode = true`.
 - Built-in TypeScript LSP support added: `omk lsp typescript`, `.omk/lsp.json`, bundled `typescript-language-server`, and LSP regression tests.
-- Current TypeScript build blockers in the Neo4j memory files are resolved; `npm run check`, `npm run build`, and `npm pack --dry-run --json` pass.
+- Current TypeScript build blockers in the graph memory files are resolved; `npm run check`, `npm run build`, and `npm pack --dry-run --json` pass.
 - Mascot theme follow-up completed: `omk --help` and Kimi banner fallback now use the Kimicat purple/hoodie/mint token set plus compact ASCII instead of the previous oversized ANSI image fallback.
 - AGENTS/DAG runtime ETA support added: executor records per-node timing/attempts, persists `RunState.estimate`, passes ETA env to task runners, and HUD displays progress/ETA when `state.json` exists.
 - Theme safety guardrails added: terminal display strings are sanitized, `NO_COLOR`/`TERM=dumb` are respected, and configured logo images are project-relative by default with type/size/magic-byte validation.

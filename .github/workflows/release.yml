@@ -22,7 +22,6 @@ jobs:
       - run: npm run check
       - name: Run tests
         run: npm test 2>&1 | tee test-output.log
-        continue-on-error: true
       - name: Upload test output
         if: always()
         uses: actions/upload-artifact@v4

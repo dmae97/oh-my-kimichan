@@ -29,7 +29,7 @@
   <code># omk demo  # Coming soon — try the examples below</code>
 </p>
 
-> ✅ <strong>Stable Release</strong> — v1.1.0 is ready for daily use. Core orchestration, chat harness, and quality gates are solid. Some advanced features (<code>parallel</code>, <code>goal</code>) may still evolve.
+> ✅ <strong>Stable Release</strong> — v1.1.1 is ready for daily use. Core orchestration, chat harness, and quality gates are solid. Some advanced features (<code>parallel</code>, <code>goal</code>) may still evolve.
 
 
 <p>
@@ -117,20 +117,24 @@ Each example includes:
 
 ## GitHub Release Snapshot
 
-> **Current GitHub-ready version:** `1.1.0`
+> **Current GitHub-ready version:** `1.1.1`
 
-### What's New in v1.1.0
+### What's New in v1.1.1
 
 | **Area** | **GitHub-visible update** | **Why it matters** |
 |----------|---------------------------|--------------------|
+| **Automation** | `omk cron` — `list`, `run`, `logs`, `enable`, `disable` for scheduled DAG workflows, with validated job names and persisted run logs | Run repeatable DAG jobs without an external cron daemon |
+| **Timeouts** | `--timeout-preset` for `omk run` / `omk parallel`, per-node `timeoutPreset`, and custom `[timeouts.<name>]` config | Keep quick tasks fast while allowing long-running agent work safely |
+| **Safety & Quality** | `omk init` keeps global MCP secrets in user scope and preserves custom project `.kimi/mcp.json`; generated docs ignore is narrowed | Prevent accidental token leaks and avoid hiding authored documentation |
+| **Memory** | Local graph memory remains default; embedded Kuzu is supported; stale Neo4j config no longer warns at startup | Cleaner ontology memory startup with no Neo4j credential noise |
 | **Chat Harness** | `omk chat` — Interactive Kimi session with orchestrated path, exit banner (Run ID, resume, workers, MCP, skills), and cockpit/tmux support | Turn Kimi CLI into a persistent, resumable chat session with full OMK context |
 | **Chat Harness** | Chat-dedicated first-run star prompt (`OMK_STAR_PROMPT`) with cockpit-child deduplication | Polished onboarding without duplicate prompts in tmux splits |
 | **Performance** | Parallel I/O optimization across `cockpit`, `doctor`, `hud`, `ensemble`, `dag`, `run`, and MCP server | Faster dashboard refresh and lower latency on every command |
 | **UI/UX** | `omk cockpit` — Real-time compact dashboard with parallel TODO/agent rendering, git changes, and history | Monitor your multi-agent run from a tmux side panel |
 | **UI/UX** | `omk hud` — Full terminal dashboard with goal scoring, ETA estimation, and state-error recovery hints | Understand run health at a glance and know the next action |
-| **Safety & Quality** | Strict lint, typecheck, **234 tests**, smoke test, package audit, and secret scan all green | Production-grade reliability for daily use |
+| **Safety & Quality** | Strict lint, typecheck, **253 tests**, smoke test, package audit, and secret scan all green | Production-grade reliability for daily use |
 | **Orchestration** | DAG scheduler with retry, skip-on-failure, fallback roles, evidence gates, and ensemble candidates | Robust multi-agent execution with failure recovery |
-| **Memory** | Local graph memory (default), optional Neo4j, and optional Kuzu backends | Choose the right graph store for your project size |
+| **Memory** | Local graph memory (default) and embedded Kuzu backends | Choose the right graph store for your project size |
 
 ### What's New in v0.4.0
 
@@ -162,7 +166,7 @@ Each example includes:
 | **UI/UX** | `ParallelLiveRenderer` refreshes every 1.5 s with run state transitions | See workers start, finish, fail, and retry in real time |
 | **UI/UX** | `OMK_KIMI_STATUS_GAUGES=1` enables visual bar gauges for 5 h/weekly quota | Know your Kimi API budget at a glance |
 | **UI/UX** | `OMK_STAR_PROMPT` guided GitHub star experience on first CLI use | Community growth without being intrusive; respects `CI` and `--help` |
-| **Memory & Intelligence** | Local graph memory — `.omk/memory/graph-state.json` with ontology mindmap and GraphQL-lite recall | Local-first memory works without external Neo4j setup |
+| **Memory & Intelligence** | Local graph memory — `.omk/memory/graph-state.json` with ontology mindmap and GraphQL-lite recall | Local-first memory works without external database setup |
 | **Memory & Intelligence** | `omk lsp typescript` exposes the bundled TypeScript language server | Helps coding agents and editors share the same language intelligence |
 | **Memory & Intelligence** | I18n utilities added for multi-language agent workflows | Foundation for localized agent prompts and CLI output |
 | **Safety & Quality** | `stop-verify.sh` comprehensive verification + eslint + hardened path validation | Even in `yolo` mode, destructive commands and credential exposure are blocked |
@@ -227,7 +231,7 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 
 <h2 id="korean">Korean</h2>
 
-> ✅ <strong>Stable Release v1.1.0</strong> — Kimi Code CLI를 <strong>worktree 기반 코딩 팀</strong>으로 변환하세요. DESIGN.md 기반 UI 생성, AGENTS.md 호환성, 실시간 품질 게이트, 병렬 HUD를 제공합니다.
+> ✅ <strong>Stable Release v1.1.1</strong> — Kimi Code CLI를 <strong>worktree 기반 코딩 팀</strong>으로 변환하세요. DESIGN.md 기반 UI 생성, AGENTS.md 호환성, 실시간 품질 게이트, 병렬 HUD를 제공합니다.
 
 ### Features
 
@@ -247,16 +251,16 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 | Approval Policy | 기본값은 `approval_policy = "auto"` (안전 모드); 필요시 `yolo`로 전환 가능 |
 | Safety Hooks | yolo mode에서도 파괴적 명령어 및 비밀 유출 방지 기본 제공 |
 
-### 🆕 v1.0.0 Highlights (Stable)
+### 🆕 v1.1.1 Highlights (Stable)
 
 - **`omk chat`** — 오케스트레이션 경로, 퇴장 배너(Run ID, 재개, workers, MCP, skills), cockpit/tmux 지원이 포함된 인터랙티브 Kimi 세션
 - **Chat 전용 first-run star prompt** (`OMK_STAR_PROMPT`) — cockpit 자식 프로세스 중복 제거
 - **성능** — `cockpit`, `doctor`, `hud`, `ensemble`, `dag`, `run`, MCP 서버 전반에 병렬 I/O 최적화 적용
 - **`omk cockpit`** — 병렬 TODO/에이전트 렌더링, git 변경사항, 히스토리를 포함한 실시간 컴팩트 대시보드
 - **`omk hud`** — 목표 점수, ETA 예측, 상태 오류 복구 힌트가 포함한 풀 터미널 대시보드
-- **안전 및 품질** — 엄격한 lint, typecheck, **234 tests**, smoke test, 패키지 감사, 시크릿 스캔 전부 통과
+- **안전 및 품질** — 엄격한 lint, typecheck, **253 tests**, smoke test, 패키지 감사, 시크릿 스캔 전부 통과
 - **오케스트레이션** — 재시도, 실패 시 건너뛰기, 폴백 역할, 증거 게이트, 앙상블 후보가 포함된 DAG 스케줄러
-- **메모리** — 로컬 그래프 메모리(기본값), 선택적 Neo4j, 선택적 Kuzu 백엔드
+- **메모리** — 로컬 그래프 메모리(기본값), 내장 Kuzu 백엔드
 
 ### 🆕 v0.4.0 Highlights
 
@@ -311,7 +315,7 @@ oh-my-kimi agents use an Okabe-compatible base agent that inherits `default` and
 
 ### Project-local graph memory
 
-OMK stores project/session memory in `.omk/memory/graph-state.json` by default, decomposes notes into ontology nodes (`Goal`, `Decision`, `Task`, `Risk`, `Command`, `File`, `Evidence`, `Concept`), and exposes `omk_memory_mindmap` plus `omk_graph_query` for GraphQL-lite access. External Neo4j remains optional.
+OMK stores project/session memory in `.omk/memory/graph-state.json` by default, decomposes notes into ontology nodes (`Goal`, `Decision`, `Task`, `Risk`, `Command`, `File`, `Evidence`, `Concept`), and exposes `omk_memory_mindmap` plus `omk_graph_query` for GraphQL-lite access. Embedded Kuzu remains available for Cypher-style graph queries.
 
 The interactive wrapper also augments Kimi’s native `context:` status line with a masked OAuth account plus 5-hour and weekly usage/quota. See `docs/kimi-oauth-usage-status.md`.
 
@@ -470,7 +474,7 @@ graph TD
 
     Executor --> Memory["🧠 Memory & Context"]
     Memory --> LocalGraph["🗂️ Local Graph Memory"]
-    Memory --> Neo4j["🌐 Neo4j (optional)"]
+    Memory --> Kuzu["🧠 Kuzu (embedded)"]
     Memory --> State["💾 Run State (.omk/runs/)"]
     Memory --> Snippets["📎 Snippets + D-Mail Checkpoints"]
 
@@ -515,7 +519,7 @@ omk lsp typescript
 
 <h2 id="english">English</h2>
 
-> ✅ <strong>Stable Release v1.1.0</strong> — Turn Kimi Code CLI into a <strong>meme-tier multi-agent coding team</strong>. This is a Kimi-native wrapper — not a generic AI tool. DESIGN.md-aware UI, live quality gates, parallel HUD, AGENTS.md compatible.
+> ✅ <strong>Stable Release v1.1.1</strong> — Turn Kimi Code CLI into a <strong>meme-tier multi-agent coding team</strong>. This is a Kimi-native wrapper — not a generic AI tool. DESIGN.md-aware UI, live quality gates, parallel HUD, AGENTS.md compatible.
 
 ### Features
 
@@ -533,16 +537,16 @@ omk lsp typescript
 | Parallel DAG | `omk parallel <goal>` (alpha) runs coordinator → worker fan-out → reviewer with live UI and ETA tracking |
 | Safety Hooks | Default protection against destructive commands and secret leakage |
 
-### 🆕 v1.0.0 Highlights (Stable)
+### 🆕 v1.1.1 Highlights (Stable)
 
 - **`omk chat`** — Interactive Kimi session with orchestrated path, exit banner (Run ID, resume, workers, MCP, skills), and cockpit/tmux support
 - **Chat-dedicated first-run star prompt** (`OMK_STAR_PROMPT`) with cockpit-child deduplication
 - **Performance** — Parallel I/O optimization across `cockpit`, `doctor`, `hud`, `ensemble`, `dag`, `run`, and MCP server
 - **`omk cockpit`** — Real-time compact dashboard with parallel TODO/agent rendering, git changes, and history
 - **`omk hud`** — Full terminal dashboard with goal scoring, ETA estimation, and state-error recovery hints
-- **Safety & Quality** — Strict lint, typecheck, **234 tests**, smoke test, package audit, and secret scan all green
+- **Safety & Quality** — Strict lint, typecheck, **253 tests**, smoke test, package audit, and secret scan all green
 - **Orchestration** — DAG scheduler with retry, skip-on-failure, fallback roles, evidence gates, and ensemble candidates
-- **Memory** — Local graph memory (default), optional Neo4j, and optional Kuzu backends
+- **Memory** — Local graph memory (default) and embedded Kuzu backends
 
 ### 🆕 v0.4.0 Highlights
 
@@ -709,7 +713,7 @@ graph TD
 
     Executor --> Memory["🧠 Memory & Context"]
     Memory --> LocalGraph["🗂️ Local Graph Memory"]
-    Memory --> Neo4j["🌐 Neo4j (optional)"]
+    Memory --> Kuzu["🧠 Kuzu (embedded)"]
     Memory --> State["💾 Run State (.omk/runs/)"]
     Memory --> Snippets["📎 Snippets + D-Mail Checkpoints"]
 
@@ -743,7 +747,7 @@ Default hooks block destructive commands and secret leakage:
 
 <h2 id="chinese">Chinese</h2>
 
-> ✅ <strong>Stable Release v1.1.0</strong> — 将 Kimi Code CLI 转变为一个<strong>基于 worktree 的编码团队</strong>。支持 DESIGN.md 感知 UI 生成、AGENTS.md 兼容性、实时质量门禁以及并行 HUD。
+> ✅ <strong>Stable Release v1.1.1</strong> — 将 Kimi Code CLI 转变为一个<strong>基于 worktree 的编码团队</strong>。支持 DESIGN.md 感知 UI 生成、AGENTS.md 兼容性、实时质量门禁以及并行 HUD。
 
 ### Features
 
@@ -770,7 +774,7 @@ Default hooks block destructive commands and secret leakage:
 - **`omk hud`** — 完整终端仪表盘，支持目标评分、ETA 估算与状态错误恢复提示
 - **安全与质量** — 严格的 lint、typecheck、**234 项测试**、smoke test、包审计、密钥扫描全部通过
 - **编排** — 支持重试、失败跳过、回退角色、证据门控与候选集成的 DAG 调度器
-- **记忆** — 本地图记忆（默认）、可选 Neo4j、可选 Kuzu 后端
+- **记忆** — 本地图记忆（默认）和嵌入式 Kuzu 后端
 
 ### 🆕 v0.4.0 更新亮点
 
@@ -939,7 +943,7 @@ graph TD
 
     Executor --> Memory["🧠 Memory & Context"]
     Memory --> LocalGraph["🗂️ Local Graph Memory"]
-    Memory --> Neo4j["🌐 Neo4j (optional)"]
+    Memory --> Kuzu["🧠 Kuzu (embedded)"]
     Memory --> State["💾 Run State (.omk/runs/)"]
     Memory --> Snippets["📎 Snippets + D-Mail Checkpoints"]
 
@@ -973,7 +977,7 @@ graph TD
 
 <h2 id="japanese">Japanese</h2>
 
-> ✅ <strong>Stable Release v1.1.0</strong> — Kimi Code CLI を <strong>worktree ベースのコーディングチーム</strong>に変換します。DESIGN.md 対応の UI 生成、AGENTS.md 互換性、ライブ品質ゲート、並列 HUD を提供します。
+> ✅ <strong>Stable Release v1.1.1</strong> — Kimi Code CLI を <strong>worktree ベースのコーディングチーム</strong>に変換します。DESIGN.md 対応の UI 生成、AGENTS.md 互換性、ライブ品質ゲート、並列 HUD を提供します。
 
 ### Features
 
@@ -1000,7 +1004,7 @@ graph TD
 - **`omk hud`** — 目標スコアリング、ETA 推定、状態エラー回復ヒントを含むフルターミナルダッシュボード
 - **安全性と品質** — 厳格な lint、typecheck、**234 テスト**、smoke test、パッケージ監査、シークレットスキャンすべて合格
 - **オーケストレーション** — リトライ、失敗時スキップ、フォールバックロール、エビデンスゲート、アンサンブル候補を備えた DAG スケジューラ
-- **メモリ** — ローカルグラフメモリ（デフォルト）、オプションの Neo4j、オプションの Kuzu バックエンド
+- **メモリ** — ローカルグラフメモリ（デフォルト）と組み込み Kuzu バックエンド
 
 ### 🆕 v0.4.0 の主な更新
 
@@ -1169,7 +1173,7 @@ graph TD
 
     Executor --> Memory["🧠 Memory & Context"]
     Memory --> LocalGraph["🗂️ Local Graph Memory"]
-    Memory --> Neo4j["🌐 Neo4j (optional)"]
+    Memory --> Kuzu["🧠 Kuzu (embedded)"]
     Memory --> State["💾 Run State (.omk/runs/)"]
     Memory --> Snippets["📎 Snippets + D-Mail Checkpoints"]
 
@@ -1274,7 +1278,6 @@ This project stands on the shoulders of giants. Every line of code here is possi
 
 ### Language Server & Graph Database
 - **[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)** by TypeFox — For bundling a standards-compliant LSP that gives coding agents the same intelligence as VS Code.
-- **[neo4j-driver](https://github.com/neo4j/neo4j-javascript-driver)** by Neo4j, Inc. — For making graph-database connectivity a first-class citizen in JavaScript. Optional in OMK, but powerful when enabled.
 
 ### Version Control & Collaboration
 - **[Git](https://git-scm.com/)** by Linus Torvalds and the Git community — For the distributed version control system that enables worktrees, branches, and every merge strategy in OMK.

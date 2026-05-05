@@ -12,6 +12,7 @@ import { estimateRunProgress } from "../dist/orchestration/eta.js";
 import { createRoutedRunState, refreshRunStateEstimate, routeRunState, createExecutableDagFromState } from "../dist/orchestration/run-state.js";
 import { discoverRoutingInventory, resetRoutingInventoryCache } from "../dist/orchestration/routing.js";
 import { collectMcpConfigs } from "../dist/util/fs.js";
+import { resetTimeoutPresetCache, resolveTimeoutMs } from "../dist/util/timeout-config.js";
 
 async function tempWorktree() {
   return mkdtemp(join(tmpdir(), "omk-ensemble-"));
@@ -530,6 +531,119 @@ test("executor times out hanging node and marks it failed", async () => {
   assert.equal(slowNode?.status, "failed");
   assert.ok(slowNode?.attempts?.[0]?.status === "failed");
   assert.ok(slowResult?.stderr?.includes("timed out"));
+});
+
+test("executor node timeout preset overrides run preset and default node timeout", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "omk-timeout-preset-"));
+  const previousRoot = process.env.OMK_PROJECT_ROOT;
+  process.env.OMK_PROJECT_ROOT = projectRoot;
+  resetTimeoutPresetCache();
+
+  try {
+    await mkdir(join(projectRoot, ".omk"), { recursive: true });
+    await writeFile(
+      join(projectRoot, ".omk", "config.toml"),
+      "[timeouts.tiny]\ntimeout_ms = 50\n\n[timeouts.slow]\ntimeout_ms = 500\n"
+    );
+
+    const executor = createExecutor({ ensemble: false });
+    const dag = createDag({
+      nodes: [
+        { id: "slow", name: "Slow", role: "coder", dependsOn: [], maxRetries: 1, timeoutPreset: "tiny" },
+      ],
+    });
+    const runner = {
+      async run() {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return { success: true, stdout: "", stderr: "" };
+      },
+    };
+    let slowResult;
+    executor.onNodeComplete((node, taskResult) => {
+      if (node.id === "slow") slowResult = taskResult;
+    });
+
+    const result = await executor.execute(dag, runner, {
+      runId: "timeout-preset-test",
+      workers: 1,
+      approvalPolicy: "yolo",
+      nodeTimeoutMs: 5_000,
+      timeoutPreset: "slow",
+    });
+
+    assert.equal(result.success, false);
+    const slowNode = result.state.nodes.find((node) => node.id === "slow");
+    assert.equal(slowNode?.status, "failed");
+    assert.match(slowResult?.stderr ?? "", /timed out after 50ms/);
+  } finally {
+    resetTimeoutPresetCache();
+    restoreEnv("OMK_PROJECT_ROOT", previousRoot);
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveTimeoutMs rejects unknown timeout presets", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "omk-timeout-invalid-"));
+  const previousRoot = process.env.OMK_PROJECT_ROOT;
+  process.env.OMK_PROJECT_ROOT = projectRoot;
+  resetTimeoutPresetCache();
+
+  try {
+    await mkdir(join(projectRoot, ".omk"), { recursive: true });
+    await assert.rejects(
+      resolveTimeoutMs({ timeoutPreset: "does-not-exist" }),
+      /Unknown timeout preset "does-not-exist".*default/
+    );
+  } finally {
+    resetTimeoutPresetCache();
+    restoreEnv("OMK_PROJECT_ROOT", previousRoot);
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("executor uses OMK_NODE_TIMEOUT_MS when no explicit timeout or preset is set", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "omk-timeout-env-"));
+  const previousRoot = process.env.OMK_PROJECT_ROOT;
+  const previousTimeout = process.env.OMK_NODE_TIMEOUT_MS;
+  process.env.OMK_PROJECT_ROOT = projectRoot;
+  process.env.OMK_NODE_TIMEOUT_MS = "50";
+  resetTimeoutPresetCache();
+
+  try {
+    await mkdir(join(projectRoot, ".omk"), { recursive: true });
+    const executor = createExecutor({ ensemble: false });
+    const dag = createDag({
+      nodes: [
+        { id: "slow", name: "Slow", role: "coder", dependsOn: [], maxRetries: 1 },
+      ],
+    });
+    const runner = {
+      async run() {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return { success: true, stdout: "", stderr: "" };
+      },
+    };
+    let slowResult;
+    executor.onNodeComplete((node, taskResult) => {
+      if (node.id === "slow") slowResult = taskResult;
+    });
+
+    const result = await executor.execute(dag, runner, {
+      runId: "timeout-env-test",
+      workers: 1,
+      approvalPolicy: "yolo",
+    });
+
+    assert.equal(result.success, false);
+    const slowNode = result.state.nodes.find((node) => node.id === "slow");
+    assert.equal(slowNode?.status, "failed");
+    assert.match(slowResult?.stderr ?? "", /timed out after 50ms/);
+  } finally {
+    resetTimeoutPresetCache();
+    restoreEnv("OMK_PROJECT_ROOT", previousRoot);
+    restoreEnv("OMK_NODE_TIMEOUT_MS", previousTimeout);
+    await rm(projectRoot, { recursive: true, force: true });
+  }
 });
 
 test("executor returns failure when all nodes are blocked", async () => {

@@ -8,6 +8,8 @@ import { estimateRunProgress } from "./eta.js";
 import { dagNodeRoutingEnv } from "./routing.js";
 import { checkEvidenceGates } from "./evidence-gate.js";
 import { invalidateTaskDagGraph } from "./task-graph.js";
+import { resolveTimeoutMs } from "../util/timeout-config.js";
+import { createNodeMonitorEngine } from "./node-monitor.js";
 
 export interface ExecutorOptions {
   persister?: StatePersister;
@@ -25,6 +27,14 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
   let commitQueue: Promise<void> = Promise.resolve();
   const activeTimers = new Map<string, { progress: ReturnType<typeof setInterval>; persist: ReturnType<typeof setInterval> }>();
   let aborting = false;
+
+  const monitor = createNodeMonitorEngine({
+    heartbeatIntervalMs: 30_000,
+    stallThresholdMultiplier: 3,
+    onStall: (m) => {
+      process.stderr.write(`[omk] node ${m.nodeId} stalled (no heartbeat for ${m.stallThresholdMs}ms)\n`);
+    },
+  });
 
   function buildState(dag: Dag, options: RunOptions): RunState {
     const startedAt = new Date().toISOString();
@@ -269,8 +279,20 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
 
     activeTimers.set(node.id, { progress: progressTimer, persist: persistTimer });
 
-    const nodeTimeoutMs = node.timeoutMs ?? options.nodeTimeoutMs ?? 0;
+    monitor.register(node.id, options.runId);
+    const heartbeatTimer = setInterval(() => {
+      if (node.status === "running") {
+        monitor.heartbeat(node.id, options.runId);
+        state.lastHeartbeatAt = new Date().toISOString();
+      }
+    }, 30_000);
+
     try {
+      const timeoutPreset = node.timeoutPreset ?? options.timeoutPreset;
+      const nodeTimeoutMs = await resolveTimeoutMs({
+        timeoutMs: node.timeoutMs ?? (timeoutPreset ? undefined : options.nodeTimeoutMs),
+        timeoutPreset,
+      });
       const runPromise = nodeRunner.run(node, env);
       if (nodeTimeoutMs > 0) {
         let timeoutHandle: ReturnType<typeof setTimeout>;
@@ -308,6 +330,8 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
     } finally {
       clearInterval(progressTimer);
       clearInterval(persistTimer);
+      clearInterval(heartbeatTimer);
+      monitor.unregister(node.id, options.runId);
       activeTimers.delete(node.id);
       const stateNode = state.nodes.find((sn) => sn.id === node.id);
       if (stateNode) stateNode.thinking = node.thinking;
@@ -460,6 +484,7 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
           state.completedAt = new Date().toISOString();
           refreshState(state, dag, options);
           await commitState(state);
+          monitor.dispose();
           resolveDone({ state, success: false });
           return;
         }
@@ -468,6 +493,7 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
           state.completedAt = new Date().toISOString();
           refreshState(state, dag, options);
           await commitState(state);
+          monitor.dispose();
           resolveDone({ state, success: true });
           return;
         }
@@ -476,6 +502,7 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
           state.completedAt = new Date().toISOString();
           refreshState(state, dag, options);
           await commitState(state);
+          monitor.dispose();
           resolveDone({ state, success: false });
           return;
         }
@@ -504,6 +531,7 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
           state.completedAt = new Date().toISOString();
           refreshState(state, dag, options);
           await commitState(state);
+          monitor.dispose();
           resolveDone({ state, success: false });
         }
       }

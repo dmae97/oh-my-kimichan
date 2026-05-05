@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -17,6 +17,30 @@ test("local graph memory is the default backend", async () => {
     assert.equal(settings.localGraph.ontology, "omk-ontology-mindmap-v1");
     assert.match(settings.localGraph.path, /graph-state\.json$/);
   } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("stale Neo4j config is ignored without warnings", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "omk-local-graph-legacy-"));
+  const warnings = [];
+  const previousWarn = console.warn;
+  console.warn = (...args) => {
+    warnings.push(args.join(" "));
+  };
+
+  try {
+    await mkdir(join(projectRoot, ".omk"), { recursive: true });
+    await writeFile(
+      join(projectRoot, ".omk", "config.toml"),
+      '[memory]\nbackend = "neo4j"\n\n[neo4j]\nusername = "legacy-user"\n'
+    );
+
+    const settings = await loadMemorySettings(projectRoot, { OMK_MEMORY_FORCE: "0" });
+    assert.equal(settings.backend, "local_graph");
+    assert.deepEqual(warnings, []);
+  } finally {
+    console.warn = previousWarn;
     await rm(projectRoot, { recursive: true, force: true });
   }
 });

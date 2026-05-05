@@ -8,6 +8,7 @@ import { join } from "path";
 import type { TaskRunner, TaskResult } from "../contracts/orchestration.js";
 import type { DagNode } from "../orchestration/dag.js";
 import { runShellStreaming } from "../util/shell.js";
+import { resolveTimeoutMs } from "../util/timeout-config.js";
 import { getOmkResourceSettings, type OmkRuntimeScope } from "../util/resource-profile.js";
 import { KimiStatusLineEnhancer } from "./statusline.js";
 import { formatOmkVersionFooter } from "../util/version.js";
@@ -296,11 +297,13 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
 
       const thinkingHandler = createLiveThinkingHandler(currentOnThinking);
 
+      const effectiveTimeout = await resolveTimeoutMs({ timeoutMs: timeout, timeoutPreset: node.timeoutPreset });
+
       let result: Awaited<ReturnType<typeof runShellStreaming>>;
       try {
         result = await runShellStreaming("kimi", args, {
           cwd: worktree,
-          timeout,
+          timeout: effectiveTimeout,
           env: mergedEnv,
           logPath,
           onStdout: thinkingHandler,
