@@ -10,6 +10,7 @@
 <meta name="twitter:image" content="https://raw.githubusercontent.com/dmae97/oh-my-kimi/main/readmeasset/kimicat.png" />
 
 <img src="./readmeasset/kimicat.gif" alt="oh-my-kimi demo" width="720" />
+<p><sub>Preview GIF rebuilt from the new <code>readmeasset/kimicat.mp4</code> demo asset.</sub></p>
 
 <h1>oh-my-kimi</h1>
 
@@ -91,7 +92,11 @@ omk init
 # 3. Verify your environment
 omk doctor
 
-# 4. Run a planned workflow
+# 4. Optional: enable DeepSeek hybrid routing
+printf '%s' "$DEEPSEEK_API_KEY" | omk deepseek api
+omk deepseek doctor --soft
+
+# 5. Run a planned workflow
 omk run "Build a Next.js landing page with dark mode and contact form"
 ```
 
@@ -127,6 +132,7 @@ Each example includes:
 | **Timeouts** | `--timeout-preset` for `omk run` / `omk parallel`, per-node `timeoutPreset`, and custom `[timeouts.<name>]` config | Keep quick tasks fast while allowing long-running agent work safely |
 | **Safety & Quality** | `omk init` keeps global MCP secrets in user scope and preserves custom project `.kimi/mcp.json`; generated docs ignore is narrowed | Prevent accidental token leaks and avoid hiding authored documentation |
 | **Memory** | Local graph memory remains default; embedded Kuzu is supported; stale Neo4j config no longer warns at startup | Cleaner ontology memory startup with no Neo4j credential noise |
+| **Memory** | `omk graph view` renders `.omk/memory/graph-state.json` into an interactive HTML ontology graph, with `/graph-view` slash-command support | Inspect goals, decisions, risks, files, evidence, and derived relationships visually |
 | **Chat Harness** | `omk chat` — Interactive Kimi session with orchestrated path, exit banner (Run ID, resume, workers, MCP, skills), and cockpit/tmux support | Turn Kimi CLI into a persistent, resumable chat session with full OMK context |
 | **Chat Harness** | Chat-dedicated first-run star prompt (`OMK_STAR_PROMPT`) with cockpit-child deduplication | Polished onboarding without duplicate prompts in tmux splits |
 | **Performance** | Parallel I/O optimization across `cockpit`, `doctor`, `hud`, `ensemble`, `dag`, `run`, and MCP server | Faster dashboard refresh and lower latency on every command |
@@ -134,6 +140,7 @@ Each example includes:
 | **UI/UX** | `omk hud` — Full terminal dashboard with goal scoring, ETA estimation, and state-error recovery hints | Understand run health at a glance and know the next action |
 | **Safety & Quality** | Strict lint, typecheck, **253 tests**, smoke test, package audit, and secret scan all green | Production-grade reliability for daily use |
 | **Orchestration** | DAG scheduler with retry, skip-on-failure, fallback roles, evidence gates, and ensemble candidates | Robust multi-agent execution with failure recovery |
+| **DeepSeek Hybrid** | `omk deepseek api` stores the official API key locally, automatically enables hybrid routing, and uses deterministic Flash/Pro workers with Kimi as writer/merger | Add low-risk DeepSeek review/QA/advisory help without giving up Kimi authority |
 | **Memory** | Local graph memory (default) and embedded Kuzu backends | Choose the right graph store for your project size |
 
 ### What's New in v0.4.0
@@ -185,6 +192,18 @@ Each example includes:
 - [x] Screenshots for HUD, parallel UI, and status-line gauges are embedded with alt text.
 - [x] I18n utilities and multi-language README sections are present.
 - [x] New PNG assets (`omk-hud-1.png`, `omk-statusline-gauge.png`, `readme-in.png`, etc.) are included in the repo.
+
+### Ontology Graph Viewer
+
+OMK can render its project-local ontology memory into an interactive graph:
+
+```bash
+omk graph view --open
+```
+
+The viewer reads `.omk/memory/graph-state.json`, materializes relationships such as `PART_OF`, `DEPENDS_ON`, `TOUCHES_FILE`, and `EVIDENCED_BY`, then writes `.omk/memory/graph-view.html`. In Kimi chat, use `/graph-view` for the same inspection workflow.
+
+<img src="./readmeasset/omk_ontology.png" alt="OMK ontology graph viewer" width="720" />
 
 ## Repository Topics
 
@@ -238,6 +257,7 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 | Feature | Description |
 |---------|-------------|
 | Kimi K2.6 Optimized | Kimi K2.6에 특화된 워크플로우와 컨텍스트 관리 |
+| DeepSeek Hybrid Routing | `omk deepseek api`로 공식 API 키를 저장하면 하이브리드 라우팅이 자동 enable 됩니다. DeepSeek Flash/Pro는 리뷰·QA·자문 역할을 맡고, 실제 작성/머지는 Kimi가 유지합니다. |
 | Okabe + D-Mail | Kimi Code의 Okabe 스마트 컨텍스트 관리와 `SendDMail` 체크포인트 기본 활용 |
 | Worktree-based Parallel Team | Git worktree로 에이전트별 격리된 작업 공간 제공 |
 | DESIGN.md Integration | Google DESIGN.md 표준 기반 UI 생성 |
@@ -260,6 +280,7 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 - **`omk hud`** — 목표 점수, ETA 예측, 상태 오류 복구 힌트가 포함한 풀 터미널 대시보드
 - **안전 및 품질** — 엄격한 lint, typecheck, **253 tests**, smoke test, 패키지 감사, 시크릿 스캔 전부 통과
 - **오케스트레이션** — 재시도, 실패 시 건너뛰기, 폴백 역할, 증거 게이트, 앙상블 후보가 포함된 DAG 스케줄러
+- **DeepSeek Hybrid** — 공식 API 키 입력 시 하이브리드 기능 자동 활성화; Flash/Pro 60/40 라우팅과 파일 변경 노드의 Pro 자문을 지원
 - **메모리** — 로컬 그래프 메모리(기본값), 내장 Kuzu 백엔드
 
 ### 🆕 v0.4.0 Highlights
@@ -526,6 +547,7 @@ omk lsp typescript
 | Feature | Description |
 |---------|-------------|
 | Kimi K2.6 Optimized | Workflows and context management tailored for Kimi K2.6 |
+| DeepSeek Hybrid Routing | `omk deepseek api` stores the official API key and automatically enables hybrid routing. DeepSeek Flash/Pro handles review, QA, and advisory work while Kimi stays responsible for writing and merge authority. |
 | Okabe + D-Mail | Uses Kimi Code Okabe smart context management and `SendDMail` checkpoint recovery by default |
 | Worktree-based Parallel Team | Git worktree provides isolated workspaces per agent |
 | DESIGN.md Integration | UI generation based on Google DESIGN.md standard |
@@ -546,6 +568,7 @@ omk lsp typescript
 - **`omk hud`** — Full terminal dashboard with goal scoring, ETA estimation, and state-error recovery hints
 - **Safety & Quality** — Strict lint, typecheck, **253 tests**, smoke test, package audit, and secret scan all green
 - **Orchestration** — DAG scheduler with retry, skip-on-failure, fallback roles, evidence gates, and ensemble candidates
+- **DeepSeek Hybrid** — Official API key setup automatically enables hybrid mode with deterministic Flash/Pro 60/40 routing and Pro advisory on file-affecting nodes
 - **Memory** — Local graph memory (default) and embedded Kuzu backends
 
 ### 🆕 v0.4.0 Highlights

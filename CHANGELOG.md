@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- **Kimi-first provider routing foundation** — `--provider auto|kimi`, provider route metadata on DAG attempts, DeepSeek balance/preflight doctor, and read-only DeepSeek worker plumbing with Kimi fallback.
+- **DeepSeek routing hardening** — DeepSeek now defaults to current `deepseek-v4-flash` with thinking enabled and `reasoning_effort=max`; explicit `deepseek-v4-pro` also uses max effort, transient provider failures retry once, complex explicit DeepSeek hints stay on Kimi, and fallback attempt counts/failure kinds are recorded.
+- **Provider ontology** — local graph/Kuzu ontology now models providers, provider routes, and provider fallback evidence (`OmkProvider`, `OmkProviderRoute`, `OmkProviderFallback`).
+- **Ontology graph viewer** — `omk graph view` renders `.omk/memory/graph-state.json` to interactive HTML, with `/graph-view` slash-command skill support.
+
 ## v1.1.1 — Release hardening, cron execution, and ontology memory defaults (2026-05-05)
 
 ### New
