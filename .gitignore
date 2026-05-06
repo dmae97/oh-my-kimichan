@@ -58,6 +58,10 @@ specs/
 Thumbs.db
 desktop.ini
 
+# Local screenshot captures
+화면 캡처*.png
+Screenshot *.png
+
 # Secrets (never commit)
 *.pem
 *.key

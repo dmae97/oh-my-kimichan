@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.1.2 — DeepSeek hybrid launch and ontology visibility (2026-05-06)
+
 ### New
 
 - **Kimi-first provider routing foundation** — `--provider auto|kimi`, provider route metadata on DAG attempts, DeepSeek balance/preflight doctor, and read-only DeepSeek worker plumbing with Kimi fallback.
