@@ -1,11 +1,15 @@
 import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { getOmkPath, pathExists } from "../util/fs.js";
-import { style, status, padEndAnsi } from "../util/theme.js";
+import { style, status, padEndAnsi, sanitizeTerminalText } from "../util/theme.js";
 import { t } from "../util/i18n.js";
 import { listRunCandidates } from "./hud.js";
 
-interface NodeSummary {
+const ANSI_REGEX = /\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])/g;
+const MIN_RUN_HISTORY_WIDTH = 20;
+const DEFAULT_RUN_HISTORY_WIDTH = 80;
+
+export interface NodeSummary {
   done: number;
   running: number;
   failed: number;
@@ -13,7 +17,7 @@ interface NodeSummary {
   total: number;
 }
 
-interface RunDetail {
+export interface RunDetail {
   name: string;
   status: string;
   nodeSummary: NodeSummary;
@@ -23,6 +27,70 @@ interface RunDetail {
   hasGoal: boolean;
   hasPlan: boolean;
   goalTitle?: string;
+}
+
+function visibleLength(value: string): number {
+  return sanitizeTerminalText(value).length;
+}
+
+function getTerminalWidth(requested?: number): number {
+  if (requested != null && Number.isFinite(requested) && requested > 0) {
+    return Math.max(MIN_RUN_HISTORY_WIDTH, Math.floor(requested));
+  }
+  const stdoutColumns = process.stdout.columns;
+  if (stdoutColumns && stdoutColumns > 0) {
+    return Math.max(MIN_RUN_HISTORY_WIDTH, Math.floor(stdoutColumns));
+  }
+  const envColumns = Number.parseInt(process.env.COLUMNS ?? "", 10);
+  if (Number.isFinite(envColumns) && envColumns > 0) {
+    return Math.max(MIN_RUN_HISTORY_WIDTH, envColumns);
+  }
+  return DEFAULT_RUN_HISTORY_WIDTH;
+}
+
+function truncateLine(line: string, maxWidth: number): string {
+  const clean = sanitizeTerminalText(line);
+  if (clean.length <= maxWidth) return line;
+  if (maxWidth <= 0) return "";
+  if (maxWidth === 1) return style.gray("…");
+
+  let visibleCount = 0;
+  let result = "";
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  ANSI_REGEX.lastIndex = 0;
+  while ((match = ANSI_REGEX.exec(line)) !== null) {
+    const textBefore = line.slice(lastIndex, match.index);
+    for (const char of textBefore) {
+      if (visibleCount >= maxWidth - 1) return result + style.gray("…");
+      result += char;
+      visibleCount++;
+    }
+    result += match[0];
+    lastIndex = ANSI_REGEX.lastIndex;
+  }
+
+  const remaining = line.slice(lastIndex);
+  for (const char of remaining) {
+    if (visibleCount >= maxWidth - 1) return result + style.gray("…");
+    result += char;
+    visibleCount++;
+  }
+
+  return result;
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const clean = sanitizeTerminalText(value).replace(/\s+/g, " ").trim();
+  if (maxLength <= 0) return "";
+  const chars = [...clean];
+  if (chars.length <= maxLength) return clean;
+  return `${chars.slice(0, Math.max(1, maxLength - 1)).join("")}…`;
+}
+
+function fitLines(lines: string[], width: number): string[] {
+  return lines.map((line) => truncateLine(line, width));
 }
 
 async function loadRunDetails(runDir: string): Promise<RunDetail | null> {
@@ -131,6 +199,7 @@ export interface RunsCommandOptions {
   json?: boolean;
   watch?: boolean;
   refreshMs?: number;
+  terminalWidth?: number;
   statusFilter?: string;
   searchKeyword?: string;
   sinceMs?: number;
@@ -138,6 +207,87 @@ export interface RunsCommandOptions {
   stats?: boolean;
   exportPath?: string;
   insights?: boolean;
+}
+
+function progressParts(d: RunDetail): string[] {
+  const parts: string[] = [];
+  if (d.nodeSummary.done > 0) parts.push(style.mint(`${d.nodeSummary.done}✓`));
+  if (d.nodeSummary.running > 0) parts.push(style.purple(`${d.nodeSummary.running}▶`));
+  if (d.nodeSummary.failed > 0) parts.push(style.red(`${d.nodeSummary.failed}✕`));
+  if (d.nodeSummary.pending > 0) parts.push(style.gray(`${d.nodeSummary.pending}○`));
+  return parts;
+}
+
+function renderCompactRunLines(details: RunDetail[], width: number): string[] {
+  const lines: string[] = [
+    style.purpleBold(`📋 ${t("runs.header")}`),
+    style.gray("─".repeat(width)),
+  ];
+
+  for (let i = 0; i < details.length; i++) {
+    const d = details[i];
+    const num = String(i + 1).padStart(2, " ");
+    const compactProgress = d.nodeSummary.total > 0
+      ? style.gray(`${d.nodeSummary.done}/${d.nodeSummary.total}`)
+      : style.gray("—");
+    const meta = `${statusColor(d.status)} ${compactProgress} ${style.gray(formatElapsed(d.elapsedMs))}`;
+    const nameBudget = Math.max(4, width - visibleLength(`${num}  ${meta}`) - 2);
+    lines.push(`${num} ${style.cream(truncateText(d.name, nameBudget))} ${meta}`);
+
+    const date = formatDate(d.updatedAt).replace(/^\d{4}-/, "");
+    const titlePrefix = d.goalTitle ? `${style.gray(" →")} ` : "";
+    const titleBudget = Math.max(0, width - visibleLength(`   ${date}${titlePrefix}`));
+    const title = d.goalTitle ? style.gray(truncateText(d.goalTitle, titleBudget)) : "";
+    lines.push(`   ${style.gray(date)}${titlePrefix}${title}`);
+  }
+
+  lines.push(style.gray("─".repeat(width)));
+  lines.push(style.gray(t("runs.footerHint")));
+  return fitLines(lines, width);
+}
+
+function renderTableRunLines(details: RunDetail[], width: number): string[] {
+  const nameWidth = Math.max(12, Math.min(28, width - 56));
+  const sep = style.gray("─".repeat(width));
+  const colHeader = [
+    style.gray("#"),
+    padEndAnsi(style.gray("Run ID"), nameWidth),
+    padEndAnsi(style.gray("Status"), 8),
+    padEndAnsi(style.gray("Progress"), 18),
+    padEndAnsi(style.gray("Elapsed"), 7),
+    style.gray("Updated"),
+  ].join(" ");
+  const lines: string[] = [style.purpleBold(`📋 ${t("runs.header")}`), sep, colHeader, sep];
+
+  for (let i = 0; i < details.length; i++) {
+    const d = details[i];
+    const num = String(i + 1).padStart(2, " ");
+    const name = padEndAnsi(truncateText(d.name, nameWidth), nameWidth);
+    const statStr = padEndAnsi(statusColor(d.status), 8);
+    const parts = progressParts(d);
+    const progressText = parts.join(" ") || style.gray("—");
+    const progress = d.nodeSummary.total > 0
+      ? `${miniProgressBar(d.nodeSummary.done, d.nodeSummary.total)} ${progressText}`
+      : style.gray("—");
+    const progressStr = padEndAnsi(progress, 18);
+    const elapsed = padEndAnsi(formatElapsed(d.elapsedMs), 7);
+    const date = formatDate(d.updatedAt);
+    const title = d.goalTitle ? style.gray(`  → ${truncateText(d.goalTitle, width - 6)}`) : "";
+    lines.push(`${num} ${name} ${statStr} ${progressStr} ${elapsed} ${date}`);
+    if (title) lines.push(title);
+  }
+
+  lines.push(sep);
+  lines.push(style.gray(t("runs.footerHint")));
+  return fitLines(lines, width);
+}
+
+export function renderRunsList(details: RunDetail[], options: { terminalWidth?: number } = {}): string {
+  const width = getTerminalWidth(options.terminalWidth);
+  const lines = width < 72
+    ? renderCompactRunLines(details, width)
+    : renderTableRunLines(details, width);
+  return lines.join("\n");
 }
 
 export async function runsCommand(options: RunsCommandOptions = {}): Promise<void> {
@@ -194,8 +344,10 @@ export async function runsCommand(options: RunsCommandOptions = {}): Promise<voi
       details = details.filter((d) => Date.parse(d.updatedAt) <= options.untilMs!);
     }
 
+    const terminalWidth = getTerminalWidth(options.terminalWidth);
+
     if (options.stats) {
-      renderStats(details, candidates.length);
+      renderStats(details, candidates.length, terminalWidth);
       return;
     }
 
@@ -205,7 +357,7 @@ export async function runsCommand(options: RunsCommandOptions = {}): Promise<voi
     }
 
     if (options.insights) {
-      renderInsights(details);
+      renderInsights(details, terminalWidth);
       return;
     }
 
@@ -214,37 +366,7 @@ export async function runsCommand(options: RunsCommandOptions = {}): Promise<voi
       return;
     }
 
-    const header = style.purpleBold(`📋 ${t("runs.header")}`);
-    const sep = style.gray("─────────────────────────────────────────────────────────────────");
-    const colHeader = `${style.gray("#")}  ${style.gray("Run ID").padEnd(30)} ${style.gray("Status").padEnd(10)} ${style.gray("Progress").padEnd(10)} ${style.gray("Elapsed").padEnd(8)} ${style.gray("Updated")}`;
-
-    const lines: string[] = [header, sep, colHeader, sep];
-
-    for (let i = 0; i < details.length; i++) {
-      const d = details[i];
-      const num = String(i + 1).padStart(2, " ");
-      const name = padEndAnsi(d.name.length > 28 ? d.name.slice(0, 25) + "…" : d.name, 28);
-      const statStr = padEndAnsi(statusColor(d.status), 8);
-      const progressParts: string[] = [];
-      if (d.nodeSummary.done > 0) progressParts.push(style.mint(`${d.nodeSummary.done}✓`));
-      if (d.nodeSummary.running > 0) progressParts.push(style.purple(`${d.nodeSummary.running}▶`));
-      if (d.nodeSummary.failed > 0) progressParts.push(style.red(`${d.nodeSummary.failed}✕`));
-      if (d.nodeSummary.pending > 0) progressParts.push(style.gray(`${d.nodeSummary.pending}○`));
-      const progressText = progressParts.join(" ") || style.gray("—");
-      const progress = d.nodeSummary.total > 0
-        ? `${miniProgressBar(d.nodeSummary.done, d.nodeSummary.total)} ${progressText}`
-        : style.gray("—");
-      const progressStr = padEndAnsi(progress, 18);
-      const elapsed = padEndAnsi(formatElapsed(d.elapsedMs), 7);
-      const date = formatDate(d.updatedAt);
-      const title = d.goalTitle ? style.gray(`  → ${d.goalTitle}`) : "";
-      lines.push(`${num} ${name} ${statStr} ${progressStr} ${elapsed} ${date}`);
-      if (title) lines.push(title);
-    }
-
-    lines.push(sep);
-    lines.push(style.gray(t("runs.footerHint")));
-    console.log(lines.join("\n"));
+    console.log(renderRunsList(details, { terminalWidth }));
   };
 
   if (options.watch) {
@@ -259,12 +381,13 @@ export async function runsCommand(options: RunsCommandOptions = {}): Promise<voi
   await doRender();
 }
 
-function renderStats(details: RunDetail[], totalCandidates: number): void {
+function renderStats(details: RunDetail[], totalCandidates: number, terminalWidth?: number): void {
   const total = details.length;
   if (total === 0) {
     console.log(t("runs.noRuns"));
     return;
   }
+  const width = getTerminalWidth(terminalWidth);
 
   const statusCounts: Record<string, number> = {};
   let totalElapsed = 0;
@@ -300,7 +423,7 @@ function renderStats(details: RunDetail[], totalCandidates: number): void {
   const day30 = details.filter((d) => now - Date.parse(d.updatedAt) <= 30 * 24 * 60 * 60 * 1000).length;
 
   const header = style.purpleBold(`📊 ${t("runs.statsHeader")}`);
-  const sep = style.gray("─────────────────────────────────────────────────────────────────");
+  const sep = style.gray("─".repeat(width));
   const lines: string[] = [header, sep];
 
   lines.push(`${style.gray("Total runs")}      ${style.creamBold(String(total))} ${totalCandidates > total ? style.gray(`(filtered from ${totalCandidates})`) : ""}`);
@@ -329,17 +452,18 @@ function renderStats(details: RunDetail[], totalCandidates: number): void {
   }
 
   lines.push(sep);
-  console.log(lines.join("\n"));
+  console.log(fitLines(lines, width).join("\n"));
 }
 
-function renderInsights(details: RunDetail[]): void {
+function renderInsights(details: RunDetail[], terminalWidth?: number): void {
   if (details.length === 0) {
     console.log(t("runs.noRuns"));
     return;
   }
+  const width = getTerminalWidth(terminalWidth);
 
   const header = style.purpleBold(`🔍 ${t("runs.insightsHeader")}`);
-  const sep = style.gray("─────────────────────────────────────────────────────────────────");
+  const sep = style.gray("─".repeat(width));
   const lines: string[] = [header, sep];
 
   // Parallel computation of independent insights
@@ -392,7 +516,7 @@ function renderInsights(details: RunDetail[]): void {
   }
 
   lines.push(sep);
-  console.log(lines.join("\n"));
+  console.log(fitLines(lines, width).join("\n"));
 }
 
 function computeLongestRuns(details: RunDetail[]): RunDetail[] {

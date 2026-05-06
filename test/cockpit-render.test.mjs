@@ -26,10 +26,21 @@ describe("renderCockpit", () => {
     assert.ok(output.includes("run"), "should contain run id placeholder");
   });
 
-  it("does not exceed 50 visible columns when terminalWidth is 40", async () => {
+  it("does not exceed the requested visible columns when terminalWidth is 40", async () => {
     const output = await renderCockpit({ terminalWidth: 40, quick: true });
     const maxWidth = maxVisibleWidth(output);
-    assert.ok(maxWidth <= 50, `max visible width ${maxWidth} should not exceed 50 (panel borders add ~6 chars beyond inner width)`);
+    assert.ok(maxWidth <= 40, `max visible width ${maxWidth} should not exceed requested width 40`);
+  });
+
+  it("fits very narrow tmux side panes without wrapping borders", async () => {
+    for (const width of [20, 24, 30, 34]) {
+      const output = await renderCockpit({ terminalWidth: width, height: 18, quick: true });
+      const visibleLines = output.split("\n").map(stripAnsi);
+      const maxWidth = Math.max(...visibleLines.map((line) => line.length));
+      assert.ok(maxWidth <= width, `terminalWidth=${width} produced max visible width ${maxWidth}`);
+      assert.equal(visibleLines[0].length, maxWidth, `terminalWidth=${width} top border should define frame width`);
+      assert.equal(visibleLines.at(-1).length, maxWidth, `terminalWidth=${width} bottom border should match top border`);
+    }
   });
 
   it("returns exactly 18 lines for height 18 (panel borders + body)", async () => {

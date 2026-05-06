@@ -15,7 +15,6 @@ import {
 } from "../util/run-view-model.js";
 import {
   style,
-  panel,
   gradient,
   separator,
   sanitizeTerminalText,
@@ -63,6 +62,9 @@ export interface CockpitCache {
 // ── Local helpers ──
 
 const ANSI_REGEX = /\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])/g;
+const PANEL_HORIZONTAL_OVERHEAD = 4;
+const MIN_COCKPIT_FRAME_WIDTH = 20;
+const MAX_COCKPIT_FRAME_WIDTH = 60;
 
 /** Truncate visible text while preserving ANSI escape sequences. */
 function truncateLine(line: string, maxWidth: number): string {
@@ -102,9 +104,25 @@ function truncateLine(line: string, maxWidth: number): string {
 
 function truncateText(value: string, maxLength: number): string {
   const clean = sanitizeTerminalText(value).replace(/\s+/g, " ").trim();
+  if (maxLength <= 0) return "";
   const chars = [...clean];
   if (chars.length <= maxLength) return clean;
   return `${chars.slice(0, Math.max(1, maxLength - 1)).join("")}…`;
+}
+
+function padEndVisible(value: string, targetWidth: number): string {
+  return value + " ".repeat(Math.max(0, targetWidth - sanitizeTerminalText(value).length));
+}
+
+function renderCockpitPanel(lines: string[], innerWidth: number): string {
+  const safeInnerWidth = Math.max(1, innerWidth);
+  const horizontal = "━".repeat(safeInnerWidth + 2);
+  const top = style.darkPurple(`┏${horizontal}┓`);
+  const bottom = style.darkPurple(`┗${horizontal}┛`);
+  const body = lines.map((line) =>
+    style.darkPurple("┃ ") + padEndVisible(truncateLine(line, safeInnerWidth), safeInnerWidth) + style.darkPurple(" ┃")
+  );
+  return [top, ...body, bottom].join("\n");
 }
 
 function statusRank(statusValue: string): number {
@@ -327,10 +345,12 @@ export class CockpitRenderer {
 
 function getTerminalWidth(requested?: number): number {
   if (requested != null && Number.isFinite(requested) && requested > 0) {
-    return Math.max(34, Math.min(60, requested));
+    return Math.max(MIN_COCKPIT_FRAME_WIDTH, Math.min(MAX_COCKPIT_FRAME_WIDTH, Math.floor(requested)));
   }
   const cols = process.stdout.columns;
-  if (cols && cols >= 34) return Math.min(cols, 60);
+  if (cols && cols > 0) {
+    return Math.max(MIN_COCKPIT_FRAME_WIDTH, Math.min(MAX_COCKPIT_FRAME_WIDTH, Math.floor(cols)));
+  }
   return 36;
 }
 
@@ -346,7 +366,7 @@ function fitLines(lines: string[], count: number): string[] {
 
 export async function renderCockpit(options: CockpitRenderOptions = {}) {
   const width = getTerminalWidth(options.terminalWidth);
-  const targetWidth = Math.max(34, Math.min(60, width));
+  const targetWidth = Math.max(1, width - PANEL_HORIZONTAL_OVERHEAD);
   const targetBodyHeight = Math.max(MIN_COCKPIT_HEIGHT, options.height ?? DEFAULT_COCKPIT_HEIGHT) - 2;
   const root = getProjectRoot();
   const now = Date.now();
@@ -737,7 +757,7 @@ export async function renderCockpit(options: CockpitRenderOptions = {}) {
   if (body.length > targetBodyHeight) body.length = targetBodyHeight;
 
   const content = body.map((l) => truncateLine(l, targetWidth));
-  return panel(content);
+  return renderCockpitPanel(content, targetWidth);
 }
 // ── Watch command ──
 
