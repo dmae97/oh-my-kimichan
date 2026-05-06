@@ -5,6 +5,7 @@ import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { normalizeGoal, analyzeUserIntent } from "../goal/intake.js";
 import { createGoalPersister } from "../goal/persistence.js";
 import { evaluateGoalProgressEnsemble } from "../goal/control-loop.js";
+import { renderPromptDigest } from "../goal/prompt-digest.js";
 import type { UserIntent } from "../contracts/orchestration.js";
 import { style, status } from "../util/theme.js";
 import { MemoryStore } from "../memory/memory-store.js";
@@ -21,6 +22,7 @@ export interface OrchestrateOptions {
   view?: string;
   goalId?: string;
   timeoutPreset?: string;
+  provider?: "auto" | "kimi";
   sourceCommand: "chat" | "run" | "parallel" | "goal-run" | "goal-continue" | "default";
 }
 
@@ -153,6 +155,8 @@ export async function orchestratePrompt(
     sourceCommand: options.sourceCommand,
     workers: options.workers ?? String(resources.maxWorkers),
     intent,
+    currentPrompt: rawPrompt,
+    isContinuation: options.sourceCommand === "goal-run" || options.sourceCommand === "goal-continue",
   });
 
   // ── Persist next-prompt to goal directory ──
@@ -224,6 +228,7 @@ export async function orchestratePrompt(
     goalId,
     intent,
     timeoutPreset: options.timeoutPreset,
+    provider: options.provider,
   };
 
   const { runId: generatedRunId } = await parallelCommand(enrichedPrompt, parallelOpts);
@@ -308,19 +313,38 @@ interface BuildPromptInput {
   sourceCommand: string;
   workers: string;
   intent: UserIntent;
+  currentPrompt: string;
+  isContinuation: boolean;
 }
 
 function buildOrchestratedPrompt(input: BuildPromptInput): string {
+  const currentPrompt = input.currentPrompt.trim();
+  const hasDistinctContinuationContext = input.isContinuation &&
+    currentPrompt.length > 0 &&
+    normalizePromptForComparison(currentPrompt) !== normalizePromptForComparison(input.goal.objective);
+
   const lines: string[] = [
     `# Goal: ${input.goal.title}`,
     ``,
-    `## Objective`,
-    input.goal.objective,
+    `## Goal Reference (non-verbatim)`,
+    renderPromptDigest("Original objective digest", input.goal.objective),
     ``,
     `## Success Criteria`,
     ...input.goal.successCriteria.map((c) => `- [${c.requirement === "required" ? "required" : "optional"}] ${c.description}`),
     ``,
   ];
+
+  if (hasDistinctContinuationContext) {
+    lines.push(
+      `## Current Execution Context`,
+      `Kimi must treat this section as the operative follow-up context for this turn.`,
+      `Do not restart by sending the original goal verbatim; infer the next concrete action from this context, memory, and evidence.`,
+      `Preserve completed work and focus the DAG on unresolved criteria, failed gates, or blocked nodes.`,
+      ``,
+      renderPromptDigest("Current execution context digest", currentPrompt, { maxKeywords: 18, maxPhrases: 3 }),
+      ``
+    );
+  }
 
   if (input.memorySummary) {
     lines.push(
@@ -370,13 +394,25 @@ function buildOrchestratedPrompt(input: BuildPromptInput): string {
     `- Use MCP servers (omk-project, memory, quality-gate) when they fit the task.`,
     `- Prefer omk-project MCP tools for checkpoint, memory, and run-state operations.`,
     `- Use SearchWeb / FetchURL for external docs, official APIs, or citations.`,
+    `- Kimi remains the main orchestrator, planner, merger, and final synthesis runtime.`,
+    `- DeepSeek may only be hinted for low-risk read/review/QA/documentation nodes; never assign it merge, destructive shell, MCP, secret, or write authority.`,
+    `- If provider availability, payment, rate limit, or confidence is uncertain, keep the node on Kimi and continue without blocking the DAG.`,
     `- Produce concrete evidence, changed files, and verification results.`,
     `- Write final decisions and risks to .omk/memory/decisions.md and .omk/memory/risks.md.`,
     ``,
     `### Continue Engine`,
-    `If this is a continuation, focus on missing success criteria and failed evidence gates.`,
+    `If this is a continuation, synthesize a fresh next prompt from Current Execution Context instead of repeating the goal objective.`,
+    `Do not redo completed work unless the evidence is invalid or stale.`,
+    `Focus on missing success criteria, failed evidence gates, and the highest-confidence next action.`,
     `Re-select worker roles and MCP/skills based on the remaining work.`,
   );
 
   return lines.join("\n");
+}
+
+function normalizePromptForComparison(value: string): string {
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 }

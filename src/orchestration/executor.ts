@@ -10,6 +10,7 @@ import { checkEvidenceGates } from "./evidence-gate.js";
 import { invalidateTaskDagGraph } from "./task-graph.js";
 import { resolveTimeoutMs } from "../util/timeout-config.js";
 import { createNodeMonitorEngine } from "./node-monitor.js";
+import type { ProviderId } from "../providers/types.js";
 
 export interface ExecutorOptions {
   persister?: StatePersister;
@@ -153,6 +154,22 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
     if (status === "done") {
       node.completedAt = completedAt;
       node.durationMs = durationMs;
+    }
+  }
+
+  function recordProviderAttempt(node: DagNode, result: TaskResult): void {
+    const latestAttempt = node.attempts?.[node.attempts.length - 1];
+    if (!latestAttempt) return;
+    const metadata = result.metadata ?? {};
+    const provider = metadata.provider;
+    const requestedProvider = metadata.requestedProvider;
+    if (isProviderId(provider)) latestAttempt.provider = provider;
+    if (isProviderId(requestedProvider)) latestAttempt.requestedProvider = requestedProvider;
+
+    const fallback = metadata.providerFallback;
+    if (isProviderFallback(fallback)) {
+      latestAttempt.fallbackFrom = fallback.from;
+      latestAttempt.fallbackReason = fallback.reason;
     }
   }
 
@@ -304,6 +321,7 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
       } else {
         result = await runPromise;
       }
+      recordProviderAttempt(node, result);
       if (result.success) {
         const evidenceCheck = await checkNodeEvidence(node, result, options);
         node.evidence = evidenceCheck.evidence;
@@ -325,6 +343,7 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
         stdout: "",
         stderr: error instanceof Error ? error.message : String(error),
       };
+      recordProviderAttempt(node, result);
       markNodeFinished(node, "failed");
       scheduler.updateNodeStatus(dag, node.id, "failed");
     } finally {
@@ -540,4 +559,14 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
       return donePromise;
     },
   };
+}
+
+function isProviderId(value: unknown): value is ProviderId {
+  return value === "kimi" || value === "deepseek";
+}
+
+function isProviderFallback(value: unknown): value is { from: ProviderId; reason: string } {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return isProviderId(record.from) && typeof record.reason === "string";
 }

@@ -1,6 +1,7 @@
-import { readdir, copyFile, mkdir, readFile, writeFile } from "fs/promises";
-import { join, dirname } from "path";
-import { getProjectRoot, pathExists, getOmkPath } from "../util/fs.js";
+import { readdir, copyFile, mkdir, readFile, writeFile, mkdtemp, rename, rm } from "fs/promises";
+import { join, dirname, basename } from "path";
+import { fileURLToPath } from "node:url";
+import { getProjectRoot, pathExists } from "../util/fs.js";
 import { style, header, status, label } from "../util/theme.js";
 
 interface SkillPack {
@@ -22,6 +23,11 @@ const PACKS: SkillPack[] = [
       "omk-quality-gate",
       "omk-plan-first",
       "omk-task-router",
+      "graph-view",
+      "deepseek-api",
+      "deepseek-enable",
+      "deepseek-disable",
+      "deepseekset",
     ],
   },
   {
@@ -82,9 +88,17 @@ const PACKS: SkillPack[] = [
 ];
 
 const INSTALLED_PACKS_FILE = ".omk/installed-skill-packs.json";
+const SLASH_COMMAND_SKILLS = new Set([
+  "deepseek-api",
+  "deepseek-disable",
+  "deepseek-enable",
+  "deepseekset",
+  "graph-view",
+]);
+
+const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 async function getTemplatesDir(): Promise<string | null> {
-  const packageRoot = getOmkPath("..");
   const kimiSkills = join(packageRoot, "templates", "skills", "kimi");
   if (await pathExists(kimiSkills)) return kimiSkills;
   return null;
@@ -104,7 +118,7 @@ async function getInstalledPacks(root: string): Promise<string[]> {
 async function saveInstalledPacks(root: string, packs: string[]): Promise<void> {
   const file = join(root, INSTALLED_PACKS_FILE);
   await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify({ packs, updatedAt: new Date().toISOString() }, null, 2));
+  await writeJsonAtomic(file, { packs, updatedAt: new Date().toISOString() });
 }
 
 async function copySkillDir(src: string, dest: string): Promise<void> {
@@ -119,6 +133,70 @@ async function copySkillDir(src: string, dest: string): Promise<void> {
       await copyFile(srcPath, destPath);
     }
   }
+}
+
+async function copySkillDirAtomic(src: string, dest: string, expectedName: string): Promise<void> {
+  await validateSkillTemplate(src, expectedName);
+  await mkdir(dirname(dest), { recursive: true });
+  const stage = await mkdtemp(join(dirname(dest), `.${basename(dest)}.tmp-`));
+  try {
+    await copySkillDir(src, stage);
+    await validateSkillTemplate(stage, expectedName);
+    await replaceDirectory(stage, dest);
+  } catch (err) {
+    await rm(stage, { recursive: true, force: true }).catch(() => undefined);
+    throw err;
+  }
+}
+
+async function replaceDirectory(stage: string, dest: string): Promise<void> {
+  const backup = join(dirname(dest), `.${basename(dest)}.bak-${process.pid}-${Date.now()}`);
+  const hadDest = await pathExists(dest);
+  if (hadDest) {
+    await rename(dest, backup);
+  }
+  try {
+    await rename(stage, dest);
+    if (hadDest) {
+      await rm(backup, { recursive: true, force: true }).catch(() => undefined);
+    }
+  } catch (err) {
+    if (hadDest && !(await pathExists(dest))) {
+      await rename(backup, dest).catch(() => undefined);
+    }
+    throw err;
+  }
+}
+
+async function validateSkillTemplate(dir: string, expectedName: string): Promise<void> {
+  const skillPath = join(dir, "SKILL.md");
+  let content: string;
+  try {
+    content = await readFile(skillPath, "utf-8");
+  } catch {
+    throw new Error(`Skill template "${expectedName}" is missing SKILL.md`);
+  }
+  if (!SLASH_COMMAND_SKILLS.has(expectedName)) {
+    return;
+  }
+  const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const name = frontmatter?.[1]?.match(/^name:\s*([^\r\n]+)$/m)?.[1]?.trim();
+  if (name !== expectedName) {
+    throw new Error(`Skill template "${expectedName}" has invalid frontmatter name "${name ?? "<missing>"}"`);
+  }
+  if (!new RegExp(`^#\\s+/${escapeRegExp(expectedName)}\\b`, "m").test(content)) {
+    throw new Error(`Slash command template "${expectedName}" must include heading "# /${expectedName}"`);
+  }
+}
+
+async function writeJsonAtomic(path: string, payload: unknown): Promise<void> {
+  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
+  await rename(tmp, path);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export async function skillPackCommand(): Promise<void> {
@@ -167,7 +245,7 @@ export async function skillInstallCommand(packId: string): Promise<void> {
     const src = join(templatesDir, skill);
     const dest = join(destDir, skill);
     if (await pathExists(src)) {
-      await copySkillDir(src, dest);
+      await copySkillDirAtomic(src, dest, skill);
       copied++;
     } else {
       skipped++;

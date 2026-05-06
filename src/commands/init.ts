@@ -1,18 +1,48 @@
+import { realpathSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { mkdir, writeFile, readFile, copyFile, readdir, stat } from "fs/promises";
-import { join, dirname } from "path";
-import { homedir } from "os";
+import { basename, join, dirname, sep } from "path";
+import { homedir, tmpdir } from "os";
 import { fileURLToPath } from "node:url";
+import { confirm, password } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import { getProjectRoot, pathExists } from "../util/fs.js";
 import { getOmkVersionSync } from "../util/version.js";
 
 import { style, header, status } from "../util/theme.js";
 import { defaultLspConfigJson } from "../lsp/default-config.js";
 import { t } from "../util/i18n.js";
+import { maybeAskForGitHubStar } from "../util/first-run-star.js";
+import { getDeepSeekProviderStatus, setDeepSeekApiKey } from "../providers/deepseek/deepseek-config.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const packageRoot = join(__dirname, "..", "..");
+
+interface McpServerDefinition {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
+interface InitTtyLike {
+  isTTY?: boolean;
+}
+
+export interface InitCommandOptions {
+  profile: string;
+  interactiveSetup?: boolean;
+  importUserSkills?: boolean;
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
+  stdin?: InitTtyLike;
+  stdout?: InitTtyLike;
+  argv?: string[];
+  promptGitHubStar?: (repoUrl: string) => Promise<boolean>;
+  starRepo?: (repoUrl: string) => Promise<void> | void;
+  promptDeepSeekSetup?: () => Promise<boolean>;
+  promptDeepSeekApiKey?: () => Promise<string>;
+}
 
 const OKABE_AGENT_YAML = `version: 1
 agent:
@@ -355,20 +385,162 @@ async function getCopyEntryKind(srcPath: string, entry: Dirent): Promise<"direct
   }
 }
 
-async function copyTemplateDir(src: string, dest: string): Promise<void> {
+interface CopyTemplateDirOptions {
+  skipEntry?: (srcPath: string, entry: Dirent) => boolean | Promise<boolean>;
+}
+
+interface SkillCopyStats {
+  copied: number;
+  skippedUnsafe: number;
+  skippedUnavailable: number;
+}
+
+const SKILL_COPY_IGNORED_NAMES = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  ".DS_Store",
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+]);
+
+const PROTECTED_SKILL_FILE_PATTERNS = [
+  /^\.env(?:\..*)?$/i,
+  /^\.npmrc$/i,
+  /^\.pypirc$/i,
+  /^\.netrc$/i,
+  /\.pem$/i,
+  /\.key$/i,
+  /\.p8$/i,
+  /\.p12$/i,
+  /\.pfx$/i,
+  /^id_rsa$/i,
+  /^id_ed25519$/i,
+  /^credentials\.json$/i,
+  /^service-account.*\.json$/i,
+];
+
+const SKILL_SECRET_LITERAL_PATTERNS = [
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  /AKIA[0-9A-Z]{16}/,
+  /gh[pousr]_[A-Za-z0-9_]{20,}/,
+  /glpat-[A-Za-z0-9\-_]{20,}/,
+  /\bsk-[A-Za-z0-9]{20,}\b/,
+  /\bfc-[A-Za-z0-9_-]{20,}\b/,
+  /\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}\b/,
+  /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/,
+];
+
+const GENERIC_SKILL_SECRET_ASSIGNMENT =
+  /\b(api[_-]?key|secret|token|password|private[_-]?key)\b\s*[:=]\s*["']?([^"'\s;,]{20,})/i;
+
+const GENERIC_SKILL_SECRET_ALLOWLIST =
+  /\$\{|<|YOUR_|REPLACE_|NPM_TOKEN|GITHUB_TOKEN|NODE_AUTH_TOKEN|process\.env|env\.|placeholder|example|sample|redacted|\*\*\*|Do not store secrets|Do not send secrets|secret leakage|secret leak/i;
+
+function shouldSkipSkillCopyEntry(_srcPath: string, entry: Dirent): boolean {
+  return SKILL_COPY_IGNORED_NAMES.has(entry.name);
+}
+
+function isProtectedSkillFileName(filePath: string): boolean {
+  const name = basename(filePath);
+  return PROTECTED_SKILL_FILE_PATTERNS.some((pattern) => pattern.test(name));
+}
+
+function isLikelyBinaryContent(buffer: Buffer): boolean {
+  return buffer.includes(0);
+}
+
+function hasSecretLikeSkillLine(line: string): boolean {
+  if (SKILL_SECRET_LITERAL_PATTERNS.some((pattern) => pattern.test(line))) return true;
+  return GENERIC_SKILL_SECRET_ASSIGNMENT.test(line) && !GENERIC_SKILL_SECRET_ALLOWLIST.test(line);
+}
+
+async function skillDirectoryHasSecretContent(dir: string): Promise<boolean> {
+  const entries = await readdir(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const srcPath = join(dir, entry.name);
+    if (shouldSkipSkillCopyEntry(srcPath, entry)) continue;
+    if (isProtectedSkillFileName(srcPath)) return true;
+
+    const kind = await getCopyEntryKind(srcPath, entry);
+    if (kind === "directory") {
+      if (await skillDirectoryHasSecretContent(srcPath)) return true;
+      continue;
+    }
+    if (kind !== "file") continue;
+
+    const buffer = await readFile(srcPath);
+    if (isLikelyBinaryContent(buffer)) continue;
+
+    const text = buffer.toString("utf-8");
+    for (const line of text.split(/\r?\n/)) {
+      if (hasSecretLikeSkillLine(line)) return true;
+    }
+  }
+
+  return false;
+}
+
+async function copyTemplateDir(src: string, dest: string, options: CopyTemplateDirOptions = {}): Promise<void> {
   const entries = await readdir(src, { withFileTypes: true });
   for (const entry of entries) {
     const srcPath = join(src, entry.name);
+    if (await options.skipEntry?.(srcPath, entry)) continue;
     const destPath = join(dest, entry.name);
     const kind = await getCopyEntryKind(srcPath, entry);
     if (kind === "directory") {
       await mkdir(destPath, { recursive: true });
-      await copyTemplateDir(srcPath, destPath);
+      await copyTemplateDir(srcPath, destPath, options);
     } else if (kind === "file") {
       await mkdir(dirname(destPath), { recursive: true });
       await copyFile(srcPath, destPath);
     }
   }
+}
+
+async function copySafeSkillRoot(src: string, dest: string): Promise<SkillCopyStats> {
+  const stats: SkillCopyStats = {
+    copied: 0,
+    skippedUnsafe: 0,
+    skippedUnavailable: 0,
+  };
+  const entries = await readdir(src, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const srcPath = join(src, entry.name);
+    if (entry.name.startsWith(".") || shouldSkipSkillCopyEntry(srcPath, entry)) continue;
+
+    const kind = await getCopyEntryKind(srcPath, entry);
+    if (kind !== "directory") {
+      if (entry.isSymbolicLink()) stats.skippedUnavailable++;
+      continue;
+    }
+
+    try {
+      if (await skillDirectoryHasSecretContent(srcPath)) {
+        stats.skippedUnsafe++;
+        continue;
+      }
+
+      await copyTemplateDir(srcPath, join(dest, entry.name), {
+        skipEntry: shouldSkipSkillCopyEntry,
+      });
+      stats.copied++;
+    } catch {
+      stats.skippedUnavailable++;
+    }
+  }
+
+  return stats;
 }
 
 const HOOK_SCRIPTS: Record<string, string> = {
@@ -525,22 +697,62 @@ command = ".omk/hooks/stop-verify.sh"
 timeout = 30
 `;
 
-const MCP_JSON = (() => {
-  const serverPath = join(packageRoot, "dist/mcp/omk-project-server.js");
-  // Use bash login shell on Unix so that GUI-launched Kimi instances
-  // inherit the user's PATH (e.g. nvm, volta, asdf) and can find node.
-  const isWin = process.platform === "win32";
+export function createOmkProjectMcpServer(
+  projectRoot: string,
+  options: { packageRoot?: string; platform?: NodeJS.Platform } = {}
+): McpServerDefinition {
+  const root = options.packageRoot ?? packageRoot;
+  const serverPath = join(root, "dist/mcp/omk-project-server.js");
+  // Use the concrete Node executable that launched init instead of a bare
+  // `node` lookup. MCP clients often run with a reduced/isolated PATH, which
+  // can accidentally pick a different Node ABI than the one used by npm install
+  // and trigger native addon errors such as NODE_MODULE_VERSION mismatches.
+  const isWin = (options.platform ?? process.platform) === "win32";
+  const env = { OMK_PROJECT_ROOT: projectRoot };
+  const node = stableNodeExecutable();
+
+  if (isEphemeralPackageRoot(root)) {
+    return {
+      command: isWin ? "omk-project-mcp" : "bash",
+      args: isWin ? [] : ["-lc", `mcp_bin="$(command -v omk-project-mcp)" && exec ${shellQuote(node)} "$mcp_bin"`],
+      env,
+    };
+  }
+
+  return {
+    command: isWin ? "node" : "bash",
+    args: isWin ? [serverPath] : ["-lc", `exec ${shellQuote(node)} ${shellQuote(serverPath)}`],
+    env,
+  };
+}
+
+function stableNodeExecutable(): string {
+  try {
+    return realpathSync(process.execPath);
+  } catch {
+    return process.execPath || "node";
+  }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function createMcpJson(projectRoot: string): { mcpServers: Record<string, McpServerDefinition> } {
   return {
     mcpServers: {
       // Safe default for open-source scaffolds: local project server only.
       // Remote MCPs that require API keys should be added explicitly by the user.
-      "omk-project": {
-        command: isWin ? "node" : "bash",
-        args: isWin ? [serverPath] : ["-lc", `exec node "${serverPath}"`],
-      },
+      "omk-project": createOmkProjectMcpServer(projectRoot),
     },
   };
-})();
+}
+
+function isEphemeralPackageRoot(root: string): boolean {
+  const normalizedRoot = root.replace(/\\/g, "/");
+  const normalizedTmp = tmpdir().replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalizedRoot === normalizedTmp || normalizedRoot.startsWith(`${normalizedTmp}/`) || root.includes(`${sep}_npx${sep}`);
+}
 
 const CONFIG_TOML = `# oh-my-kimi project settings
 [project]
@@ -556,8 +768,8 @@ yolo_mode = false                # safe guards still block secrets/destructive s
 [runtime]
 # auto chooses lite on <=18GB RAM hosts to make 16GB laptops usable.
 resource_profile = "auto"        # auto | lite | standard
-mcp_scope = "all"                # all | project | none — default all for existing Kimi users
-skills_scope = "all"             # all | project | none — default all for existing Kimi users
+mcp_scope = "project"            # all | project | none — fresh projects use omk-project only
+skills_scope = "project"         # all | project | none — fresh projects use packaged project skills only
 max_workers = 1                  # can override with OMK_MAX_WORKERS
 max_output_mb = 4                # cap buffered shell/quality output
 wire_output_mb = 1               # cap per-task retained wire output
@@ -614,8 +826,10 @@ const MEMORY_FILES: Record<string, string> = {
   "risks.md": "# Known Risks\n\n- \n",
 };
 
-export async function initCommand(options: { profile: string }): Promise<void> {
+export async function initCommand(options: InitCommandOptions): Promise<void> {
   const root = getProjectRoot();
+  const initHomeDir = options.homeDir ?? homedir();
+  const mcpJson = createMcpJson(root);
   console.log(header(`oh-my-kimi init (profile: ${options.profile})`));
 
   // 1. Create directories (parallel)
@@ -681,27 +895,60 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   // 4. Write prompts
   await writeFile(join(root, ".omk/prompts/root.md"), ROOT_PROMPT_MD);
 
-  // 5+6. Copy skills from global ~/.kimi/skills and package templates (parallel)
-  const globalSkillsSrc = join(homedir(), ".kimi", "skills");
+  // 5+6. Copy package skill templates by default.
+  // Fresh open-source init should reference only the maintainer-packaged OMK
+  // skills. Local maintainers can explicitly opt into importing personal skills
+  // with --import-user-skills or OMK_INIT_IMPORT_USER_SKILLS=1.
   const kimiSkillsSrc = join(packageRoot, "templates", "skills", "kimi");
   const agentsSkillsSrc = join(packageRoot, "templates", "skills", "agents");
-  const skillCopies = [];
+  const skillCopies: Promise<void>[] = [];
+  const importUserSkills = shouldImportUserSkills(options);
 
-  // First: copy global skills so existing Kimi users keep their skills
-  if (await pathExists(globalSkillsSrc)) {
-    console.log(style.purple("   📦 Importing global ~/.kimi/skills..."));
-    skillCopies.push(copyTemplateDir(globalSkillsSrc, join(root, ".kimi", "skills")));
+  if (importUserSkills) {
+    const personalSkillSources = [
+      {
+        label: "~/.kimi/skills",
+        src: join(initHomeDir, ".kimi", "skills"),
+        dest: join(root, ".kimi", "skills"),
+      },
+      {
+        label: "~/.codex/skills",
+        src: join(initHomeDir, ".codex", "skills"),
+        dest: join(root, ".kimi", "skills"),
+      },
+      {
+        label: "~/.agents/skills",
+        src: join(initHomeDir, ".agents", "skills"),
+        dest: join(root, ".agents", "skills"),
+      },
+    ];
+
+    for (const source of personalSkillSources) {
+      if (await pathExists(source.src)) {
+        console.log(style.purple(`   📦 Importing ${source.label} (trusted local opt-in)...`));
+        skillCopies.push(
+          copySafeSkillRoot(source.src, source.dest).then((stats) => {
+            if (stats.skippedUnsafe > 0) {
+              console.log(status.warn(`Skipped ${stats.skippedUnsafe} secret-bearing skills from ${source.label}`));
+            }
+            if (stats.skippedUnavailable > 0) {
+              console.log(status.warn(`Skipped ${stats.skippedUnavailable} unavailable skills from ${source.label}`));
+            }
+          })
+        );
+      }
+    }
   }
 
   if (await pathExists(kimiSkillsSrc)) {
     console.log(style.purple(t("init.copyKimiSkills")));
-    skillCopies.push(copyTemplateDir(kimiSkillsSrc, join(root, ".kimi", "skills")));
+    skillCopies.push(copySafeSkillRoot(kimiSkillsSrc, join(root, ".kimi", "skills")).then(() => undefined));
   } else {
     console.log(status.warn(t("init.kimiSkillsMissing")));
   }
   if (await pathExists(agentsSkillsSrc)) {
     console.log(style.purple(t("init.copyPortableSkills")));
-    skillCopies.push(copyTemplateDir(agentsSkillsSrc, join(root, ".agents", "skills")));
+    skillCopies.push(copySafeSkillRoot(agentsSkillsSrc, join(root, ".agents", "skills")).then(() => undefined));
   } else {
     console.log(status.warn(t("init.portableSkillsMissing")));
   }
@@ -718,13 +965,13 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   // 8. Write configs
   await writeFile(join(root, ".omk/config.toml"), CONFIG_TOML);
   await writeFile(join(root, ".omk/kimi.config.toml"), KIMI_CONFIG_TOML);
-  await writeFile(join(root, ".omk/mcp.json"), JSON.stringify(MCP_JSON, null, 2) + "\n");
+  await writeFile(join(root, ".omk/mcp.json"), JSON.stringify(mcpJson, null, 2) + "\n");
 
   // Project-local MCP config must not import global server definitions by default:
   // global configs can contain inline headers/env secrets that should stay in the user scope.
   const projectMcpPath = join(root, ".kimi", "mcp.json");
   const projectMcpServers: Record<string, unknown> = {
-    "omk-project": MCP_JSON.mcpServers["omk-project"],
+    "omk-project": mcpJson.mcpServers["omk-project"],
   };
   const existingProjectMcp = await readFile(projectMcpPath, "utf-8").catch(() => null);
   const shouldWriteProjectMcp =
@@ -812,11 +1059,14 @@ export async function initCommand(options: { profile: string }): Promise<void> {
   console.log("- AGENTS.md is loaded into Kimi root prompt.");
   console.log("- Todo list is required for multi-step work.");
   console.log("- Subagents are required for non-trivial work.");
-  console.log("- Skills are auto-discovered (global + project).");
-  console.log("- MCP tools are used when configured (global + project).");
+  console.log("- Project skills are auto-discovered from .kimi/skills and .agents/skills.");
+  console.log("- Project MCP defaults to omk-project only; remote/global MCPs are explicit opt-in.");
   console.log("- Built-in tools: SearchWeb, FetchURL (no config required).");
 
-  console.log(style.gray("  Global MCP/skills are enabled by default for existing Kimi users."));
+  console.log(style.gray("  Fresh init does not copy user-global skills or MCP servers into the project."));
+  console.log(style.gray("  Trusted local users can add --import-user-skills to import personal skills after secret review."));
+
+  await runInitInteractiveSetup(options, initHomeDir);
 
   // ── Shell integration & PATH check ──
   const pathCheck = await checkOmkInPath();
@@ -833,6 +1083,93 @@ export async function initCommand(options: { profile: string }): Promise<void> {
 
   console.log("");
   console.log(style.purpleBold("   Next steps: ") + style.cream("omk doctor → omk chat"));
+}
+
+function isDisabledEnvValue(value: string | undefined): boolean {
+  return ["0", "false", "off", "no", "never"].includes(value?.trim().toLowerCase() ?? "");
+}
+
+function isEnabledEnvValue(value: string | undefined): boolean {
+  return ["1", "true", "on", "yes", "always"].includes(value?.trim().toLowerCase() ?? "");
+}
+
+function shouldImportUserSkills(options: InitCommandOptions): boolean {
+  const env = options.env ?? process.env;
+  return Boolean(options.importUserSkills) || isEnabledEnvValue(env.OMK_INIT_IMPORT_USER_SKILLS);
+}
+
+function isInitInteractiveSetupEligible(options: InitCommandOptions): boolean {
+  const env = options.env ?? process.env;
+  const stdin = options.stdin ?? process.stdin;
+  const stdout = options.stdout ?? process.stdout;
+
+  if (options.interactiveSetup === false) return false;
+  if (isDisabledEnvValue(env.OMK_INIT_PROMPTS)) return false;
+  if (env.CI || env.GITHUB_ACTIONS) return false;
+  return Boolean(stdin.isTTY && stdout.isTTY);
+}
+
+async function runInitInteractiveSetup(options: InitCommandOptions, homeDir: string): Promise<void> {
+  if (!isInitInteractiveSetupEligible(options)) return;
+
+  await maybeAskForGitHubStar({
+    version: getOmkVersionSync(),
+    homeDir,
+    env: options.env,
+    argv: options.argv ?? ["node", "omk", "init"],
+    stdin: options.stdin,
+    stdout: options.stdout,
+    commandName: "init",
+    prompt: options.promptGitHubStar,
+    starRepo: options.starRepo,
+  });
+
+  await maybeAskForDeepSeekApiKeyDuringInit(options, homeDir);
+}
+
+async function maybeAskForDeepSeekApiKeyDuringInit(
+  options: InitCommandOptions,
+  homeDir: string,
+): Promise<void> {
+  const env = options.env ?? process.env;
+  if (isDisabledEnvValue(env.OMK_INIT_DEEPSEEK_PROMPT)) return;
+
+  try {
+    const providerOptions = { env, homeDir };
+    const currentStatus = await getDeepSeekProviderStatus(providerOptions);
+    if (currentStatus.apiKeySet) {
+      console.log(style.gray(t("init.deepseekAlreadyConfigured")));
+      return;
+    }
+
+    const shouldConfigure = options.promptDeepSeekSetup
+      ? await options.promptDeepSeekSetup()
+      : await confirm({
+          message: t("init.deepseekPrompt"),
+          default: false,
+        });
+    if (!shouldConfigure) return;
+
+    const enteredCredential = options.promptDeepSeekApiKey
+      ? await options.promptDeepSeekApiKey()
+      : await password({
+          message: t("init.deepseekKeyPrompt"),
+          mask: "*",
+        });
+
+    await setDeepSeekApiKey(enteredCredential, providerOptions);
+    console.log(status.ok(t("init.deepseekSaved")));
+  } catch (error) {
+    if (error instanceof ExitPromptError) return;
+    console.log(status.warn(t("init.deepseekSetupFailed", redactSecretishText(error))));
+  }
+}
+
+function redactSecretishText(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message
+    .replace(/sk-[A-Za-z0-9_-]{12,}/g, "[redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, "Bearer [redacted]");
 }
 
 async function checkOmkInPath(): Promise<{ inPath: boolean }> {

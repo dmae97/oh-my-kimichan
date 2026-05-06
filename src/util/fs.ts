@@ -42,6 +42,25 @@ function isGlobalWriteAllowed(): boolean {
   return process.env.OMK_MCP_ALLOW_WRITE_CONFIG === "1";
 }
 
+function shouldRewriteMcpArgPath(server: Record<string, unknown>, arg: unknown, index: number): arg is string {
+  if (typeof arg !== "string") return false;
+  if (arg.startsWith("/") || arg.startsWith("http") || arg.startsWith("-")) return false;
+  if (isShellInlineMcpArg(server, index)) return false;
+  if (/[\s;"'|&<>]/.test(arg)) return false;
+  return true;
+}
+
+function isShellInlineMcpArg(server: Record<string, unknown>, index: number): boolean {
+  const command = typeof server.command === "string" ? server.command : "";
+  const commandName = command.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? command.toLowerCase();
+  if (!["bash", "sh", "zsh", "fish", "pwsh", "powershell", "cmd", "cmd.exe"].includes(commandName)) {
+    return false;
+  }
+  const args = Array.isArray(server.args) ? server.args : [];
+  const previous = args[index - 1];
+  return previous === "-c" || previous === "-lc" || previous === "/c" || previous === "--command";
+}
+
 export function getManifestPath(): string {
   return getOmkPath("sync-manifest.json");
 }
@@ -109,6 +128,10 @@ export function getProjectRoot(): string {
   return process.cwd();
 }
 
+export function getUserHome(env: NodeJS.ProcessEnv = process.env): string {
+  return env.OMK_ORIGINAL_HOME ?? env.HOME ?? env.USERPROFILE ?? homedir();
+}
+
 export function getOmkPath(subPath?: string): string {
   const root = getProjectRoot();
   return subPath ? join(root, ".omk", subPath) : join(root, ".omk");
@@ -117,7 +140,7 @@ export function getOmkPath(subPath?: string): string {
 export { validateRunId, getRunsDir, getRunPath, listValidRunIds } from "./run-store.js";
 
 export function getKimiConfigPath(): string {
-  return join(homedir(), ".kimi", "config.toml");
+  return join(getUserHome(), ".kimi", "config.toml");
 }
 
 const OMK_START_MARKER = "# >>> omk managed hooks — do not edit manually";
@@ -191,7 +214,7 @@ export async function mergeKimiHooks(
     let backupPath: string | null = null;
     if (await pathExists(kimiConfigPath)) {
       const backupDir = getBackupDir(timestamp);
-      backupPath = await backupFile(kimiConfigPath, backupDir, relative(homedir(), kimiConfigPath));
+      backupPath = await backupFile(kimiConfigPath, backupDir, relative(getUserHome(), kimiConfigPath));
     }
     await writeFileSafe(kimiConfigPath, kimiContent);
     manifest.push({
@@ -249,7 +272,7 @@ export async function syncKimiMcpGlobal(
 ): Promise<boolean> {
   const manifest = options.manifest ?? [];
   const timestamp = options.timestamp ?? new Date().toISOString();
-  const globalMcpPath = join(homedir(), ".kimi", "mcp.json");
+  const globalMcpPath = join(getUserHome(), ".kimi", "mcp.json");
   const projectConfigs = [getOmkPath("mcp.json"), join(getProjectRoot(), ".kimi", "mcp.json")];
 
   const mergedServers: Record<string, unknown> = {};
@@ -264,14 +287,13 @@ export async function syncKimiMcpGlobal(
         const root = getProjectRoot();
         for (const [name, server] of Object.entries(parsed.mcpServers)) {
           const s = server as Record<string, unknown>;
-          // args의 상대 경로를 MCP 설정 파일 기준 절대 경로로 변환
+          // args의 상대 경로를 MCP 설정 파일 기준 절대 경로로 변환.
+          // Shell snippets such as `set -a; source ...; exec npx ...` must
+          // remain untouched or MCP configs become broken Windows/WSL paths.
           if (Array.isArray(s.args)) {
-            s.args = s.args.map((arg: string) => {
-              if (typeof arg === "string" && !arg.startsWith("/") && !arg.startsWith("http")) {
-                // 상대 경로이면서 -/-- 로 시작하지 않는 옵션이 아닌 경우
-                if (!arg.startsWith("-")) {
-                  return join(root, arg);
-                }
+            s.args = s.args.map((arg: unknown, index: number) => {
+              if (shouldRewriteMcpArgPath(s, arg, index)) {
+                return join(root, arg);
               }
               return arg;
             });
@@ -329,7 +351,7 @@ export async function syncKimiMcpGlobal(
     let backupPath: string | null = null;
     if (await pathExists(globalMcpPath)) {
       const backupDir = getBackupDir(timestamp);
-      backupPath = await backupFile(globalMcpPath, backupDir, relative(homedir(), globalMcpPath));
+      backupPath = await backupFile(globalMcpPath, backupDir, relative(getUserHome(), globalMcpPath));
     }
     await writeFileSafe(globalMcpPath, newContent);
     manifest.push({
@@ -361,7 +383,7 @@ export async function syncKimiSkillsGlobal(
   options: { dryRun?: boolean; manifest?: SyncManifestEntry[]; timestamp?: string } = {}
 ): Promise<boolean> {
   const projectSkillsDir = join(getProjectRoot(), ".kimi", "skills");
-  const globalSkillsDir = join(homedir(), ".kimi", "skills");
+  const globalSkillsDir = join(getUserHome(), ".kimi", "skills");
 
   if (!(await pathExists(projectSkillsDir))) return false;
 
@@ -499,7 +521,7 @@ export async function syncKimiMemoryGlobal(
     let backupPath: string | null = null;
     if (await pathExists(memoryPath)) {
       const backupDir = getBackupDir(timestamp);
-      backupPath = await backupFile(memoryPath, backupDir, relative(homedir(), memoryPath));
+      backupPath = await backupFile(memoryPath, backupDir, relative(getUserHome(), memoryPath));
     }
     await writeFileSafe(memoryPath, newContent);
     manifest.push({
@@ -565,7 +587,7 @@ export async function collectMcpConfigs(scope: OmkRuntimeScope = "project"): Pro
 
   const omkMcp = getOmkPath("mcp.json");
   const kimiMcp = join(getProjectRoot(), ".kimi", "mcp.json");
-  const globalMcp = join(homedir(), ".kimi", "mcp.json");
+  const globalMcp = join(getUserHome(), ".kimi", "mcp.json");
 
   if (scope === "all") {
     // syncKimiMcpGlobal() already merges project configs into ~/.kimi/mcp.json.
@@ -718,7 +740,7 @@ export async function injectKimiGlobals(
     args.push("--mcp-config-file", mcp);
   }
 
-  const globalSkillsDir = join(homedir(), ".kimi", "skills");
+  const globalSkillsDir = join(getUserHome(), ".kimi", "skills");
   const projectSkillsDir = getKimiSkillsDir();
   const [globalSkillsExists, projectSkillsExists] = await Promise.all([
     skillsScope === "all" ? pathExists(globalSkillsDir) : Promise.resolve(false),

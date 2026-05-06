@@ -8,15 +8,17 @@ import { t } from "../util/i18n.js";
 import { createRoutedRunState, refreshRunStateEstimate } from "../orchestration/run-state.js";
 import type { RunState } from "../contracts/orchestration.js";
 import { orchestratePrompt } from "../orchestration/orchestrate-prompt.js";
+import type { ProviderPolicy } from "../providers/types.js";
 
 export async function runCommand(
   flow: string | undefined,
   goal: string | undefined,
-  options: { workers?: string; runId?: string; goalId?: string; timeoutPreset?: string }
+  options: { workers?: string; runId?: string; goalId?: string; timeoutPreset?: string; provider?: ProviderPolicy }
 ): Promise<void> {
   const root = getProjectRoot();
   const resources = await getOmkResourceSettings();
   const workerCount = normalizeWorkerCount(options.workers, resources.maxWorkers);
+  const providerPolicy = normalizeProviderPolicy(options.provider);
 
   let resolvedFlow = flow;
   let resolvedGoal = goal;
@@ -84,7 +86,7 @@ export async function runCommand(
       await writeFile(join(runDir, "goal.md"), `# Goal\n\n${resolvedGoal}\n`);
     }
     if (flow) {
-      await writeFile(join(runDir, "plan.md"), `# Plan\n\nFlow: ${resolvedFlow}\nWorkers: ${workerCount}\nResource profile: ${resources.profile}\n`);
+      await writeFile(join(runDir, "plan.md"), `# Plan\n\nFlow: ${resolvedFlow}\nWorkers: ${workerCount}\nResource profile: ${resources.profile}\nProvider policy: ${providerPolicy}\n`);
     }
   } else {
     if (!resolvedFlow || !resolvedGoal) {
@@ -130,7 +132,7 @@ export async function runCommand(
     await mkdir(runDir, { recursive: true });
     startedAt = new Date().toISOString();
     await writeFile(join(runDir, "goal.md"), `# Goal\n\n${resolvedGoal}\n`);
-    await writeFile(join(runDir, "plan.md"), `# Plan\n\nFlow: ${resolvedFlow}\nWorkers: ${workerCount}\nResource profile: ${resources.profile}\n`);
+    await writeFile(join(runDir, "plan.md"), `# Plan\n\nFlow: ${resolvedFlow}\nWorkers: ${workerCount}\nResource profile: ${resources.profile}\nProvider policy: ${providerPolicy}\n`);
     const runState = createInteractiveRunState({
       runId,
       flow: resolvedFlow,
@@ -149,6 +151,7 @@ export async function runCommand(
   console.log(label("Goal", resolvedGoal ?? t("run.useExistingGoal")));
   console.log(label("Workers", String(workerCount)));
   console.log(label("Resource profile", `${resources.profile} (${resources.reason})`) + "\n");
+  console.log(label("Provider policy", providerPolicy));
 
   // Delegate execution to orchestratePrompt
   const rawPrompt = resolvedGoal ?? "";
@@ -168,6 +171,7 @@ export async function runCommand(
       workers: String(workerCount),
       goalId: options.goalId,
       timeoutPreset: options.timeoutPreset,
+      provider: providerPolicy,
     });
   } catch (err) {
     console.error(status.error(String(err)));
@@ -180,6 +184,10 @@ function normalizeWorkerCount(value: string | undefined, fallback: number): numb
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
   return Math.min(parsed, 6);
+}
+
+function normalizeProviderPolicy(value: string | undefined): ProviderPolicy {
+  return value === "kimi" ? "kimi" : "auto";
 }
 
 function createInteractiveRunState(input: {

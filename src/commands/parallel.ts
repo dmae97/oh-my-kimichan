@@ -5,7 +5,6 @@ import readline from "readline";
 import { getOmkPath, getProjectRoot, getRunPath } from "../util/fs.js";
 import { style, header, status, label, kimicatCliHero, bullet } from "../util/theme.js";
 import { t } from "../util/i18n.js";
-import { createKimiTaskRunner } from "../kimi/runner.js";
 import { createOmkSessionEnv } from "../util/session.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { createRoutedRunState, createDagFromRunState, refreshRunStateEstimate, routeRunState } from "../orchestration/run-state.js";
@@ -16,6 +15,10 @@ import { ParallelLiveRenderer, renderCompactParallelFrame, type ParallelViewMode
 import { formatOmkVersionFooter } from "../util/version.js";
 import { UsageError } from "../util/cli-contract.js";
 import { captureTerminalInputState, restoreTerminalInputState } from "../util/terminal-input.js";
+import {
+  createProviderBackedTaskRunner,
+  type ProviderPolicy,
+} from "../providers/index.js";
 import type { RunState, UserIntent } from "../contracts/orchestration.js";
 import type { Dag } from "../orchestration/dag.js";
 
@@ -33,6 +36,7 @@ export interface ParallelCommandOptions {
   compact?: boolean;
   goalId?: string;
   timeoutPreset?: string;
+  provider?: ProviderPolicy;
   /** Analyzed user intent for dynamic DAG construction and role routing. */
   intent?: UserIntent;
 }
@@ -44,6 +48,7 @@ export async function parallelCommand(
   const root = getProjectRoot();
   const resources = await getOmkResourceSettings();
   const workerCount = normalizeWorkerCount(options.workers, resources.maxWorkers);
+  const providerPolicy = normalizeProviderPolicy(options.provider);
 
   const hasFromSpec = Boolean(options.fromSpec);
 
@@ -60,7 +65,7 @@ export async function parallelCommand(
   await mkdir(runDir, { recursive: true });
   await writeFile(
     join(runDir, "plan.md"),
-    `# Plan\n\nFlow: parallel\nWorkers: ${workerCount}\nResource profile: ${resources.profile}\nApproval policy: ${approvalPolicy}\n`
+    `# Plan\n\nFlow: parallel\nWorkers: ${workerCount}\nResource profile: ${resources.profile}\nApproval policy: ${approvalPolicy}\nProvider policy: ${providerPolicy}\n`
   );
 
   let runState: RunState;
@@ -131,6 +136,7 @@ export async function parallelCommand(
   console.log(label("Workers", String(workerCount)));
   console.log(label("Resource profile", `${resources.profile} (${resources.reason})`));
   console.log(label("Approval policy", approvalPolicy) + "\n");
+  console.log(label("Provider policy", providerPolicy));
 
   const agentFile = getOmkPath("agents/root.yaml");
   const promptText = buildPromptText(effectiveGoal, runId, resources.profile, workerCount, options.intent);
@@ -232,25 +238,30 @@ export async function parallelCommand(
     executor.onStateChange((stateSnapshot) => logRunStateTransitions(stateSnapshot, previousStatuses));
   }
 
-  const runner = createKimiTaskRunner({
-    cwd: root,
-    timeout: 0,
-    agentFile,
-    promptPrefix: promptText,
-    mcpScope: resources.mcpScope,
-    skillsScope: resources.skillsScope,
-    roleAgentFiles: true,
-    env: {
-      ...createOmkSessionEnv(root, runId),
-      OMK_RUN_ID: runId,
-      OMK_FLOW: "parallel",
-      OMK_GOAL: effectiveGoal,
-      OMK_WORKERS: String(workerCount),
-      OMK_DAG_ROUTING: "1",
-      OMK_DAG_STATE_PATH: statePath,
-      OMK_MCP_SCOPE: resources.mcpScope,
-      OMK_SKILLS_SCOPE: resources.skillsScope,
-      OMK_APPROVAL_POLICY: approvalPolicy,
+  const runner = await createProviderBackedTaskRunner({
+    providerPolicy,
+    deepseekPromptPrefix: buildDeepSeekPromptPrefix(effectiveGoal, runId, workerCount, options.intent),
+    allowDeepSeekAdvisoryFileNodes: true,
+    kimi: {
+      cwd: root,
+      timeout: 0,
+      agentFile,
+      promptPrefix: promptText,
+      mcpScope: resources.mcpScope,
+      skillsScope: resources.skillsScope,
+      roleAgentFiles: true,
+      env: {
+        ...createOmkSessionEnv(root, runId),
+        OMK_RUN_ID: runId,
+        OMK_FLOW: "parallel",
+        OMK_GOAL: effectiveGoal,
+        OMK_WORKERS: String(workerCount),
+        OMK_DAG_ROUTING: "1",
+        OMK_DAG_STATE_PATH: statePath,
+        OMK_MCP_SCOPE: resources.mcpScope,
+        OMK_SKILLS_SCOPE: resources.skillsScope,
+        OMK_APPROVAL_POLICY: approvalPolicy,
+      },
     },
   });
 
@@ -332,6 +343,10 @@ function normalizeApprovalPolicy(
   if (v === "interactive" || v === "auto" || v === "yolo" || v === "block") return v;
   // Default: interactive for safety in parallel mode
   return "interactive";
+}
+
+function normalizeProviderPolicy(value: string | undefined): ProviderPolicy {
+  return value === "kimi" ? "kimi" : "auto";
 }
 
 function buildPromptText(
@@ -427,6 +442,49 @@ function buildPromptText(
   );
 
   return lines.join("\n");
+}
+
+function buildDeepSeekPromptPrefix(
+  goalContext: string,
+  runId: string,
+  workerCount: number,
+  intent?: UserIntent
+): string {
+  const taskType = intent?.taskType ?? "general";
+  const lines = [
+    `OMK DeepSeek opportunistic worker.`,
+    `Direct mode is read-only. For file-affecting advisory mode, propose patch strategy only; Kimi owns actual edits, merge authority, and final synthesis.`,
+    `Do not repeat or restart the user's original goal. Read the current Kimi/goal context below and answer only for the assigned DAG node.`,
+    ``,
+    `## Current Run Context`,
+    `- Run ID: ${runId}`,
+    `- Worker budget: ${workerCount}`,
+    `- Task type: ${taskType}`,
+  ];
+
+  if (intent) {
+    lines.push(
+      `- Complexity: ${intent.complexity}`,
+      `- Parallelizable: ${intent.parallelizable}`,
+      `- Required roles: ${intent.requiredRoles.join(", ")}`,
+      `- Read-only intent: ${intent.isReadOnly}`,
+      `- Rationale: ${intent.rationale}`
+    );
+  }
+
+  lines.push(
+    ``,
+    `## Current Kimi/Goal Context`,
+    limitPromptSection(goalContext, 8_000)
+  );
+
+  return lines.join("\n");
+}
+
+function limitPromptSection(value: string, maxChars: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxChars) return trimmed;
+  return `${trimmed.slice(0, maxChars)}\n\n[truncated: ${trimmed.length - maxChars} chars omitted]`;
 }
 
 function buildWorkerLabels(state: RunState): Record<string, string> {

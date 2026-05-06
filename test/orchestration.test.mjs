@@ -154,8 +154,50 @@ test("project MCP scope excludes global Kimi MCP config", async () => {
   }
 });
 
+test("global MCP and skills resolve through OMK_ORIGINAL_HOME when HOME is isolated", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "omk-original-home-project-"));
+  const originalHome = await mkdtemp(join(tmpdir(), "omk-original-home-"));
+  const isolatedHome = await mkdtemp(join(tmpdir(), "omk-isolated-home-"));
+  const previousRoot = process.env.OMK_PROJECT_ROOT;
+  const previousHome = process.env.HOME;
+  const previousOriginalHome = process.env.OMK_ORIGINAL_HOME;
+  const previousMcpScope = process.env.OMK_MCP_SCOPE;
+  const previousSkillsScope = process.env.OMK_SKILLS_SCOPE;
+
+  try {
+    await mkdir(join(originalHome, ".kimi"), { recursive: true });
+    await mkdir(join(originalHome, ".kimi", "skills", "global-skill"), { recursive: true });
+    await writeFile(join(originalHome, ".kimi", "mcp.json"), JSON.stringify({ mcpServers: { "global-original": { command: "node" } } }));
+    await writeFile(join(originalHome, ".kimi", "skills", "global-skill", "SKILL.md"), "# global skill\n");
+
+    process.env.OMK_PROJECT_ROOT = projectRoot;
+    process.env.HOME = isolatedHome;
+    process.env.OMK_ORIGINAL_HOME = originalHome;
+    process.env.OMK_MCP_SCOPE = "all";
+    process.env.OMK_SKILLS_SCOPE = "all";
+    resetRoutingInventoryCache();
+
+    const configs = await collectMcpConfigs("all");
+    assert.deepEqual(configs, [join(originalHome, ".kimi", "mcp.json")]);
+
+    const inventory = discoverRoutingInventory(projectRoot);
+    assert.equal(inventory.mcpServers.get("global-original"), "global");
+    assert.equal(inventory.skills.get("global-skill"), "global");
+  } finally {
+    resetRoutingInventoryCache();
+    restoreEnv("OMK_PROJECT_ROOT", previousRoot);
+    restoreEnv("HOME", previousHome);
+    restoreEnv("OMK_ORIGINAL_HOME", previousOriginalHome);
+    restoreEnv("OMK_MCP_SCOPE", previousMcpScope);
+    restoreEnv("OMK_SKILLS_SCOPE", previousSkillsScope);
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(originalHome, { recursive: true, force: true });
+    await rm(isolatedHome, { recursive: true, force: true });
+  }
+});
+
 test("run state routing helper enriches synthetic CLI nodes", async () => {
-  await withRoutingSkills(["omk-adaptorch-dag", "omk-quality-gate"], async () => {
+  await withRoutingSkills(["omk-industrial-control-loop", "omk-quality-gate"], async () => {
     const state = createRoutedRunState({
       runId: "run-state-test",
       startedAt: "2026-05-01T00:00:00.000Z",
@@ -167,7 +209,7 @@ test("run state routing helper enriches synthetic CLI nodes", async () => {
     });
 
     assert.equal(state.nodes[0].status, "pending");
-    assert.ok(state.nodes[0].routing?.skills?.includes("omk-adaptorch-dag"));
+    assert.ok(state.nodes[0].routing?.skills?.includes("omk-industrial-control-loop"));
     assert.ok(state.nodes[1].routing?.skills?.includes("omk-quality-gate"));
     assert.equal(state.estimate?.totalNodes, 2);
   });
@@ -193,7 +235,7 @@ test("run state estimate can be refreshed after synthetic status changes", () =>
 });
 
 test("routeRunState preserves runtime status while refreshing routing metadata", async () => {
-  await withRoutingSkills(["omk-adaptorch-dag"], async () => {
+  await withRoutingSkills(["omk-industrial-control-loop"], async () => {
     const routed = routeRunState({
       runId: "resume-test",
       startedAt: "2026-05-01T00:00:00.000Z",
@@ -213,7 +255,7 @@ test("routeRunState preserves runtime status while refreshing routing metadata",
 
     assert.equal(routed.nodes[0].status, "running");
     assert.equal(routed.nodes[0].startedAt, "2026-05-01T00:00:01.000Z");
-    assert.ok(routed.nodes[0].routing?.skills?.includes("omk-adaptorch-dag"));
+    assert.ok(routed.nodes[0].routing?.skills?.includes("omk-industrial-control-loop"));
   });
 });
 
@@ -234,6 +276,30 @@ test("scheduler blocks descendants after a terminal failed dependency", () => {
   assert.equal(scheduler.isFailed(dag), true);
 });
 
+test("scheduler keeps transitive optional dependents runnable after a blocker", () => {
+  const dag = createDag({
+    nodes: [
+      { id: "discover", name: "Discover", role: "researcher", dependsOn: [], maxRetries: 1 },
+      { id: "summarize", name: "Summarize", role: "writer", dependsOn: ["discover"], maxRetries: 1 },
+      {
+        id: "report",
+        name: "Report with optional summary",
+        role: "reviewer",
+        dependsOn: ["summarize"],
+        maxRetries: 1,
+        inputs: [{ name: "optional summary", ref: "summary.md", from: "summarize", required: false }],
+      },
+    ],
+  });
+  const scheduler = createScheduler();
+
+  scheduler.updateNodeStatus(dag, "discover", "failed");
+
+  assert.equal(dag.nodes.find((node) => node.id === "summarize")?.status, "blocked");
+  assert.equal(dag.nodes.find((node) => node.id === "report")?.status, "pending");
+  assert.deepEqual(scheduler.getRunnableNodes(dag).map((node) => node.id), ["report"]);
+});
+
 test("createDag rejects hidden input dependencies", () => {
   assert.throws(
     () => createDag({
@@ -250,6 +316,29 @@ test("createDag rejects hidden input dependencies", () => {
       ],
     }),
     /hidden dependency/
+  );
+});
+
+test("createDag rejects malformed dependency contracts", () => {
+  assert.throws(
+    () => createDag({ nodes: "not-an-array" }),
+    /nodes array/
+  );
+  assert.throws(
+    () => createDag({
+      nodes: [
+        { id: "plan", name: "Plan", role: "planner", dependsOn: ["plan"], maxRetries: 1 },
+      ],
+    }),
+    /cannot depend on itself/
+  );
+  assert.throws(
+    () => createDag({
+      nodes: [
+        { id: "code", name: "Code", role: "coder", dependsOn: [], maxRetries: 1, inputs: [{ name: "missing", ref: "x", from: "plan" }] },
+      ],
+    }),
+    /missing input dependency/
   );
 });
 
@@ -410,7 +499,7 @@ test("ETA estimator uses completed durations and worker count", () => {
 });
 
 test("executor records agent timings and passes ETA environment", async () => {
-  await withRoutingSkills(["omk-adaptorch-dag", "omk-typescript-strict"], async () => {
+  await withRoutingSkills(["omk-industrial-control-loop", "omk-typescript-strict"], async () => {
     const savedStates = [];
     const seenEnv = [];
     const executor = createExecutor({
@@ -453,7 +542,7 @@ test("executor records agent timings and passes ETA environment", async () => {
     assert.ok(result.state.nodes.every((node) => node.attempts?.length === 1));
     assert.ok(seenEnv.every((env) => typeof env.OMK_ETA_REMAINING_MS === "string"));
     assert.ok(seenEnv.every((env) => typeof env.OMK_SKILL_HINTS === "string"));
-    assert.ok(seenEnv.some((env) => env.OMK_SKILL_HINTS.includes("omk-adaptorch-dag")));
+    assert.ok(seenEnv.some((env) => env.OMK_SKILL_HINTS.includes("omk-industrial-control-loop")));
     assert.ok(seenEnv.some((env) => env.OMK_SKILL_HINTS.includes("omk-typescript-strict")));
     assert.ok(savedStates.some((state) => state.estimate?.runningNodes === 1));
   });

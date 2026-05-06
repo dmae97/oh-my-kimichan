@@ -2,6 +2,7 @@ import type { RunState, NextAction } from "../contracts/orchestration.js";
 import type { GoalSpec, GoalEvidence } from "../contracts/goal.js";
 import { evaluateMissingCriteria, suggestNextAction } from "../goal/eval-criteria.js";
 import { scoreGoal } from "../goal/scoring.js";
+import { renderPromptDigest } from "../goal/prompt-digest.js";
 
 export interface DecisionCandidate {
   id: string;
@@ -135,24 +136,37 @@ function buildAutoPrompt(goal: GoalSpec, runState: RunState, evidence: GoalEvide
   const missing = evaluateMissingCriteria(goal, evidence);
   const failedNodes = runState.nodes.filter((n) => n.status === "failed");
   const doneNodes = runState.nodes.filter((n) => n.status === "done");
+  const blockedNodes = runState.nodes.filter((n) => n.status === "blocked");
   const lines: string[] = [
-    `# Auto-Generated Next Prompt`,
+    `# Auto-Generated Context Prompt`,
     ``,
-    `## Goal`,
-    goal.objective,
+    `## Kimi Context Synthesis`,
+    `Use this as follow-up context for the next run, not as a prompt to repeat verbatim.`,
+    `Infer the next concrete action from completed work, failed/blocked nodes, missing criteria, and evidence.`,
+    `Do not repeat the original goal verbatim or redo completed nodes unless their evidence is invalid.`,
+    ``,
+    `## Goal Reference (non-verbatim)`,
+    renderPromptDigest("Original objective digest", goal.objective),
     ``,
     `## Ensemble Decision`,
     `- Action: ${action}`,
     `- Completed nodes: ${doneNodes.length}/${runState.nodes.length}`,
     `- Failed nodes: ${failedNodes.length}`,
+    `- Blocked nodes: ${blockedNodes.length}`,
     `- Missing criteria: ${missing.length}`,
     ``,
   ];
+  if (doneNodes.length > 0) {
+    lines.push(`## Completed Work to Preserve`, ...doneNodes.slice(0, 8).map((n) => `- ${n.id}: ${n.name}`), ``);
+  }
   if (missing.length > 0) {
     lines.push(`## Missing Criteria`, ...missing.map((m) => `- [ ] ${m.description} (${m.requirement})`), ``);
   }
   if (failedNodes.length > 0) {
     lines.push(`## Failed Nodes to Retry`, ...failedNodes.map((n) => `- ${n.id}: ${n.name}${n.blockedReason ? ` (${n.blockedReason})` : ""}`), ``);
+  }
+  if (blockedNodes.length > 0) {
+    lines.push(`## Blocked Nodes to Unblock`, ...blockedNodes.map((n) => `- ${n.id}: ${n.name}${n.blockedReason ? ` (${n.blockedReason})` : ""}`), ``);
   }
   if (action === "replan") {
     lines.push(

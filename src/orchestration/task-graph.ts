@@ -72,6 +72,12 @@ export class TaskDagGraph {
                    node.failurePolicy?.blockDependents === false ||
                    !dependsOnRequiredOutput(node, dep.id);
           }
+          if (dep.status === "blocked") {
+            return dep.failurePolicy?.blockDependents === false ||
+                   dep.outputs?.every((o) => o.required === false) ||
+                   node.failurePolicy?.blockDependents === false ||
+                   !dependsOnRequiredOutput(node, dep.id);
+          }
           return false;
         })
       ))

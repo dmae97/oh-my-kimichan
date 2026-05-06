@@ -1,9 +1,8 @@
-import { getOmkPath, getProjectRoot, pathExists, injectKimiGlobals, collectMcpConfigs, getKimiSkillsDir, getRunPath } from "../util/fs.js";
+import { getOmkPath, getProjectRoot, pathExists, injectKimiGlobals, collectMcpConfigs, getKimiSkillsDir, getRunPath, getUserHome } from "../util/fs.js";
 import { style, status, box, label, separator } from "../util/theme.js";
 import { runShell } from "../util/shell.js";
 import { readFile, writeFile, readdir } from "fs/promises";
 import { dirname, join, isAbsolute, relative } from "path";
-import { homedir } from "os";
 import { writeTodos, readTodos, parseSetTodoListFromOutput, type TodoItem } from "../util/todo-sync.js";
 import { writeSessionMeta, readSessionMeta, createOmkSessionEnv, createOmkSessionId } from "../util/session.js";
 import type { OmkMode } from "../util/mode-preset.js";
@@ -546,7 +545,7 @@ async function getActiveSkillNames(skillsScope: "all" | "project" | "none"): Pro
   const projectDir = getKimiSkillsDir();
   if (await pathExists(projectDir)) dirs.push(projectDir);
   if (skillsScope === "all") {
-    const globalDir = join(homedir(), ".kimi", "skills");
+    const globalDir = join(getUserHome(), ".kimi", "skills");
     if (await pathExists(globalDir)) dirs.push(globalDir);
   }
   const results = await Promise.all(

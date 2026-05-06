@@ -8,6 +8,7 @@ import { MemoryStore } from "../memory/memory-store.js";
 import { evaluateEnsembleDecision } from "../orchestration/ensemble-decision.js";
 import { evaluateMissingCriteria, suggestNextAction } from "./eval-criteria.js";
 import { saveEnsembleDecision } from "./ensemble-memory.js";
+import { renderPromptDigest } from "./prompt-digest.js";
 
 
 
@@ -204,13 +205,28 @@ export async function generateNextPrompt(
   });
 
   const failedNodes = runState?.nodes.filter((n) => n.status === "failed") ?? [];
+  const blockedNodes = runState?.nodes.filter((n) => n.status === "blocked") ?? [];
+  const runningNodes = runState?.nodes.filter((n) => n.status === "running") ?? [];
+  const pendingNodes = runState?.nodes.filter((n) => n.status === "pending") ?? [];
   const successNodes = runState?.nodes.filter((n) => n.status === "done") ?? [];
 
   const lines: string[] = [
-    `# Goal: ${goal.title}`,
+    `# Context-Aware Goal Follow-up: ${goal.title}`,
     ``,
-    `## Objective`,
-    goal.objective,
+    `## Kimi Context Synthesis`,
+    `Treat this document as context for the next action, not as text to repeat verbatim.`,
+    `Kimi should infer the next concrete prompt from the latest evidence, failed/blocked nodes, missing criteria, and related memory.`,
+    `Do not repeat the original goal verbatim. Do not restart completed work unless its evidence is invalid or stale.`,
+    ``,
+    `## Goal Reference (non-verbatim)`,
+    renderPromptDigest("Original objective digest", goal.objective),
+    ``,
+    `## Immediate Focus`,
+    `- Type: ${suggestion.type}`,
+    `- Target: ${suggestion.targetId}`,
+    `- Description: ${suggestion.description}`,
+    `- Reason: ${suggestion.reason}`,
+    `- Priority: ${describeImmediatePriority(missingCriteria, failedNodes, blockedNodes)}`,
     ``,
     `## Success Criteria`,
     `### Completed (${completedCriteria.length}/${goal.successCriteria.length})`,
@@ -227,12 +243,26 @@ export async function generateNextPrompt(
       `- Run ID: ${runState.runId}`,
       `- Successful nodes: ${successNodes.length}`,
       `- Failed nodes: ${failedNodes.length}`,
+      `- Blocked nodes: ${blockedNodes.length}`,
+      `- Running nodes: ${runningNodes.length}`,
+      `- Pending nodes: ${pendingNodes.length}`,
     );
     if (successNodes.length > 0) {
-      lines.push(`- Completed: ${successNodes.map((n) => n.name).join(", ")}`);
+      lines.push(`### Completed Nodes`, ...describeNodes(successNodes));
     }
     if (failedNodes.length > 0) {
-      lines.push(`- Failed: ${failedNodes.map((n) => n.name).join(", ")}`);
+      lines.push(`### Failed Nodes`, ...describeNodes(failedNodes));
+    }
+    if (blockedNodes.length > 0) {
+      lines.push(`### Blocked Nodes`, ...describeNodes(blockedNodes));
+    }
+    const evidenceSummary = describeNodeEvidence(runState);
+    if (evidenceSummary.length > 0) {
+      lines.push(`### Recent Evidence`, ...evidenceSummary);
+    }
+    const attemptSummary = describeProviderAttempts(runState);
+    if (attemptSummary.length > 0) {
+      lines.push(`### Provider / Fallback Notes`, ...attemptSummary);
     }
     lines.push("");
   }
@@ -287,7 +317,8 @@ export async function generateNextPrompt(
     ...verificationGates.map((g) => `- [ ] ${g}`),
     ``,
     `## Instructions`,
-    `Continue working toward the objective. Focus on the missing criteria and recommended next action.`,
+    `Convert the context above into the next concrete Kimi action; do not send the same original goal prompt again.`,
+    `Focus on the missing criteria and recommended next action while preserving completed nodes and valid evidence.`,
     `Run the recommended commands after making changes. Activate relevant skills for each sub-task.`,
   );
 
@@ -302,6 +333,61 @@ export async function generateNextPrompt(
     recommendedSkills,
     verificationGates,
   };
+}
+
+function describeImmediatePriority(
+  missingCriteria: MissingCriterion[],
+  failedNodes: RunState["nodes"],
+  blockedNodes: RunState["nodes"]
+): string {
+  if (blockedNodes.length > 0) return `unblock ${blockedNodes[0]?.id ?? "blocked-node"} before retrying dependent work`;
+  if (failedNodes.length > 0) return `repair failed node ${failedNodes[0]?.id ?? "failed-node"} with a narrower retry plan`;
+  if (missingCriteria.length > 0) return `satisfy missing criterion ${missingCriteria[0]?.criterionId ?? "criterion"}`;
+  return "verify completion and close if all evidence remains valid";
+}
+
+function describeNodes(nodes: RunState["nodes"], limit = 8): string[] {
+  const visible = nodes.slice(0, limit).map((node) => {
+    const reason = node.blockedReason ? ` — ${truncateLine(node.blockedReason, 180)}` : "";
+    const attempts = node.attempts?.length ? `, attempts=${node.attempts.length}` : "";
+    return `- ${node.id}: ${node.name} (${node.role}${attempts})${reason}`;
+  });
+  if (nodes.length > limit) {
+    visible.push(`- ... ${nodes.length - limit} more`);
+  }
+  return visible;
+}
+
+function describeNodeEvidence(runState: RunState, limit = 8): string[] {
+  const entries = runState.nodes.flatMap((node) =>
+    (node.evidence ?? []).map((evidence) => {
+      const message = evidence.message ? ` — ${truncateLine(evidence.message, 180)}` : "";
+      const ref = evidence.ref ? ` (${evidence.ref})` : "";
+      return `- ${node.id}/${evidence.gate}: ${evidence.passed ? "passed" : "failed"}${ref}${message}`;
+    })
+  );
+  return entries.slice(-limit);
+}
+
+function describeProviderAttempts(runState: RunState, limit = 8): string[] {
+  const entries = runState.nodes.flatMap((node) =>
+    (node.attempts ?? []).map((attempt) => {
+      const details = [
+        attempt.requestedProvider ? `requested=${attempt.requestedProvider}` : "",
+        attempt.provider ? `provider=${attempt.provider}` : "",
+        attempt.fallbackFrom ? `fallbackFrom=${attempt.fallbackFrom}` : "",
+        attempt.fallbackReason ? `reason=${truncateLine(attempt.fallbackReason, 160)}` : "",
+      ].filter(Boolean).join(" ");
+      return `- ${node.id}#${attempt.attempt}: ${details}`;
+    })
+  ).filter((line) => line.includes("provider=") || line.includes("fallbackFrom="));
+  return entries.slice(-limit);
+}
+
+function truncateLine(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars)}…`;
 }
 
 /**

@@ -43,3 +43,44 @@ test("syncCommand rollback with empty manifest completes gracefully", () => {
   assert.match(result.stdout, /SYNC_OK/);
   assert.match(result.stdout, /No manifest entries found/);
 });
+
+test("syncKimiMcpGlobal preserves shell inline MCP args", () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "omk-sync-shell-"));
+  const homeDir = mkdtempSync(join(tmpdir(), "omk-sync-home-"));
+  const script = `
+    import { mkdir, writeFile, readFile } from "node:fs/promises";
+    import { join } from "node:path";
+    import { syncKimiMcpGlobal } from "${pathToFileURL(join(OMK_ROOT, "dist", "util", "fs.js")).href}";
+
+    await mkdir(join(process.env.OMK_PROJECT_ROOT, ".kimi"), { recursive: true });
+    await mkdir(join(process.env.OMK_PROJECT_ROOT, ".omk"), { recursive: true });
+    await mkdir(join(process.env.HOME, ".kimi"), { recursive: true });
+    await writeFile(join(process.env.OMK_PROJECT_ROOT, ".kimi", "mcp.json"), JSON.stringify({
+      mcpServers: {
+        firecrawl: {
+          command: "bash",
+          args: ["-lc", "set -a; source ~/.config/omk/secrets.env 2>/dev/null; set +a; exec npx -y firecrawl-mcp"]
+        }
+      }
+    }), "utf-8");
+
+    await syncKimiMcpGlobal({ timestamp: "2026-05-05T00:00:00.000Z" });
+    const globalRaw = await readFile(join(process.env.HOME, ".kimi", "mcp.json"), "utf-8");
+    console.log(globalRaw);
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module"], {
+    input: script,
+    env: {
+      ...process.env,
+      HOME: homeDir,
+      OMK_PROJECT_ROOT: tmpDir,
+      OMK_MCP_ALLOW_WRITE_CONFIG: "1",
+    },
+    encoding: "utf-8",
+    timeout: 30000,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.includes("source ~/.config/omk/secrets.env"), true);
+  assert.doesNotMatch(result.stdout, /omk-sync-shell-.*source/);
+});

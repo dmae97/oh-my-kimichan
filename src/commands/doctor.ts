@@ -1,9 +1,8 @@
 import { join } from "path";
-import { homedir } from "os";
 import { execSync } from "child_process";
 import { checkCommand, getKimiVersion, runShell } from "../util/shell.js";
 import { getKimiCapabilities } from "../kimi/capability.js";
-import { pathExists, getKimiConfigPath, readTextFile, getProjectRoot } from "../util/fs.js";
+import { pathExists, getKimiConfigPath, readTextFile, getProjectRoot, getUserHome } from "../util/fs.js";
 import { isGitAvailable, getCurrentBranch, getGitStatus } from "../util/git.js";
 import { style, status, header, separator } from "../util/theme.js";
 import { getGlobalMemoryConfigPath, isGraphMemoryBackend, loadMemorySettings, usesLocalGraphBackend, usesKuzuBackend } from "../memory/memory-config.js";
@@ -722,7 +721,7 @@ async function mcpSkillsChecks(root: string): Promise<CheckResult[]> {
       : t("doctor.lspMissing"),
   });
 
-  const globalMcpPath = join(homedir(), ".kimi", "mcp.json");
+  const globalMcpPath = join(getUserHome(), ".kimi", "mcp.json");
   const globalMcpExists = await pathExists(globalMcpPath);
   let globalMcpCount = 0;
   const stdioMcpServers: string[] = [];
@@ -762,7 +761,7 @@ async function mcpSkillsChecks(root: string): Promise<CheckResult[]> {
     });
   }
 
-  const globalSkillsDir = join(homedir(), ".kimi", "skills");
+  const globalSkillsDir = join(getUserHome(), ".kimi", "skills");
   const globalSkillsExists = await pathExists(globalSkillsDir);
   let globalSkillCount = 0;
   if (globalSkillsExists) {
@@ -802,7 +801,7 @@ async function memoryChecks(): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
   const globalMemoryConfigPath = getGlobalMemoryConfigPath();
-  const globalKimiDir = join(homedir(), ".kimi");
+  const globalKimiDir = join(getUserHome(), ".kimi");
   const [globalMemoryConfigExists, memorySettings, globalKimiDirExists] = await Promise.all([
     pathExists(globalMemoryConfigPath),
     loadMemorySettings(process.cwd()),

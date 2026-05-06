@@ -69,7 +69,7 @@ function blockDependents(dag: Dag, failedId: string, reason: string): void {
     const node = nodeById.get(id);
     if (!node || node.status === "done" || node.status === "running" || node.status === "blocked") continue;
     if (node.failurePolicy?.blockDependents === false) continue;
-    if (blockerId === failedId && !dependsOnRequiredOutput(node, failedId)) continue;
+    if (!dependsOnRequiredOutput(node, blockerId)) continue;
     node.status = "blocked";
     node.blockedReason = reason;
     for (const child of dag.nodes) {

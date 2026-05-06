@@ -78,8 +78,8 @@ async function loadOmkResourceSettings(): Promise<OmkResourceSettings> {
   const renderLogo = parseOptionalBoolean(env.OMK_RENDER_LOGO ?? config["theme.render_logo"])
     ?? profile !== "lite";
 
-  const mcpScope = normalizeScope(env.OMK_MCP_SCOPE ?? config["runtime.mcp_scope"], "all");
-  const skillsScope = normalizeScope(env.OMK_SKILLS_SCOPE ?? config["runtime.skills_scope"], "all");
+  const mcpScope = normalizeScope(env.OMK_MCP_SCOPE ?? config["runtime.mcp_scope"], "project");
+  const skillsScope = normalizeScope(env.OMK_SKILLS_SCOPE ?? config["runtime.skills_scope"], "project");
 
   const localeLanguage = normalizeLocaleLanguage(env.OMK_LANGUAGE ?? config["locale.language"]) ?? "en";
 

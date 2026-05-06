@@ -70,7 +70,7 @@ const ROUTE_CANDIDATES: RouteCandidate[] = [
   },
   {
     kind: "skill",
-    id: "omk-adaptorch-dag",
+    id: "omk-industrial-control-loop",
     source: "project",
     roles: ["planner", "architect", "orchestrator", "router"],
     keywords: ["dag", "dependency", "graph", "workflow", "orchestration", "scheduler", "agent", "앙상블", "에이전트"],
@@ -278,6 +278,9 @@ export function selectTaskRouting(input: RoutingInput): DagNodeRouting {
   if (skills.length === 0) skills.push("omk-context-broker");
 
   return {
+    provider: "auto",
+    fallbackProvider: "kimi",
+    providerReason: "Kimi-first provider router decides at node execution time",
     skills,
     mcpServers,
     tools,
@@ -298,6 +301,9 @@ export function mergeDagNodeRouting(auto: DagNodeRouting, override: DagNodeRouti
   return {
     ...auto,
     ...override,
+    provider: override.provider ?? auto.provider,
+    fallbackProvider: override.fallbackProvider ?? auto.fallbackProvider,
+    providerReason: override.providerReason ?? auto.providerReason,
     skills: override.skills ? unique(override.skills) : auto.skills,
     mcpServers: override.mcpServers ? unique(override.mcpServers) : auto.mcpServers,
     tools: override.tools ? unique(override.tools) : auto.tools,
@@ -316,6 +322,11 @@ export function dagNodeRoutingEnv(node: DagNode): Record<string, string> {
     OMK_ROUTE_READ_ONLY: String(routing.readOnly ?? false),
     OMK_ROUTE_EVIDENCE_REQUIRED: String(routing.evidenceRequired ?? false),
     OMK_ROUTE_RATIONALE: routing.rationale ?? "",
+    OMK_PROVIDER_HINT: routing.provider ?? "auto",
+    OMK_PROVIDER_FALLBACK: routing.fallbackProvider ?? "kimi",
+    OMK_PROVIDER_REASON: routing.providerReason ?? "",
+    OMK_ROUTE_REQUIRES_MCP: String(routing.requiresMcp ?? false),
+    OMK_ROUTE_REQUIRES_TOOL_CALLING: String(routing.requiresToolCalling ?? false),
   };
 }
 
@@ -483,6 +494,10 @@ function getRoutingProjectRoot(): string {
   return process.env.OMK_PROJECT_ROOT ? resolve(process.env.OMK_PROJECT_ROOT) : process.cwd();
 }
 
+function getRoutingUserHome(): string {
+  return process.env.OMK_ORIGINAL_HOME ?? process.env.HOME ?? homedir();
+}
+
 function skillDirs(root: string, scope: RoutingInventory["skillsScope"]): Array<{ path: string; source: RouteSource }> {
   if (scope === "none") return [];
   const dirs: Array<{ path: string; source: RouteSource }> = [
@@ -491,10 +506,11 @@ function skillDirs(root: string, scope: RoutingInventory["skillsScope"]): Array<
     { path: join(root, ".omk", "skills"), source: "project" },
   ];
   if (scope === "all") {
+    const userHome = getRoutingUserHome();
     dirs.push(
-      { path: join(homedir(), ".codex", "skills"), source: "global" },
-      { path: join(homedir(), ".agents", "skills"), source: "global" },
-      { path: join(homedir(), ".kimi", "skills"), source: "global" },
+      { path: join(userHome, ".codex", "skills"), source: "global" },
+      { path: join(userHome, ".agents", "skills"), source: "global" },
+      { path: join(userHome, ".kimi", "skills"), source: "global" },
     );
   }
   return dirs;
@@ -559,7 +575,7 @@ function loadMergedMcpConfigSync(
     return { servers, sources };
   }
 
-  const globalFiles = scope === "all" ? [join(homedir(), ".kimi", "mcp.json")] : [];
+  const globalFiles = scope === "all" ? [join(getRoutingUserHome(), ".kimi", "mcp.json")] : [];
 
   for (const path of globalFiles) {
     try {

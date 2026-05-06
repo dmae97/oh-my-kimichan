@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { normalizeGoal, updateGoalStatus } from "../dist/goal/intake.js";
 import { createGoalPersister } from "../dist/goal/persistence.js";
 import { compileGoalToDagNodes, attachGoalToRunState } from "../dist/goal/compiler.js";
+import { generateNextPrompt } from "../dist/goal/control-loop.js";
 import { scoreGoal } from "../dist/goal/scoring.js";
 import { createRoutedRunState } from "../dist/orchestration/run-state.js";
 import { createDag } from "../dist/orchestration/dag.js";
@@ -223,4 +224,59 @@ test("old RunState without schemaVersion or goalId is tolerated", () => {
   assert.ok(oldState.runId);
   assert.equal(oldState.schemaVersion, undefined);
   assert.equal(oldState.goalId, undefined);
+});
+
+test("generateNextPrompt synthesizes current context instead of repeating the original goal", async () => {
+  const spec = normalizeGoal({
+    rawPrompt: "Improve DeepSeek and goal pipelines",
+    title: "Pipeline upgrade",
+    objective: "Improve DeepSeek and goal pipelines so follow-up runs use context-aware prompts",
+  });
+  spec.successCriteria = [
+    { id: "c1", description: "DeepSeek receives current goal context", requirement: "required", weight: 1, inferred: false },
+    { id: "c2", description: "Goal continuation preserves completed work", requirement: "required", weight: 1, inferred: false },
+  ];
+
+  const runState = createRoutedRunState({
+    runId: "context-run",
+    startedAt: new Date().toISOString(),
+    nodes: [
+      { id: "deepseek-context", name: "Wire DeepSeek context", role: "coder", dependsOn: [], maxRetries: 1 },
+      { id: "goal-followup", name: "Repair goal follow-up prompt", role: "coder", dependsOn: ["deepseek-context"], maxRetries: 1 },
+    ],
+    workerCount: 1,
+  });
+  runState.nodes[0].status = "done";
+  runState.nodes[0].evidence = [{ gate: "unit", passed: true, message: "DeepSeek context prefix covered" }];
+  runState.nodes[1].status = "failed";
+  runState.nodes[1].blockedReason = "Previous prompt kept repeating the original objective";
+  runState.nodes[1].attempts = [{
+    attempt: 1,
+    startedAt: new Date().toISOString(),
+    status: "failed",
+    provider: "kimi",
+    requestedProvider: "deepseek",
+    fallbackFrom: "deepseek",
+    fallbackReason: "advisory only",
+  }];
+
+  const result = await generateNextPrompt(
+    spec,
+    [{ criterionId: "c1", passed: true, checkedAt: new Date().toISOString(), message: "context wired" }],
+    runState,
+    "### Memory\n- Previous run already wired DeepSeek context."
+  );
+
+  assert.match(result.prompt, /Kimi Context Synthesis/);
+  assert.match(result.prompt, /Do not repeat the original goal verbatim/);
+  assert.match(result.prompt, /Goal Reference \(non-verbatim\)/);
+  assert.match(result.prompt, /Original objective digest/);
+  assert.doesNotMatch(
+    result.prompt,
+    /Improve DeepSeek and goal pipelines so follow-up runs use context-aware prompts/
+  );
+  assert.match(result.prompt, /goal-followup/);
+  assert.match(result.prompt, /Goal continuation preserves completed work/);
+  assert.match(result.prompt, /Previous run already wired DeepSeek context/);
+  assert.match(result.prompt, /fallbackFrom=deepseek/);
 });

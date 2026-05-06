@@ -5,10 +5,10 @@ import {
   readManifest,
   writeManifest,
   getOmkPath,
+  getUserHome,
 } from "../util/fs.js";
 import { mkdir, writeFile, copyFile, rm } from "fs/promises";
 import { dirname, join, relative } from "path";
-import { homedir } from "os";
 import { header, status } from "../util/theme.js";
 import { t } from "../util/i18n.js";
 
@@ -136,7 +136,7 @@ async function rollbackSync(): Promise<void> {
   console.log(status.success("Rollback complete"));
 
 function isAllowedRollbackPath(p: string): boolean {
-  const allowed = [join(homedir(), ".kimi"), getOmkPath()];
+  const allowed = [join(getUserHome(), ".kimi"), getOmkPath()];
   return allowed.some((a) => p.startsWith(a));
 }
 }

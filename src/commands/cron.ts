@@ -6,9 +6,9 @@ import { loadCronJobs, createCronEngine, validateCronJobName } from "../util/cro
 import { createDag, type DagNodeDefinition } from "../orchestration/dag.js";
 import { createExecutor } from "../orchestration/executor.js";
 import { createStatePersister } from "../orchestration/state-persister.js";
-import { createKimiTaskRunner } from "../kimi/runner.js";
 import { createOmkSessionEnv } from "../util/session.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
+import { createProviderBackedTaskRunner } from "../providers/provider-runtime.js";
 import type { ApprovalPolicy, CronJob, TaskRunner } from "../contracts/orchestration.js";
 
 export interface CronDagExecutionOptions {
@@ -90,24 +90,35 @@ export async function executeCronDag(
   const workers = Math.max(1, options.workers ?? 1);
   const approvalPolicy = options.approvalPolicy ?? await loadCronApprovalPolicy(root);
   const resources = await getOmkResourceSettings();
-  const runner = options.runner ?? createKimiTaskRunner({
-    cwd: root,
-    timeout: 0,
-    agentFile: getOmkPath("agents/root.yaml"),
-    promptPrefix: `Cron job: ${job.name}\nDAG file: ${job.dagFile}`,
-    mcpScope: resources.mcpScope,
-    skillsScope: resources.skillsScope,
-    roleAgentFiles: true,
-    env: {
-      ...createOmkSessionEnv(root, runId),
-      OMK_RUN_ID: runId,
-      OMK_FLOW: "cron",
-      OMK_CRON_JOB: job.name,
-      OMK_DAG_FILE: dagPath,
-      OMK_WORKERS: String(workers),
-      OMK_DAG_ROUTING: "1",
-      OMK_MCP_SCOPE: resources.mcpScope,
-      OMK_SKILLS_SCOPE: resources.skillsScope,
+  const promptPrefix = `Cron job: ${job.name}\nDAG file: ${job.dagFile}`;
+  const runner = options.runner ?? await createProviderBackedTaskRunner({
+    providerPolicy: "auto",
+    deepseekPromptPrefix: [
+      `Kimi cron DAG context.`,
+      promptPrefix,
+      `DeepSeek is advisory/read-only unless selected for a low-risk read node.`,
+      `Kimi keeps write, shell, merge, MCP, and final synthesis authority.`,
+    ].join("\n"),
+    allowDeepSeekAdvisoryFileNodes: true,
+    kimi: {
+      cwd: root,
+      timeout: 0,
+      agentFile: getOmkPath("agents/root.yaml"),
+      promptPrefix,
+      mcpScope: resources.mcpScope,
+      skillsScope: resources.skillsScope,
+      roleAgentFiles: true,
+      env: {
+        ...createOmkSessionEnv(root, runId),
+        OMK_RUN_ID: runId,
+        OMK_FLOW: "cron",
+        OMK_CRON_JOB: job.name,
+        OMK_DAG_FILE: dagPath,
+        OMK_WORKERS: String(workers),
+        OMK_DAG_ROUTING: "1",
+        OMK_MCP_SCOPE: resources.mcpScope,
+        OMK_SKILLS_SCOPE: resources.skillsScope,
+      },
     },
   });
 

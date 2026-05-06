@@ -1,5 +1,6 @@
 import { TaskDagGraph } from "./task-graph.js";
 import { mergeDagNodeRouting, selectTaskRouting } from "./routing.js";
+import type { ProviderId } from "../providers/types.js";
 
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "blocked" | "skipped";
 export type DagContextBudget = "tiny" | "small" | "normal";
@@ -20,6 +21,16 @@ export interface DagNodeOutput {
 }
 
 export interface DagNodeRouting {
+  provider?: "auto" | ProviderId;
+  fallbackProvider?: "kimi";
+  providerReason?: string;
+  /**
+   * Skills/MCP/tools are routing hints for the Kimi runtime by default.
+   * Set these booleans only when a node cannot run without live MCP/tool
+   * authority; opportunistic providers can still advise from the hint list.
+   */
+  requiresMcp?: boolean;
+  requiresToolCalling?: boolean;
   skills?: string[];
   mcpServers?: string[];
   tools?: string[];
@@ -50,6 +61,10 @@ export interface DagNodeAttempt {
   completedAt?: string;
   durationMs?: number;
   status?: "done" | "failed";
+  provider?: ProviderId;
+  requestedProvider?: ProviderId;
+  fallbackFrom?: ProviderId;
+  fallbackReason?: string;
 }
 
 export interface DagNode {
@@ -86,6 +101,9 @@ export interface Dag {
 export type DagNodeDefinition = Omit<DagNode, "status" | "retries">;
 
 export function createDag(def: { nodes: DagNodeDefinition[] }): Dag {
+  if (!def || typeof def !== "object" || !Array.isArray(def.nodes)) {
+    throw new TypeError("DAG definition must have a nodes array");
+  }
   const nodes = def.nodes.map((n) => {
     validateNodeDefinition(n);
     return {
@@ -178,15 +196,38 @@ export function skipNode(dag: Dag, id: string): void {
   }
 }
 
-function validateNodeDefinition(node: DagNodeDefinition): void {
-  if (!Number.isInteger(node.maxRetries) || node.maxRetries < 1) {
-    throw new TypeError(`DAG node "${node.id}" maxRetries must be a positive integer`);
+function validateNodeDefinition(node: unknown): asserts node is DagNodeDefinition {
+  if (!node || typeof node !== "object") {
+    throw new TypeError("DAG node must be an object");
   }
-  if (node.priority !== undefined && !Number.isFinite(node.priority)) {
-    throw new TypeError(`DAG node "${node.id}" priority must be finite when provided`);
+  const record = node as Partial<DagNodeDefinition>;
+  if (!isNonEmptyString(record.id)) {
+    throw new TypeError("DAG node id must be a non-empty string");
   }
-  if (node.cost !== undefined && ![1, 2, 3].includes(node.cost)) {
-    throw new TypeError(`DAG node "${node.id}" cost must be 1, 2, or 3 when provided`);
+  if (!isNonEmptyString(record.name)) {
+    throw new TypeError(`DAG node "${record.id}" name must be a non-empty string`);
+  }
+  if (!isNonEmptyString(record.role)) {
+    throw new TypeError(`DAG node "${record.id}" role must be a non-empty string`);
+  }
+  if (!Array.isArray(record.dependsOn) || !record.dependsOn.every(isNonEmptyString)) {
+    throw new TypeError(`DAG node "${record.id}" dependsOn must be an array of node ids`);
+  }
+  if (record.dependsOn.includes(record.id)) {
+    throw new Error(`DAG node "${record.id}" cannot depend on itself`);
+  }
+  if (new Set(record.dependsOn).size !== record.dependsOn.length) {
+    throw new Error(`DAG node "${record.id}" has duplicate dependencies`);
+  }
+  const maxRetries = record.maxRetries;
+  if (!Number.isInteger(maxRetries) || maxRetries === undefined || maxRetries < 1) {
+    throw new TypeError(`DAG node "${record.id}" maxRetries must be a positive integer`);
+  }
+  if (record.priority !== undefined && !Number.isFinite(record.priority)) {
+    throw new TypeError(`DAG node "${record.id}" priority must be finite when provided`);
+  }
+  if (record.cost !== undefined && ![1, 2, 3].includes(record.cost)) {
+    throw new TypeError(`DAG node "${record.id}" cost must be 1, 2, or 3 when provided`);
   }
 }
 
@@ -194,12 +235,19 @@ function validateInputDependencies(nodes: DagNode[]): void {
   const ids = new Set(nodes.map((node) => node.id));
   for (const node of nodes) {
     for (const input of node.inputs ?? []) {
-      if (!input.from || !ids.has(input.from)) continue;
+      if (input.from === undefined) continue;
+      if (!ids.has(input.from)) {
+        throw new Error(`DAG missing input dependency: node "${node.id}" input "${input.name}" references unknown "${input.from}"`);
+      }
       if (!node.dependsOn.includes(input.from)) {
         throw new Error(`DAG hidden dependency: node "${node.id}" input "${input.name}" references "${input.from}" but dependsOn does not include it`);
       }
     }
   }
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function blockDependents(dag: Dag, failedId: string, reason: string): void {
@@ -213,7 +261,7 @@ function blockDependents(dag: Dag, failedId: string, reason: string): void {
     const node = nodeById.get(id);
     if (!node || node.status === "done" || node.status === "running" || node.status === "blocked") continue;
     if (node.failurePolicy?.blockDependents === false) continue;
-    if (blockerId === failedId && !dependsOnRequiredOutput(node, failedId)) continue;
+    if (!dependsOnRequiredOutput(node, blockerId)) continue;
     node.status = "blocked";
     node.blockedReason = reason;
     for (const child of dag.nodes) {

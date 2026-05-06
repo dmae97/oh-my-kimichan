@@ -7,12 +7,13 @@ import { createStatePersister } from "../orchestration/state-persister.js";
 import { checkEvidenceGates } from "../orchestration/evidence-gate.js";
 import { createExecutor } from "../orchestration/executor.js";
 import { createExecutableDagFromState, routeRunState } from "../orchestration/run-state.js";
-import { createKimiTaskRunner } from "../kimi/runner.js";
 import { createOmkSessionEnv } from "../util/session.js";
 import { getOmkResourceSettings } from "../util/resource-profile.js";
 import { listWorktrees } from "../util/worktree.js";
 import { appendEvent } from "../util/events-logger.js";
 import { t } from "../util/i18n.js";
+import { createProviderBackedTaskRunner } from "../providers/provider-runtime.js";
+import type { ProviderPolicy } from "../providers/types.js";
 import type { RunState } from "../contracts/orchestration.js";
 
 export async function dagValidateCommand(filePath?: string): Promise<void> {
@@ -116,7 +117,7 @@ export async function dagReplayCommand(
   runId: string,
   target?: string,
   subtarget?: string,
-  options?: { node?: string; fromFailure?: boolean; dryRun?: boolean }
+  options?: { node?: string; fromFailure?: boolean; dryRun?: boolean; provider?: ProviderPolicy }
 ): Promise<void> {
   const root = getProjectRoot();
   const resolvedRunId = runId === "latest" ? await resolveLatestRunId(getRunsDir(root)) : runId;
@@ -350,24 +351,35 @@ export async function dagReplayCommand(
 
   // ── Create runner ──
   const agentFile = getOmkPath("agents/root.yaml");
-  const runner = createKimiTaskRunner({
-    cwd: root,
-    timeout: 0,
-    agentFile,
-    promptPrefix: promptText,
-    mcpScope: resources.mcpScope,
-    skillsScope: resources.skillsScope,
-    roleAgentFiles: true,
-    env: {
-      ...createOmkSessionEnv(root, resolvedRunId),
-      OMK_RUN_ID: resolvedRunId,
-      OMK_FLOW: flow ?? "",
-      OMK_GOAL: goalText,
-      OMK_WORKERS: String(workerCount),
-      OMK_DAG_ROUTING: "1",
-      OMK_DAG_STATE_PATH: statePath,
-      OMK_MCP_SCOPE: resources.mcpScope,
-      OMK_SKILLS_SCOPE: resources.skillsScope,
+  const providerPolicy = normalizeProviderPolicy(options?.provider);
+  const runner = await createProviderBackedTaskRunner({
+    providerPolicy,
+    deepseekPromptPrefix: buildReplayDeepSeekPromptPrefix({
+      goalText,
+      runId: resolvedRunId,
+      mode,
+      targetNode: options?.node,
+    }),
+    allowDeepSeekAdvisoryFileNodes: true,
+    kimi: {
+      cwd: root,
+      timeout: 0,
+      agentFile,
+      promptPrefix: promptText,
+      mcpScope: resources.mcpScope,
+      skillsScope: resources.skillsScope,
+      roleAgentFiles: true,
+      env: {
+        ...createOmkSessionEnv(root, resolvedRunId),
+        OMK_RUN_ID: resolvedRunId,
+        OMK_FLOW: flow ?? "",
+        OMK_GOAL: goalText,
+        OMK_WORKERS: String(workerCount),
+        OMK_DAG_ROUTING: "1",
+        OMK_DAG_STATE_PATH: statePath,
+        OMK_MCP_SCOPE: resources.mcpScope,
+        OMK_SKILLS_SCOPE: resources.skillsScope,
+      },
     },
   });
 
@@ -381,6 +393,7 @@ export async function dagReplayCommand(
   console.log(header(`Replaying DAG run: ${resolvedRunId}`));
   console.log(label("Mode", mode));
   console.log(label("Workers", String(workerCount)));
+  console.log(label("Provider policy", providerPolicy));
   console.log(label("Nodes reset", String(nodesToReset.size)));
   console.log("");
 
@@ -488,4 +501,25 @@ function renderTable(headers: string[], rows: string[][]): string {
   ).join("\n");
 
   return [headerLine, separator, body].join("\n");
+}
+
+function normalizeProviderPolicy(value: string | undefined): ProviderPolicy {
+  return value === "kimi" ? "kimi" : "auto";
+}
+
+function buildReplayDeepSeekPromptPrefix(input: {
+  goalText: string;
+  runId: string;
+  mode: string;
+  targetNode?: string;
+}): string {
+  return [
+    `Kimi DAG replay context.`,
+    `Run ID: ${input.runId}`,
+    `Replay mode: ${input.mode}`,
+    input.targetNode ? `Target node: ${input.targetNode}` : "",
+    `Goal: ${input.goalText}`,
+    `DeepSeek is advisory/read-only unless the provider router selects a direct low-risk read node.`,
+    `Kimi keeps write, shell, merge, MCP, and final synthesis authority.`,
+  ].filter(Boolean).join("\n");
 }

@@ -12,7 +12,7 @@ import { resolveTimeoutMs } from "../util/timeout-config.js";
 import { getOmkResourceSettings, type OmkRuntimeScope } from "../util/resource-profile.js";
 import { KimiStatusLineEnhancer } from "./statusline.js";
 import { formatOmkVersionFooter } from "../util/version.js";
-import { prepareIsolatedKimiHome, cleanupIsolatedKimiHome } from "./isolated-home.js";
+import { prepareIsolatedKimiHome, cleanupIsolatedKimiHome, resolveOriginalHome } from "./isolated-home.js";
 import { enableRawTerminalInput, restoreTerminalInputState } from "../util/terminal-input.js";
 
 export async function runKimiInteractive(
@@ -38,10 +38,18 @@ export async function runKimiInteractive(
   const bugFilter = new KimiBugFilter();
   const statusLine = await KimiStatusLineEnhancer.create();
 
-  const tmpHome = await prepareIsolatedKimiHome();
-  const env = options?.env
-    ? { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile, HOME: tmpHome, USERPROFILE: tmpHome, HOMEDRIVE: "", HOMEPATH: tmpHome, ...options.env }
-    : { ...(process.env as Record<string, string>), OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile, HOME: tmpHome, USERPROFILE: tmpHome, HOMEDRIVE: "", HOMEPATH: tmpHome };
+  const baseEnv = { ...(process.env as Record<string, string>), ...(options?.env ?? {}) };
+  const originalHome = resolveOriginalHome(baseEnv);
+  const tmpHome = await prepareIsolatedKimiHome({ originalHome, env: baseEnv });
+  const env = {
+    ...baseEnv,
+    OMK_RESOURCE_PROFILE_EFFECTIVE: resources.profile,
+    OMK_ORIGINAL_HOME: originalHome,
+    HOME: tmpHome,
+    USERPROFILE: tmpHome,
+    HOMEDRIVE: "",
+    HOMEPATH: tmpHome,
+  };
 
   let ptyProcess: ReturnType<typeof pty.spawn>;
   try {
@@ -287,8 +295,17 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
     },
 
     async run(node: DagNode, nodeEnv: Record<string, string>): Promise<TaskResult> {
-      const tmpHome = await prepareIsolatedKimiHome();
-      const mergedEnv: Record<string, string> = { ...env, ...nodeEnv, HOME: tmpHome };
+      const baseEnv: Record<string, string> = { ...(process.env as Record<string, string>), ...(env ?? {}), ...nodeEnv };
+      const originalHome = resolveOriginalHome(baseEnv);
+      const tmpHome = await prepareIsolatedKimiHome({ originalHome, env: baseEnv });
+      const mergedEnv: Record<string, string> = {
+        ...baseEnv,
+        OMK_ORIGINAL_HOME: originalHome,
+        HOME: tmpHome,
+        USERPROFILE: tmpHome,
+        HOMEDRIVE: "",
+        HOMEPATH: tmpHome,
+      };
       const args: string[] = [];
       await injectKimiGlobals(args, { mcpScope, skillsScope, role: node.role });
 
@@ -394,6 +411,7 @@ function buildNodeMessage(
   if (routing?.rationale) {
     mandatoryRouting.push(`- Rationale: ${routing.rationale}`);
   }
+  const deepseekAdvisory = env.OMK_DEEPSEEK_ADVISORY?.trim();
 
   const sections = [
     promptPrefix?.trim(),
@@ -412,6 +430,15 @@ function buildNodeMessage(
           ...mandatoryRouting,
           "- Do not ignore the routing hints above.",
           "- If a skill or MCP server is listed, prefer its capabilities over generic reasoning.",
+        ].join("\n")
+      : undefined,
+    deepseekAdvisory
+      ? [
+          "DeepSeek advisory (non-authoritative — verify before editing):",
+          `- Status: ${env.OMK_DEEPSEEK_ADVISORY_STATUS ?? "success"}`,
+          `- Model: ${env.OMK_DEEPSEEK_ADVISORY_MODEL ?? "deepseek-v4-pro"}`,
+          deepseekAdvisory,
+          "Kimi remains responsible for actual file edits, shell execution, evidence, and final acceptance.",
         ].join("\n")
       : undefined,
     [

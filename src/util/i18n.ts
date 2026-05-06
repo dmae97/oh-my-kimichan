@@ -90,6 +90,7 @@ const en: Record<string, string> = {
   // Command descriptions (cli.ts)
   "cmd.initDesc": "[Stable] Create oh-my-kimi scaffold in current project",
   "cmd.initProfileOption": "Preset profile",
+  "cmd.initNoInteractiveSetupOption": "Skip GitHub star and DeepSeek API key prompts",
   "cmd.doctorDesc": "[Stable] Check Kimi CLI status, auth, model, hooks, MCP, skills",
   "cmd.doctorJsonOption": "Output results as JSON",
   "cmd.chatDesc": "[Stable] Run Kimi root coordinator (interactive)",
@@ -315,6 +316,11 @@ const en: Record<string, string> = {
   "init.mcpSyncFailed": "⚠️  MCP global sync failed: {0}",
   "init.skillsSyncFailed": "⚠️  skills global sync failed: {0}",
   "init.memorySyncFailed": "⚠️  local graph memory global sync failed: {0}",
+  "init.deepseekPrompt": "Configure a DeepSeek API key now? It is saved only to your user-local OMK secrets.",
+  "init.deepseekKeyPrompt": "DeepSeek API key (hidden, stored in ~/.config/omk/secrets.env)",
+  "init.deepseekSaved": "DeepSeek API key saved to user-local OMK secrets.",
+  "init.deepseekAlreadyConfigured": "DeepSeek API key already configured — skipping prompt.",
+  "init.deepseekSetupFailed": "DeepSeek setup skipped: {0}",
 
   // FS utility
   "fs.hooksSyncFailed": "⚠️  hooks sync failed: {0}",
@@ -518,6 +524,7 @@ const ko: Record<string, string> = {
   // Command descriptions
   "cmd.initDesc": "[Stable] 현재 프로젝트에 oh-my-kimi scaffold 생성",
   "cmd.initProfileOption": "프리셋 프로파일",
+  "cmd.initNoInteractiveSetupOption": "GitHub star 및 DeepSeek API key 프롬프트 건너뛰기",
   "cmd.doctorDesc": "[Stable] Kimi CLI 상태, auth, model, hook, MCP, skills 검사",
   "cmd.doctorJsonOption": "결과를 JSON으로 출력",
   "cmd.chatDesc": "[Stable] Kimi root coordinator 실행 (interactive)",
@@ -745,6 +752,11 @@ const ko: Record<string, string> = {
   "init.mcpSyncFailed": "⚠️  MCP 글로벌 동기화 실패: {0}",
   "init.skillsSyncFailed": "⚠️  skills 글로벌 동기화 실패: {0}",
   "init.memorySyncFailed": "⚠️  local graph memory 글로벌 동기화 실패: {0}",
+  "init.deepseekPrompt": "지금 DeepSeek API key를 설정할까요? 사용자 로컬 OMK secrets에만 저장됩니다.",
+  "init.deepseekKeyPrompt": "DeepSeek API key (숨김 입력, ~/.config/omk/secrets.env 저장)",
+  "init.deepseekSaved": "DeepSeek API key를 사용자 로컬 OMK secrets에 저장했습니다.",
+  "init.deepseekAlreadyConfigured": "DeepSeek API key가 이미 설정되어 있어 프롬프트를 건너뜁니다.",
+  "init.deepseekSetupFailed": "DeepSeek 설정을 건너뜀: {0}",
 
   // FS utility
   "fs.hooksSyncFailed": "⚠️  hooks 동기화 실패: {0}",

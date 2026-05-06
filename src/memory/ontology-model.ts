@@ -24,6 +24,9 @@ export const ONTOLOGY_NODE_TYPES = [
   "Commit",
   "MCPServer",
   "Skill",
+  "Provider",
+  "ProviderRoute",
+  "ProviderFallback",
 ] as const;
 
 export type OntologyNodeType = (typeof ONTOLOGY_NODE_TYPES)[number];
@@ -43,6 +46,11 @@ export const ONTOLOGY_RELATIONSHIP_TYPES = [
   "HAS_COMMIT",
   "USES_MCP",
   "USES_SKILL",
+  "USES_PROVIDER",
+  "HAS_PROVIDER_ROUTE",
+  "ROUTES_TO",
+  "FALLS_BACK_TO",
+  "HAS_PROVIDER_FALLBACK",
 ] as const;
 
 export type OntologyRelationshipType = (typeof ONTOLOGY_RELATIONSHIP_TYPES)[number];
@@ -165,6 +173,32 @@ export interface MCPServerNode extends OntologyNodeBase {
   description: string;
 }
 
+/** Provider node for Kimi-first multi-provider orchestration. */
+export interface ProviderNode extends OntologyNodeBase {
+  providerId: "kimi" | "deepseek";
+  role: "primary" | "opportunistic";
+  description: string;
+}
+
+/** Provider route decision node for DAG node execution. */
+export interface ProviderRouteNode extends OntologyNodeBase {
+  routeId: string;
+  nodeId: string;
+  requestedProvider: string;
+  actualProvider: string;
+  reason: string;
+  confidence: number;
+}
+
+/** Provider fallback event node for preserving run evidence. */
+export interface ProviderFallbackNode extends OntologyNodeBase {
+  fallbackId: string;
+  nodeId: string;
+  fromProvider: string;
+  toProvider: string;
+  reason: string;
+}
+
 /** Minimal executor interface accepted by {@link createOntologyConstraints}. */
 export interface OntologyConstraintExecutor {
   executeQuery(query: string, params?: Record<string, unknown>, options?: { database?: string }): Promise<unknown>;
@@ -216,6 +250,9 @@ export function buildKuzuOntologySchema(): KuzuOntologySchema {
     `CREATE NODE TABLE OmkCommit (${baseProps}, commitId STRING, message STRING, author STRING)`,
     `CREATE NODE TABLE OmkMCPServer (${baseProps}, name STRING, description STRING)`,
     `CREATE NODE TABLE OmkSkill (${baseProps}, name STRING, description STRING)`,
+    `CREATE NODE TABLE OmkProvider (${baseProps}, providerId STRING, role STRING, description STRING)`,
+    `CREATE NODE TABLE OmkProviderRoute (${baseProps}, routeId STRING, nodeId STRING, requestedProvider STRING, actualProvider STRING, reason STRING, confidence DOUBLE)`,
+    `CREATE NODE TABLE OmkProviderFallback (${baseProps}, fallbackId STRING, nodeId STRING, fromProvider STRING, toProvider STRING, reason STRING)`,
   ];
 
   const relTables: string[] = [
@@ -233,6 +270,11 @@ export function buildKuzuOntologySchema(): KuzuOntologySchema {
     `CREATE REL TABLE HAS_COMMIT (FROM OmkProject TO OmkCommit)`,
     `CREATE REL TABLE USES_MCP (FROM OmkProject TO OmkMCPServer)`,
     `CREATE REL TABLE USES_SKILL (FROM OmkProject TO OmkSkill)`,
+    `CREATE REL TABLE USES_PROVIDER (FROM OmkProject TO OmkProvider)`,
+    `CREATE REL TABLE HAS_PROVIDER_ROUTE (FROM OmkTask TO OmkProviderRoute)`,
+    `CREATE REL TABLE ROUTES_TO (FROM OmkProviderRoute TO OmkProvider)`,
+    `CREATE REL TABLE FALLS_BACK_TO (FROM OmkProviderRoute TO OmkProvider)`,
+    `CREATE REL TABLE HAS_PROVIDER_FALLBACK (FROM OmkTask TO OmkProviderFallback)`,
   ];
 
   return { nodeTables, relTables };

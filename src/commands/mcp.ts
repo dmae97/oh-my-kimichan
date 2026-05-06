@@ -1,15 +1,19 @@
 import { readFile, writeFile } from "fs/promises";
 
 import { join, isAbsolute } from "path";
-import { homedir } from "os";
 import { runShell, which } from "../util/shell.js";
-import { getProjectRoot, pathExists } from "../util/fs.js";
+import { getProjectRoot, pathExists, getUserHome } from "../util/fs.js";
 import { style, header, status, bullet, label } from "../util/theme.js";
 
 interface McpServerConfig {
+  url?: string;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  headers?: Record<string, string>;
+  http_headers?: Record<string, string>;
+  startup_timeout_sec?: number;
+  enabled?: boolean;
 }
 
 interface McpConfig {
@@ -22,6 +26,8 @@ interface ConfigSource {
   parsed: boolean;
   error?: string;
 }
+
+const RAILWAY_REMOTE_MCP_URL = "https://mcp.railway.com";
 
 async function loadConfig(filePath: string): Promise<ConfigSource> {
   if (!(await pathExists(filePath))) {
@@ -42,7 +48,7 @@ async function resolveAllConfigs(): Promise<ConfigSource[]> {
   const paths = [
     join(root, ".omk", "mcp.json"),
     join(root, ".kimi", "mcp.json"),
-    join(homedir(), ".kimi", "mcp.json"),
+    join(getUserHome(), ".kimi", "mcp.json"),
   ];
   const results: ConfigSource[] = [];
   for (const p of paths) {
@@ -88,9 +94,14 @@ export async function mcpListCommand(): Promise<void> {
   for (const [name, info] of servers) {
     const dup = info.sources.length > 1 ? style.skin(` [duplicate: ${info.sources.length} sources]`) : "";
     console.log(bullet(`${style.purpleBold(name)}${dup}`, "purple"));
-    console.log(`  ${style.gray("command:")} ${info.server.command ?? style.pink("missing")}`);
+    if (info.server.url) {
+      console.log(`  ${style.gray("url:")} ${info.server.url}`);
+    }
+    if (info.server.command || !info.server.url) {
+      console.log(`  ${style.gray("command:")} ${info.server.command ?? style.pink("missing")}`);
+    }
     if (info.server.args && info.server.args.length > 0) {
-      console.log(`  ${style.gray("args:")} ${info.server.args.join(" ")}`);
+      console.log(`  ${style.gray("args:")} ${formatArgsForDisplay(info.server.args)}`);
     }
     if (info.server.env && Object.keys(info.server.env).length > 0) {
       console.log(`  ${style.gray("env:")} ${Object.keys(info.server.env).join(", ")}`);
@@ -137,8 +148,16 @@ export async function mcpDoctorCommand(): Promise<void> {
 
     const server = info.server;
 
-    // command check
-    if (!server.command) {
+    // Transport check
+    if (server.url) {
+      const urlCheck = validateRemoteMcpUrl(server.url);
+      if (urlCheck.ok) {
+        console.log(`  ${style.mint("✓ url:")} ${server.url}`);
+      } else {
+        console.log(`  ${style.pink("✗ invalid url:")} ${urlCheck.message}`);
+        issues++;
+      }
+    } else if (!server.command) {
       console.log(`  ${style.pink("✗ missing command")}`);
       issues++;
     } else {
@@ -152,10 +171,10 @@ export async function mcpDoctorCommand(): Promise<void> {
     }
 
     // args check
-    if (server.args) {
-      for (const arg of server.args) {
+    if (!server.url && server.args) {
+      for (const [index, arg] of server.args.entries()) {
         // Check if arg looks like a file path and exists
-        if (typeof arg === "string" && !arg.startsWith("-") && !arg.startsWith("$")) {
+        if (shouldValidateArgPath(server, arg, index)) {
           if (isAbsolute(arg) || arg.includes("/") || arg.includes("\\")) {
             const exists = await pathExists(arg);
             if (!exists) {
@@ -182,10 +201,20 @@ export async function mcpDoctorCommand(): Promise<void> {
     }
 
     // Stability hints for slow-starting or failed servers
-    if (server.command) {
+    if (server.command || server.url) {
       const stabilityHints: string[] = [];
-      if (server.command.includes("npx") || server.command.includes("npm")) {
+      const target = serverTargetText(server);
+      if ((server.command?.includes("npx") ?? false) || (server.command?.includes("npm") ?? false)) {
         stabilityHints.push("npx-based servers may take >10s to start on first run. Consider installing globally or pinning the package.");
+      }
+      if (isRailwayMcpServer(name, server)) {
+        if (server.url?.includes("mcp.railway.com")) {
+          stabilityHints.push("Railway remote MCP uses OAuth over HTTP and avoids local npx/CLI token files; the first tool call may open browser auth.");
+        } else if (target.includes("@railway/mcp-server")) {
+          stabilityHints.push(`Railway local MCP depends on Railway CLI auth and npx cold starts. Prefer the remote OAuth preset: omk mcp install railway or Codex: codex mcp add railway --url ${RAILWAY_REMOTE_MCP_URL}.`);
+        } else {
+          stabilityHints.push(`Railway MCP is most stable as a remote OAuth server at ${RAILWAY_REMOTE_MCP_URL}; avoid committing API tokens into MCP JSON.`);
+        }
       }
       if (name === "promptfoo") {
         stabilityHints.push("promptfoo can be slow to initialize. Ensure NODE_OPTIONS does not limit memory, or run 'omk mcp test promptfoo' with a longer timeout.");
@@ -208,6 +237,61 @@ export async function mcpDoctorCommand(): Promise<void> {
   }
 }
 
+function shouldValidateArgPath(server: McpServerConfig, arg: string, index: number): boolean {
+  if (typeof arg !== "string" || arg.startsWith("-") || arg.startsWith("$")) return false;
+  if (isShellInlineScript(server, index)) return false;
+  // Shell snippets, inline commands, and arguments with whitespace are not
+  // standalone filesystem paths. Validating them as paths creates false MCP
+  // doctor failures for commands like `bash -lc "exec node /path/server.js"`.
+  if (/[\s;"'|&<>]/.test(arg)) return false;
+  return true;
+}
+
+function isShellInlineScript(server: McpServerConfig, index: number): boolean {
+  const command = basenameOfCommand(server.command ?? "");
+  if (!["bash", "sh", "zsh", "fish", "pwsh", "powershell", "cmd", "cmd.exe"].includes(command)) {
+    return false;
+  }
+  const previous = server.args?.[index - 1];
+  return previous === "-c" || previous === "-lc" || previous === "/c" || previous === "--command";
+}
+
+function basenameOfCommand(command: string): string {
+  return command.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? command.toLowerCase();
+}
+
+function validateRemoteMcpUrl(url: string): { ok: true } | { ok: false; message: string } {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return { ok: false, message: "remote MCP URL must use http or https" };
+    }
+    return { ok: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, message };
+  }
+}
+
+function serverTargetText(server: McpServerConfig): string {
+  return [server.url, server.command, ...(server.args ?? [])].filter(Boolean).join(" ");
+}
+
+function isRailwayMcpServer(name: string, server: McpServerConfig): boolean {
+  return /railway/i.test(name) || /railway/i.test(serverTargetText(server));
+}
+
+function formatArgsForDisplay(args: string[]): string {
+  return args.map(maskSensitiveText).join(" ");
+}
+
+function maskSensitiveText(value: string): string {
+  return value
+    .replace(/(Bearer\s+)[A-Za-z0-9._-]+/g, "$1***")
+    .replace(/(--(?:api-)?token(?:=|\s+))[^"'`\s;]+/gi, "$1***")
+    .replace(/([A-Za-z_][A-Za-z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD|CREDENTIAL)[A-Za-z0-9_]*\s*=\s*)[^"'`\s;]+/gi, "$1***");
+}
+
 export async function mcpTestCommand(serverName: string): Promise<void> {
   const sources = await resolveAllConfigs();
   const servers = collectServers(sources);
@@ -220,20 +304,32 @@ export async function mcpTestCommand(serverName: string): Promise<void> {
   }
 
   const server = info.server;
-  if (!server.command) {
+  if (!server.url && !server.command) {
     console.error(status.error(`Server ${serverName} has no command`));
     process.exit(1);
   }
 
   console.log(header(`MCP Test: ${serverName}`));
-  console.log(label("Command", server.command));
-  if (server.args) console.log(label("Args", server.args.join(" ")));
+  if (server.url) {
+    console.log(label("URL", server.url));
+    await testRemoteMcpServer(serverName, server.url);
+    return;
+  }
+
+  const command = server.command;
+  if (!command) {
+    console.error(status.error(`Server ${serverName} has no command`));
+    process.exit(1);
+  }
+
+  console.log(label("Command", command));
+  if (server.args) console.log(label("Args", formatArgsForDisplay(server.args)));
   console.log("");
 
   // Test 1: executable exists
-  const resolved = await which(server.command);
+  const resolved = await which(command);
   if (resolved.failed) {
-    console.error(status.error(`Executable not found: ${server.command}`));
+    console.error(status.error(`Executable not found: ${command}`));
     process.exit(1);
   }
   console.log(status.ok(`Executable: ${resolved.stdout.trim()}`));
@@ -241,7 +337,7 @@ export async function mcpTestCommand(serverName: string): Promise<void> {
   // Test 2: try to run with a 5s timeout as a basic smoke test
   const smokeArgs = [...(server.args ?? [])];
   console.log(style.gray("Smoke test: starting process (5s timeout)..."));
-  const smokeResult = await runShell(server.command, smokeArgs, {
+  const smokeResult = await runShell(command, smokeArgs, {
     timeout: 5000,
     env: server.env ? { ...process.env, ...server.env } as Record<string, string> : process.env as Record<string, string>,
   });
@@ -249,6 +345,8 @@ export async function mcpTestCommand(serverName: string): Promise<void> {
     console.log(status.ok(`Process exited with code ${smokeResult.exitCode}`));
   } else if (smokeResult.stderr.includes("timeout") || smokeResult.stderr.includes("ETIMEDOUT")) {
     console.log(style.skin("Process is still running after 5s (expected for stdio MCP servers)"));
+  } else if (!smokeResult.stderr.trim()) {
+    console.log(status.ok(`Process started and exited without stderr (code ${smokeResult.exitCode})`));
   } else if (smokeResult.stderr.includes("ENOENT")) {
     console.error(status.error(`Failed to start: ${smokeResult.stderr}`));
     process.exit(1);
@@ -259,16 +357,61 @@ export async function mcpTestCommand(serverName: string): Promise<void> {
   // Test 3: JSON-RPC initialize handshake
   console.log("");
   console.log(style.gray("JSON-RPC handshake test..."));
-  const handshakeResult = await runShell(server.command, smokeArgs, {
+  const initializePayload = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: {
+        name: "omk-mcp-test",
+        version: "0.0.0",
+      },
+    },
+  }) + "\n";
+  const handshakeResult = await runShell(command, smokeArgs, {
     timeout: 8000,
     env: server.env ? { ...process.env, ...server.env } as Record<string, string> : process.env as Record<string, string>,
+    input: initializePayload,
   });
-  if (!handshakeResult.failed) {
-    console.log(style.gray(`Server exited before handshake (exit code ${handshakeResult.exitCode})`));
+  if (!handshakeResult.failed && handshakeResult.stdout.includes("\"serverInfo\"")) {
+    console.log(style.mint("JSON-RPC initialize succeeded"));
+  } else if (!handshakeResult.failed) {
+    console.log(style.gray(`Server exited without initialize response (exit code ${handshakeResult.exitCode})`));
   } else if (handshakeResult.stderr.includes("timeout") || handshakeResult.stderr.includes("ETIMEDOUT")) {
     console.log(style.mint("Server stayed alive long enough — stdio MCP server looks healthy"));
   } else {
     console.log(style.gray(`Handshake result: ${handshakeResult.stderr}`));
+  }
+}
+
+async function testRemoteMcpServer(serverName: string, url: string): Promise<void> {
+  console.log("");
+  const urlCheck = validateRemoteMcpUrl(url);
+  if (!urlCheck.ok) {
+    console.error(status.error(`Invalid remote MCP URL for ${serverName}: ${urlCheck.message}`));
+    process.exit(1);
+  }
+
+  console.log(style.gray("Remote HTTP reachability test (5s timeout)..."));
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (response.status < 500) {
+      console.log(status.ok(`Remote endpoint reachable (HTTP ${response.status})`));
+      if (serverName === "railway") {
+        console.log(style.gray("Railway may prompt OAuth on first tool call; no API token is required in MCP config."));
+      }
+      return;
+    }
+    console.log(style.skin(`Remote endpoint responded with HTTP ${response.status}; retry later or check provider status.`));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(style.skin(`Remote endpoint reachability inconclusive: ${message}`));
   }
 }
 
@@ -306,7 +449,7 @@ export async function mcpRemoveCommand(serverName: string): Promise<void> {
 
 export async function mcpAddCommand(serverName: string): Promise<void> {
   const root = getProjectRoot();
-  const globalPath = join(homedir(), ".kimi", "mcp.json");
+  const globalPath = join(getUserHome(), ".kimi", "mcp.json");
   const omkPath = join(root, ".omk", "mcp.json");
 
   const globalSource = await loadConfig(globalPath);
@@ -347,6 +490,34 @@ export async function mcpInstallCommand(
     process.exit(1);
   }
 
+  const server = createInstallServer(name, command, args, options);
+
+  omkServers[name] = server;
+  await writeFile(omkPath, JSON.stringify({ mcpServers: omkServers }, null, 2) + "\n", "utf-8");
+
+  console.log(header("MCP Install"));
+  console.log(status.ok(`Installed "${name}" into ${omkPath}`));
+  if (server.url) {
+    console.log(label("URL", server.url));
+  } else {
+    console.log(label("Command", command));
+    if (args.length > 0) console.log(label("Args", formatArgsForDisplay(args)));
+  }
+}
+
+function createInstallServer(
+  name: string,
+  command: string,
+  args: string[],
+  options: { env?: string[] } = {}
+): McpServerConfig {
+  if (isRailwayInstallPreset(name, command, args, options)) {
+    return { url: RAILWAY_REMOTE_MCP_URL };
+  }
+  if (isHttpUrl(command) && args.length === 0) {
+    return { url: command };
+  }
+
   const server: McpServerConfig = { command, args };
   if (options.env && options.env.length > 0) {
     server.env = {};
@@ -357,19 +528,28 @@ export async function mcpInstallCommand(
       }
     }
   }
+  return server;
+}
 
-  omkServers[name] = server;
-  await writeFile(omkPath, JSON.stringify({ mcpServers: omkServers }, null, 2) + "\n", "utf-8");
+function isRailwayInstallPreset(
+  name: string,
+  command: string,
+  args: string[],
+  options: { env?: string[] }
+): boolean {
+  return name.toLowerCase() === "railway"
+    && command === "railway"
+    && args.length === 0
+    && (!options.env || options.env.length === 0);
+}
 
-  console.log(header("MCP Install"));
-  console.log(status.ok(`Installed "${name}" into ${omkPath}`));
-  console.log(label("Command", command));
-  if (args.length > 0) console.log(label("Args", args.join(" ")));
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
 }
 
 export async function mcpSyncGlobalCommand(options: { overwrite?: boolean; omk?: boolean }): Promise<void> {
   const root = getProjectRoot();
-  const globalPath = join(homedir(), ".kimi", "mcp.json");
+  const globalPath = join(getUserHome(), ".kimi", "mcp.json");
   const targetPath = options.omk ? join(root, ".omk", "mcp.json") : join(root, ".kimi", "mcp.json");
 
   const globalSource = await loadConfig(globalPath);

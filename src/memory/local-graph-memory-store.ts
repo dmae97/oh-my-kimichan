@@ -116,7 +116,7 @@ export interface ExtractedConcept {
 export const ONTOLOGY: MemoryOntology = {
   version: "omk-ontology-mindmap-v1",
   description:
-    "Project-local ontology for Kimi/OMK memory. Memories are decomposed into mind-map nodes for goals, topics, decisions, tasks, risks, commands, files, evidence, questions, answers, constraints, and concepts.",
+    "Project-local ontology for Kimi/OMK memory. Memories are decomposed into mind-map nodes for goals, topics, decisions, tasks, risks, commands, files, evidence, provider routes, provider fallbacks, questions, answers, constraints, and concepts.",
   classes: [
     "Project",
     "Session",
@@ -130,6 +130,9 @@ export const ONTOLOGY: MemoryOntology = {
     "Command",
     "File",
     "Evidence",
+    "Provider",
+    "ProviderRoute",
+    "ProviderFallback",
     "Constraint",
     "Question",
     "Answer",
@@ -148,6 +151,11 @@ export const ONTOLOGY: MemoryOntology = {
     "HAS_COMMAND",
     "HAS_FILE",
     "HAS_EVIDENCE",
+    "USES_PROVIDER",
+    "HAS_PROVIDER_ROUTE",
+    "ROUTES_TO",
+    "FALLS_BACK_TO",
+    "HAS_PROVIDER_FALLBACK",
     "HAS_CONSTRAINT",
     "HAS_QUESTION",
     "HAS_ANSWER",
@@ -170,6 +178,9 @@ const GENERATED_TYPES = new Set([
   "Command",
   "File",
   "Evidence",
+  "Provider",
+  "ProviderRoute",
+  "ProviderFallback",
   "Constraint",
   "Question",
   "Answer",
@@ -186,6 +197,9 @@ const CANONICAL_NODE_TYPES = new Set([
   "Task",
   "MCPServer",
   "Skill",
+  "Provider",
+  "ProviderRoute",
+  "ProviderFallback",
 ]);
 
 export class LocalGraphMemoryStore {
@@ -646,7 +660,7 @@ export class LocalGraphMemoryStore {
   }
 
   private isMindmapForward(edge: LocalGraphEdge): boolean {
-    return edge.type.startsWith("HAS_") || edge.type === "UPDATES" || edge.type === "WROTE" || edge.type === "TOUCHES_FILE";
+    return edge.type.startsWith("HAS_") || edge.type === "UPDATES" || edge.type === "WROTE" || edge.type === "TOUCHES_FILE" || edge.type === "USES_PROVIDER";
   }
 
   private toMindmapFlatNode(node: LocalGraphNode): Omit<MemoryMindmapNode, "children"> {
@@ -793,6 +807,9 @@ function classify(text: string, isBullet: boolean): string {
   if (/\b(todo|task|해야|할 일|next|action|implement|구현|작업)\b/i.test(text)) return "Task";
   if (/\b(risk|blocked|blocker|fail|failure|warning|주의|리스크|위험|실패|차단)\b/i.test(text)) return "Risk";
   if (/\b(evidence|verified|tested|pass|출처|근거|검증|통과)\b/i.test(text)) return "Evidence";
+  if (/\b(fallback|failover|fallback-to-kimi|대체|폴백)\b/i.test(text) && /\b(provider|kimi|deepseek|라우팅|공급자)\b/i.test(text)) return "ProviderFallback";
+  if (/\b(provider route|provider routing|routeProvider|provider router|deepseek|kimi-first|라우팅|공급자)\b/i.test(text)) return "ProviderRoute";
+  if (/\b(provider|kimi|deepseek|runtime|worker pool|공급자|런타임)\b/i.test(text)) return "Provider";
   if (/\b(constraint|must|must not|required|제약|필수|금지)\b/i.test(text)) return "Constraint";
   if (text.endsWith("?") || /\b(question|질문|의문)\b/i.test(text)) return "Question";
   if (/\b(answer|resolution|해결|답변)\b/i.test(text)) return "Answer";
@@ -816,6 +833,12 @@ function relationForType(type: string): string {
       return "HAS_COMMAND";
     case "Evidence":
       return "HAS_EVIDENCE";
+    case "Provider":
+      return "USES_PROVIDER";
+    case "ProviderRoute":
+      return "HAS_PROVIDER_ROUTE";
+    case "ProviderFallback":
+      return "HAS_PROVIDER_FALLBACK";
     case "Constraint":
       return "HAS_CONSTRAINT";
     case "Question":
@@ -872,7 +895,7 @@ function truncate(value: string, max: number): string {
 }
 
 function sortRank(type: string): number {
-  const order = ["Project", "Session", "Memory", "Goal", "Topic", "Decision", "Task", "Risk", "Evidence", "Constraint", "Command", "File", "Concept"];
+  const order = ["Project", "Session", "Memory", "Goal", "Topic", "Decision", "Task", "Risk", "Evidence", "Provider", "ProviderRoute", "ProviderFallback", "Constraint", "Command", "File", "Concept"];
   const index = order.indexOf(type);
   return index === -1 ? order.length : index;
 }

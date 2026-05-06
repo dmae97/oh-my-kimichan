@@ -7,6 +7,11 @@ import { tmpdir } from "node:os";
 
 import { loadMemorySettings } from "../dist/memory/memory-config.js";
 import { MemoryStore } from "../dist/memory/memory-store.js";
+import {
+  ONTOLOGY_NODE_TYPES,
+  ONTOLOGY_RELATIONSHIP_TYPES,
+  buildKuzuOntologySchema,
+} from "../dist/memory/ontology-model.js";
 
 test("local graph memory is the default backend", async () => {
   const projectRoot = await mkdtemp(join(tmpdir(), "omk-local-graph-default-"));
@@ -72,6 +77,8 @@ test("local graph memory writes ontology mindmaps and GraphQL-lite results", asy
 
     const ontology = await store.ontology();
     assert.ok(ontology?.classes.includes("Decision"));
+    assert.ok(ontology?.classes.includes("ProviderRoute"));
+    assert.ok(ontology?.relationTypes.includes("HAS_PROVIDER_ROUTE"));
 
     const mindmap = await store.mindmap("Decision", 20);
     assert.ok(mindmap?.nodes.some((node) => node.type === "Decision"));
@@ -83,4 +90,17 @@ test("local graph memory writes ontology mindmaps and GraphQL-lite results", asy
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }
+});
+
+test("Kuzu ontology schema includes provider routing and fallback tables", () => {
+  const schema = buildKuzuOntologySchema();
+
+  assert.ok(ONTOLOGY_NODE_TYPES.includes("Provider"));
+  assert.ok(ONTOLOGY_NODE_TYPES.includes("ProviderRoute"));
+  assert.ok(ONTOLOGY_NODE_TYPES.includes("ProviderFallback"));
+  assert.ok(ONTOLOGY_RELATIONSHIP_TYPES.includes("USES_PROVIDER"));
+  assert.ok(ONTOLOGY_RELATIONSHIP_TYPES.includes("HAS_PROVIDER_FALLBACK"));
+  assert.ok(schema.nodeTables.some((ddl) => ddl.includes("CREATE NODE TABLE OmkProviderRoute")));
+  assert.ok(schema.relTables.some((ddl) => ddl.includes("ROUTES_TO")));
+  assert.ok(schema.relTables.some((ddl) => ddl.includes("FALLS_BACK_TO")));
 });
