@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v1.1.5 — Node 24 Actions release pipeline hardening (2026-05-06)
+
+### Fixed
+
+- **GitHub Actions Node 20 deprecation risk** — CI, smoke, release, and OMK review workflows now pin Node 24-compatible action majors and force the JavaScript action runtime to Node 24, removing the upcoming runner cutoff from future release paths.
+
 ## v1.1.4 — Windows CI init-home patch (2026-05-06)
 
 ### Fixed
