@@ -127,8 +127,8 @@ function buildDeepSeekNodePrompt(
     renderList("Inputs", (node.inputs ?? []).map((input) => `${input.name}: ${input.ref}${input.from ? ` from ${input.from}` : ""}`)),
     renderList("Outputs", (node.outputs ?? []).map((output) => `${output.name}${output.gate ? ` (${output.gate})` : ""}${output.ref ? ` -> ${output.ref}` : ""}`)),
     renderList("Skills visible to Kimi", node.routing?.skills ?? []),
-    renderList("MCP hints visible to Kimi only", node.routing?.mcpServers ?? []),
-    renderList("Tool hints visible to Kimi only", node.routing?.tools ?? []),
+    renderList("MCP hints visible to Kimi only", node.routing?.mcpServers ?? [], { showWhenEmpty: true }),
+    renderList("Tool hints visible to Kimi only", node.routing?.tools ?? [], { showWhenEmpty: true }),
     "Required output:",
     "- Summary",
     "- Evidence or file/symbol references if known",
@@ -138,8 +138,8 @@ function buildDeepSeekNodePrompt(
   ].filter((section): section is string => Boolean(section)).join("\n");
 }
 
-function renderList(title: string, items: string[]): string {
-  if (items.length === 0) return "";
+function renderList(title: string, items: string[], options: { showWhenEmpty?: boolean } = {}): string {
+  if (items.length === 0) return options.showWhenEmpty === true ? `${title}:\n- none` : "";
   return `${title}:\n${items.map((item) => `- ${item}`).join("\n")}`;
 }
 

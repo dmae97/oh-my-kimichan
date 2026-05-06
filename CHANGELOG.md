@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v1.1.3 — CI portability patch for DeepSeek hybrid release (2026-05-06)
+
+### Fixed
+
+- **DeepSeek Kimi-only hint prompt stability** — DeepSeek prompts now keep MCP/tool hint section headers visible even when one hint list is empty, avoiding platform-dependent CI failures and making Kimi authority boundaries explicit.
+- **Isolated-home DeepSeek secrets on Windows** — POSIX-style `OMK_ORIGINAL_HOME` values are preserved when resolving OMK/OpenCode secret paths, so local terminal auth inheritance remains stable across mixed WSL/Windows runners.
+
 ## v1.1.2 — DeepSeek hybrid launch and ontology visibility (2026-05-06)
 
 ### New

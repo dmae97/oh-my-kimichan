@@ -1,5 +1,5 @@
 import { chmod, mkdir, readFile, writeFile } from "fs/promises";
-import { dirname, join } from "path";
+import { dirname, join, posix } from "path";
 import { getUserHome } from "../../util/fs.js";
 
 export type DeepSeekDisabledBy = "user" | "provider-402" | "provider-availability";
@@ -48,17 +48,17 @@ const DEFAULT_API_KEY_ENV = "DEEPSEEK_API_KEY";
 
 export function getDeepSeekProviderConfigPath(options: DeepSeekConfigPathOptions = {}): string {
   const env = options.env ?? process.env;
-  return env.OMK_PROVIDER_CONFIG_PATH ?? join(resolveHomeDir(options), ".config", "omk", "providers.json");
+  return env.OMK_PROVIDER_CONFIG_PATH ?? joinHomePath(resolveHomeDir(options), ".config", "omk", "providers.json");
 }
 
 export function getOmkSecretsEnvPath(options: DeepSeekConfigPathOptions = {}): string {
   const env = options.env ?? process.env;
-  return env.OMK_SECRETS_ENV_PATH ?? join(resolveHomeDir(options), ".config", "omk", "secrets.env");
+  return env.OMK_SECRETS_ENV_PATH ?? joinHomePath(resolveHomeDir(options), ".config", "omk", "secrets.env");
 }
 
 export function getOpenCodeSecretsEnvPath(options: DeepSeekConfigPathOptions = {}): string {
   const env = options.env ?? process.env;
-  return env.OPENCODE_SECRETS_ENV_PATH ?? join(resolveHomeDir(options), ".config", "opencode", "secrets.env");
+  return env.OPENCODE_SECRETS_ENV_PATH ?? joinHomePath(resolveHomeDir(options), ".config", "opencode", "secrets.env");
 }
 
 export async function readOmkProvidersConfig(
@@ -202,6 +202,14 @@ export async function getDeepSeekProviderStatus(
 
 function resolveHomeDir(options: DeepSeekConfigPathOptions): string {
   return options.homeDir ?? getUserHome(options.env ?? process.env);
+}
+
+function joinHomePath(homeDir: string, ...parts: string[]): string {
+  return isPosixStyleHome(homeDir) ? posix.join(homeDir, ...parts) : join(homeDir, ...parts);
+}
+
+function isPosixStyleHome(homeDir: string): boolean {
+  return homeDir.startsWith("/") && !homeDir.startsWith("//") && !homeDir.includes("\\");
 }
 
 function emptyProvidersConfig(): OmkProvidersConfig {
