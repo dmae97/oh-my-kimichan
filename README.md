@@ -30,7 +30,7 @@
   <code># omk demo  # Coming soon — try the examples below</code>
 </p>
 
-> ✅ <strong>Stable Release</strong> — v1.1.3 is ready for daily use. Core orchestration, chat harness, and quality gates are solid. Some advanced features (<code>parallel</code>, <code>goal</code>) may still evolve.
+> ✅ <strong>Stable Release</strong> — v1.1.4 is ready for daily use. Core orchestration, chat harness, and quality gates are solid. Some advanced features (<code>parallel</code>, <code>goal</code>) may still evolve.
 
 
 <p>
@@ -122,9 +122,9 @@ Each example includes:
 
 ## GitHub Release Snapshot
 
-> **Current GitHub-ready version:** `1.1.3`
+> **Current GitHub-ready version:** `1.1.4`
 
-### What's New in v1.1.3
+### What's New in v1.1.4
 
 | **Area** | **GitHub-visible update** | **Why it matters** |
 |----------|---------------------------|--------------------|
@@ -250,7 +250,7 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 
 <h2 id="korean">Korean</h2>
 
-> ✅ <strong>Stable Release v1.1.3</strong> — Kimi Code CLI를 <strong>worktree 기반 코딩 팀</strong>으로 변환하세요. DESIGN.md 기반 UI 생성, AGENTS.md 호환성, 실시간 품질 게이트, 병렬 HUD를 제공합니다.
+> ✅ <strong>Stable Release v1.1.4</strong> — Kimi Code CLI를 <strong>worktree 기반 코딩 팀</strong>으로 변환하세요. DESIGN.md 기반 UI 생성, AGENTS.md 호환성, 실시간 품질 게이트, 병렬 HUD를 제공합니다.
 
 ### Features
 
@@ -271,7 +271,7 @@ kimi, kimi-cli, kimi-code, kimi-k2, ai-agent, coding-agent, multi-agent, agentic
 | Approval Policy | 기본값은 `approval_policy = "auto"` (안전 모드); 필요시 `yolo`로 전환 가능 |
 | Safety Hooks | yolo mode에서도 파괴적 명령어 및 비밀 유출 방지 기본 제공 |
 
-### 🆕 v1.1.3 Highlights (Stable)
+### 🆕 v1.1.4 Highlights (Stable)
 
 - **`omk chat`** — 오케스트레이션 경로, 퇴장 배너(Run ID, 재개, workers, MCP, skills), cockpit/tmux 지원이 포함된 인터랙티브 Kimi 세션
 - **Chat 전용 first-run star prompt** (`OMK_STAR_PROMPT`) — cockpit 자식 프로세스 중복 제거
@@ -540,7 +540,7 @@ omk lsp typescript
 
 <h2 id="english">English</h2>
 
-> ✅ <strong>Stable Release v1.1.3</strong> — Turn Kimi Code CLI into a <strong>meme-tier multi-agent coding team</strong>. This is a Kimi-native wrapper — not a generic AI tool. DESIGN.md-aware UI, live quality gates, parallel HUD, AGENTS.md compatible.
+> ✅ <strong>Stable Release v1.1.4</strong> — Turn Kimi Code CLI into a <strong>meme-tier multi-agent coding team</strong>. This is a Kimi-native wrapper — not a generic AI tool. DESIGN.md-aware UI, live quality gates, parallel HUD, AGENTS.md compatible.
 
 ### Features
 
@@ -559,7 +559,7 @@ omk lsp typescript
 | Parallel DAG | `omk parallel <goal>` (alpha) runs coordinator → worker fan-out → reviewer with live UI and ETA tracking |
 | Safety Hooks | Default protection against destructive commands and secret leakage |
 
-### 🆕 v1.1.3 Highlights (Stable)
+### 🆕 v1.1.4 Highlights (Stable)
 
 - **`omk chat`** — Interactive Kimi session with orchestrated path, exit banner (Run ID, resume, workers, MCP, skills), and cockpit/tmux support
 - **Chat-dedicated first-run star prompt** (`OMK_STAR_PROMPT`) with cockpit-child deduplication
@@ -770,7 +770,7 @@ Default hooks block destructive commands and secret leakage:
 
 <h2 id="chinese">Chinese</h2>
 
-> ✅ <strong>Stable Release v1.1.3</strong> — 将 Kimi Code CLI 转变为一个<strong>基于 worktree 的编码团队</strong>。支持 DESIGN.md 感知 UI 生成、AGENTS.md 兼容性、实时质量门禁以及并行 HUD。
+> ✅ <strong>Stable Release v1.1.4</strong> — 将 Kimi Code CLI 转变为一个<strong>基于 worktree 的编码团队</strong>。支持 DESIGN.md 感知 UI 生成、AGENTS.md 兼容性、实时质量门禁以及并行 HUD。
 
 ### Features
 
@@ -1000,7 +1000,7 @@ graph TD
 
 <h2 id="japanese">Japanese</h2>
 
-> ✅ <strong>Stable Release v1.1.3</strong> — Kimi Code CLI を <strong>worktree ベースのコーディングチーム</strong>に変換します。DESIGN.md 対応の UI 生成、AGENTS.md 互換性、ライブ品質ゲート、並列 HUD を提供します。
+> ✅ <strong>Stable Release v1.1.4</strong> — Kimi Code CLI を <strong>worktree ベースのコーディングチーム</strong>に変換します。DESIGN.md 対応の UI 生成、AGENTS.md 互換性、ライブ品質ゲート、並列 HUD を提供します。
 
 ### Features
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v1.1.4 — Windows CI init-home patch (2026-05-06)
+
+### Fixed
+
+- **Windows init user-skill import** — `omk init --import-user-skills` now resolves the initialization home through `OMK_ORIGINAL_HOME`/`HOME` before OS defaults, matching isolated and test runner homes on Windows as well as Unix.
+
 ## v1.1.3 — CI portability patch for DeepSeek hybrid release (2026-05-06)
 
 ### Fixed

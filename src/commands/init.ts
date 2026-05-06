@@ -2,11 +2,11 @@ import { realpathSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { mkdir, writeFile, readFile, copyFile, readdir, stat } from "fs/promises";
 import { basename, join, dirname, sep } from "path";
-import { homedir, tmpdir } from "os";
+import { tmpdir } from "os";
 import { fileURLToPath } from "node:url";
 import { confirm, password } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
-import { getProjectRoot, pathExists } from "../util/fs.js";
+import { getProjectRoot, getUserHome, pathExists } from "../util/fs.js";
 import { getOmkVersionSync } from "../util/version.js";
 
 import { style, header, status } from "../util/theme.js";
@@ -828,7 +828,7 @@ const MEMORY_FILES: Record<string, string> = {
 
 export async function initCommand(options: InitCommandOptions): Promise<void> {
   const root = getProjectRoot();
-  const initHomeDir = options.homeDir ?? homedir();
+  const initHomeDir = options.homeDir ?? getUserHome(options.env ?? process.env);
   const mcpJson = createMcpJson(root);
   console.log(header(`oh-my-kimi init (profile: ${options.profile})`));
 
