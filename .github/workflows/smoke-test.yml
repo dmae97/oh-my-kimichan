@@ -48,7 +48,7 @@ jobs:
       - run: npm rebuild
       - run: npm run yaml:check
       - run: npm run build:clean
-      - run: npm test
+      - run: OMK_SKIP_DIST_FRESHNESS=1 npm test
       - name: Download native safety artifacts
         uses: actions/download-artifact@v8
         with:

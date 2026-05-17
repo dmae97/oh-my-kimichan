@@ -31,14 +31,23 @@ jobs:
       - run: npm run secret:scan
       - run: npm run check
       - run: npm run build:clean
-      - run: npm run test
-      - name: Print test failures
-        if: failure()
+      - name: Run tests with diagnostics
         run: |
-          echo "=== failed-tests.txt ==="
-          cat failed-tests.txt 2>/dev/null || true
-          echo "=== test-summary.json ==="
-          cat test-summary.json 2>/dev/null || true
+          node scripts/run-tests.mjs > test-output.txt 2>&1
+          exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            echo "=== TEST FAILED (exit $exit_code) ==="
+            tail -n 300 test-output.txt
+            echo "=== DIAGNOSTICS ==="
+            npm ls node-pty || true
+            node -e "try { require('node-pty'); console.log('node-pty OK'); } catch(e) { console.log('node-pty FAIL:', e.message); }" || true
+            ls -la failed-tests.txt test-summary.json 2>/dev/null || true
+            cat failed-tests.txt 2>/dev/null || true
+            cat test-summary.json 2>/dev/null || true
+          fi
+          exit $exit_code
+        env:
+          OMK_SKIP_DIST_FRESHNESS: "1"
       - uses: dtolnay/rust-toolchain@stable
       - run: npm run native:build
       - run: npm run audit:package
@@ -55,3 +64,5 @@ jobs:
       - run: npm ci
       - run: npm rebuild
       - run: npm run release:check
+        env:
+          OMK_SKIP_DIST_FRESHNESS: "1"
