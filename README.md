@@ -69,7 +69,7 @@ omk summary-show
 omk cockpit
 ```
 
-> Current stable package: **v1.1.17**. Stable daily-use core with orchestration surfaces; release-gated and evidence-gated flows are labelled in CLI help and docs.
+> Current source target: **v1.1.17**. Stable daily-use core with orchestration surfaces; release-gated and evidence-gated flows are labelled in CLI help and docs.
 
 > **Share your verified run:** open a **Verified run** issue with your raw prompt, generated diff, `omk verify --json`, replay screenshot, and known limitation so others can inspect real evidence.
 
@@ -398,7 +398,7 @@ npm run smoke:pack
 npm run release:check
 ```
 
-The v1.1.17 release line is release-gated and evidence-gated: it stabilizes deterministic IntentFrame/ActionAtom orchestration, chat startup schema preflight, MCP duplicate handling, agent MCP/skills/hooks propagation, and doctor/init/pack smoke behavior while preserving package audit, smoke-pack checks, native safety normalization, replay/inspect/diff-runs, skill assigner, decision trace coverage, and CI release gates.
+The v1.1.17 source target is release-gated and evidence-gated: it stabilizes deterministic IntentFrame/ActionAtom orchestration, chat startup schema preflight, MCP duplicate handling, agent MCP/skills/hooks propagation, and doctor/init/pack smoke behavior while preserving package audit, smoke-pack checks, native safety normalization, replay/inspect/diff-runs, skill assigner, decision trace coverage, and CI release gates.
 
 **MCP fetch startup note:** if your personal Kimi config still starts fetch with `uvx mcp-server-fetch`, each disposable or isolated Kimi HOME may re-resolve Python dependencies before MCP tools appear. Prefer a persistent entrypoint:
 

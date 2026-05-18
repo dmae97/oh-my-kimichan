@@ -17,6 +17,12 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function getExcludeTools(agentYaml) {
+  const match = agentYaml.match(/^  exclude_tools:\n((?:    - ".+"\n?)+)/m);
+  if (!match) return [];
+  return Array.from(match[1].matchAll(/    - "([^"]+)"/g), (toolMatch) => toolMatch[1]);
+}
+
 function toWslUncPath(absPath, distro = "Ubuntu-24.04") {
   return `\\\\wsl.localhost\\${distro}${absPath.replace(/\//g, "\\")}`;
 }
@@ -208,9 +214,9 @@ test("init does not copy secret-bearing global MCP entries into project config",
     assert.doesNotMatch(projectMcpRaw, /SHOULD_NOT_COPY|Authorization|API_TOKEN|Bearer|headers/);
 
     const configToml = await readFile(join(projectRoot, ".omk", "config.toml"), "utf-8");
-    assert.match(configToml, /mcp_scope = "project"/);
-    assert.match(configToml, /skills_scope = "project"/);
-    assert.match(configToml, /hooks_scope = "project"/);
+    assert.match(configToml, /mcp_scope = "all"/);
+    assert.match(configToml, /skills_scope = "all"/);
+    assert.match(configToml, /hooks_scope = "all"/);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
     await rm(homeRoot, { recursive: true, force: true });
@@ -259,10 +265,16 @@ test("init does not generate a project PNG logo and reports all core scaffold gr
 
     const runtimePreset = JSON.parse(await readFile(join(projectRoot, ".omk", "runtime-preset.json"), "utf-8"));
     assert.equal(runtimePreset.id, "omk-core-verified");
-    assert.deepEqual(runtimePreset.mcpServers, ["omk-project", "context7", "github", "fetch"]);
+    assert.deepEqual(runtimePreset.mcpServers, [
+      "omk-project", "context7", "github", "fetch",
+      "railway-unofficial", "supabase", "firecrawl",
+      "puppeteer", "playwright", "pdf", "memory",
+      "sequential-thinking", "filesystem-readonly", "git",
+    ]);
     const runtimePresets = JSON.parse(await readFile(join(projectRoot, ".omk", "runtime-presets.json"), "utf-8"));
     assert.equal(runtimePresets.defaultPresetId, "omk-core-verified");
     assert.deepEqual(runtimePresets.presets.map((preset) => preset.id), [
+      "omk-parallel-orchestrator",
       "omk-core-verified",
       "omk-ts-product",
       "omk-worktree-team",
@@ -425,10 +437,11 @@ test("init scaffolds Kimi subagent names that match generated role aliases", asy
     assert.match(okabeAgentYaml, /OMK_MCP_ENABLED: "true"/);
     assert.match(okabeAgentYaml, /OMK_SKILLS_ENABLED: "true"/);
     assert.match(okabeAgentYaml, /OMK_HOOKS_ENABLED: "true"/);
-    for (const role of [
+    const rootRoleNames = [
       "architect",
       "coder",
       "reviewer",
+      "security",
       "qa",
       "tester",
       "researcher",
@@ -437,27 +450,23 @@ test("init scaffolds Kimi subagent names that match generated role aliases", asy
       "interviewer",
       "ontology",
       "vision-debugger",
-    ]) {
+    ];
+    const generatedRoleNames = [
+      "explorer",
+      "planner",
+      ...rootRoleNames,
+    ];
+
+    assert.equal(rootRoleNames.length, 12);
+    assert.equal(generatedRoleNames.length, 14);
+
+    for (const role of rootRoleNames) {
       assert.match(
         rootAgentYaml,
         new RegExp(`\\n    ${escapeRegex(role)}:\\n      path: \\.\\/roles\\/${escapeRegex(role)}\\.yaml`)
       );
     }
-    for (const role of [
-      "explorer",
-      "planner",
-      "architect",
-      "coder",
-      "reviewer",
-      "qa",
-      "tester",
-      "researcher",
-      "integrator",
-      "aggregator",
-      "interviewer",
-      "ontology",
-      "vision-debugger",
-    ]) {
+    for (const role of generatedRoleNames) {
       const roleYaml = await readFile(join(projectRoot, ".omk", "agents", "roles", `${role}.yaml`), "utf-8");
       assert.match(roleYaml, /extend: \.\.\/okabe\.yaml/);
       assert.match(roleYaml, new RegExp(`name: omk-${escapeRegex(role)}`));
@@ -465,7 +474,21 @@ test("init scaffolds Kimi subagent names that match generated role aliases", asy
       assert.match(roleYaml, /OMK_MCP_ENABLED: "true"/);
       assert.match(roleYaml, /OMK_SKILLS_ENABLED: "true"/);
       assert.match(roleYaml, /OMK_HOOKS_ENABLED: "true"/);
+      const excludedTools = getExcludeTools(roleYaml);
+      if (role === "ontology") {
+        assert.ok(excludedTools.includes("kimi_cli.tools.shell:Shell"));
+      }
+      if (role === "security") {
+        assert.ok(excludedTools.includes("kimi_cli.tools.file:WriteFile"));
+        assert.ok(excludedTools.includes("kimi_cli.tools.file:StrReplaceFile"));
+        assert.ok(!excludedTools.includes("kimi_cli.tools.shell:Shell"));
+      }
     }
+    const initSource = await readFile(join(process.cwd(), "src", "commands", "init.ts"), "utf-8");
+    const ontologyFallback = initSource.match(/  ontology: `version: 1\n[\s\S]*?\n`,\n  "vision-debugger":/)?.[0] ?? "";
+    const securityFallback = initSource.match(/  security: `version: 1\n[\s\S]*?\n`,\n  qa:/)?.[0] ?? "";
+    assert.match(ontologyFallback, /exclude_tools:[\s\S]*kimi_cli\.tools\.shell:Shell/);
+    assert.doesNotMatch(securityFallback, /kimi_cli\.tools\.shell:Shell/);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
     await rm(homeRoot, { recursive: true, force: true });

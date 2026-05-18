@@ -3,7 +3,7 @@
 ## v1.1.17 — Full agent MCP/skills/hooks enablement and parallel orchestration (2026-05-18)
 
 ### New
-- **Every OMK agent now has MCP, skills, and hooks** — All 15 generated subagent roles (explorer, planner, architect, coder, reviewer, security, qa, tester, researcher, integrator, aggregator, interviewer, ontology, vision-debugger, plus explore/plan aliases) now inherit `OMK_MCP_ENABLED`, `OMK_SKILLS_ENABLED`, and `OMK_HOOKS_ENABLED` through the Okabe base agent. Runtime scope controls actual availability; agents receive sanitized harness digests instead of raw inventory dumps.
+- **Every OMK agent now has MCP, skills, and hooks** — All 14 generated role files (explorer, planner, architect, coder, reviewer, security, qa, tester, researcher, integrator, aggregator, interviewer, ontology, vision-debugger) plus the explore/plan aliases now inherit `OMK_MCP_ENABLED`, `OMK_SKILLS_ENABLED`, and `OMK_HOOKS_ENABLED` through the Okabe base agent. Runtime scope controls actual availability; agents receive sanitized harness digests instead of raw inventory dumps.
 - **Parallel subagent orchestration** — Root coordinator explicitly manages parallel worker lanes with independent context, each subagent receiving scoped MCP/skills/hooks when runtime scope permits. Worker lanes are isolated until review/merge.
 
 ### Improved
@@ -27,7 +27,7 @@ When running `omk init --global`:
 
 ### Verification
 - Release readiness requires `npm run release:check` plus tarball install smoke before publish or tag.
-- Local gate run: `npm run verify && npm run native:build && npm run audit:package`.
+- Local release gate: `npm run release:check` (`verify` + native build + dry pack + package audit + pack smoke).
 
 ## v1.1.16 — Runtime orchestration and release smoke hardening (2026-05-17)
 

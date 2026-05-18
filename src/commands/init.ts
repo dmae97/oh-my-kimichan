@@ -348,6 +348,7 @@ agent:
   exclude_tools:
     - "kimi_cli.tools.file:WriteFile"
     - "kimi_cli.tools.file:StrReplaceFile"
+    - "kimi_cli.tools.shell:Shell"
 `,
   "vision-debugger": `version: 1
 agent:
@@ -418,8 +419,8 @@ Do not duplicate runtime inventories; follow AGENTS.md and \`chat-agent-harness.
 
 const ROADMAP_MD = `# Roadmap
 
-Current public version: v1.1.13
-Last updated: 2026-05-13
+Current source version: v1.1.17
+Last updated: 2026-05-18
 
 ## v1.1.9 reality
 
@@ -436,8 +437,9 @@ Provider routing and graph viewing are no longer purely future work:
 ### P0: release and contract gates
 
 - Done: YAML validation now runs in local \`verify\` plus CI/smoke workflows.
-- Done: package dry-pack, package audit, tarball smoke, native safety build, and release matrix gates were re-verified against v1.1.13 artifacts.
+- Done: package dry-pack, package audit, tarball smoke, native safety build, and release matrix gates were re-verified against v1.1.17 artifacts.
 - Done: provider/deepseek and screenshot JSON command contracts gained hermetic regression tests.
+- Done: current AGENTS/init templates and packaged workflow skills were aligned with the active skills/MCP/agents/harness surface, including all generated agent MCP/skills/hooks flags and parallel subagent orchestration guidance.
 - Remaining: lock broader provider fallback metadata with tests for rate limit, timeout, and Kimi fallback variants.
 - Remaining: define minimum machine-readable CLI envelopes for the rest of the automation-critical commands.
 
@@ -482,6 +484,10 @@ Provider routing and graph viewing are no longer purely future work:
 | v1.1.9 | chat harness manifest, capability DAG lanes, Rust native safety loader, Windows clipboard screenshot bridge, release native matrix |
 | v1.1.12 | Replay system, skill assigner, decision trace coverage, evidence gates, and repair policy |
 | v1.1.13 | Bundled MCP server entrypoints, ACP/host transport groundwork, deployment-ready package metadata |
+| v1.1.14 | Current harness docs, external-inspired workflow skills, and release-safe public wording |
+| v1.1.15 | Isolated HOME MCP shell-profile hotfix and persistent fetch MCP entrypoint |
+| v1.1.16 | Deterministic IntentFrame/ActionAtom orchestration, chat schema preflight, MCP duplicate policy, agent capability propagation, and doctor/init/pack smoke fixes |
+| v1.1.17 | Full generated-agent MCP/skills/hooks enablement, parallel subagent orchestration emphasis, and v1.1.17 release docs |
 `;
 
 const SECURITY_MD = `# Security Policy
@@ -1895,7 +1901,7 @@ name = "my-project"
 description = ""
 
 [orchestration]
-default_workers = 2
+default_workers = 4
 max_retries = 3
 approval_policy = "auto"         # safe default: safe tools auto, destructive ask
 yolo_mode = false                # safe guards still block secrets/destructive shell hooks
@@ -1906,7 +1912,7 @@ resource_profile = "auto"        # auto | lite | standard
 mcp_scope = "${mcpScope}"            # all | project | none — all also reads user ~/.kimi/mcp.json at runtime
 skills_scope = "${skillsScope}"         # all | project | none — all reads user ~/.kimi/skills without copying them
 hooks_scope = "${hooksScope}"          # all | project | none — all reads user ~/.kimi hooks without copying them
-max_workers = 2                  # can override with OMK_MAX_WORKERS
+max_workers = 4                  # can override with OMK_MAX_WORKERS
 max_output_mb = 4                # cap buffered shell/quality output
 wire_output_mb = 1               # cap per-task retained wire output
 
@@ -1914,7 +1920,7 @@ wire_output_mb = 1               # cap per-task retained wire output
 # Role-aware agent ensemble. Keep max_parallel=1 for 16GB/WSL safety.
 enabled = true
 max_candidates_per_node = 2
-max_parallel = 1
+max_parallel = 2
 quorum_ratio = 0.5
 
 [quality]
@@ -2105,9 +2111,9 @@ export async function initCommand(options: InitCommandOptions): Promise<void> {
 
   // 8. Write configs
   await writeFile(join(root, ".omk/config.toml"), getConfigToml({
-    mcpScope: localUserRuntime ? "all" : "project",
-    skillsScope: localUserRuntime ? "all" : "project",
-    hooksScope: localUserRuntime ? "all" : "project",
+    mcpScope: "all",
+    skillsScope: "all",
+    hooksScope: "all",
   }));
   await writeFile(join(root, ".omk/kimi.config.toml"), KIMI_CONFIG_TOML);
   await ensureProjectMcpConfig(join(root, ".omk/mcp.json"), mcpJson, { removeRuntimeManagedOmkProject: true });

@@ -23,11 +23,16 @@ export interface OmkReleaseGuardPreset extends OmkRuntimePresetBase {
   id: "omk-release-guard";
 }
 
+export interface OmkParallelOrchestratorPreset extends OmkRuntimePresetBase {
+  id: "omk-parallel-orchestrator";
+}
+
 export type OmkRuntimePreset =
   | OmkCoreVerifiedPreset
   | OmkTsProductPreset
   | OmkWorktreeTeamPreset
-  | OmkReleaseGuardPreset;
+  | OmkReleaseGuardPreset
+  | OmkParallelOrchestratorPreset;
 
 export const OMK_TOP_PRIORITY_SKILLS = [
   "omk-context-broker",
@@ -65,8 +70,23 @@ export const OMK_CORE_VERIFIED_PRESET: OmkCoreVerifiedPreset = {
     "subagent-stop-audit.sh",
     "post-format.sh",
   ],
-  mcpServers: ["omk-project", "context7", "github", "fetch"],
-  purpose: "Baseline safety, context, review, and verification loop for everyday OMK work.",
+  mcpServers: [
+    "omk-project",
+    "context7",
+    "github",
+    "fetch",
+    "railway-unofficial",
+    "supabase",
+    "firecrawl",
+    "puppeteer",
+    "playwright",
+    "pdf",
+    "memory",
+    "sequential-thinking",
+    "filesystem-readonly",
+    "git",
+  ],
+  purpose: "Baseline safety, context, review, and verification loop for everyday OMK work with full MCP, skills, and hooks access.",
 };
 
 export const OMK_TS_PRODUCT_PRESET: OmkTsProductPreset = {
@@ -129,7 +149,51 @@ export const OMK_RELEASE_GUARD_PRESET: OmkReleaseGuardPreset = {
     "Guard release and security work with secret scanning, destructive-shell blocks, audit summaries, checklist evidence, and narrow MCP authority because reference MCP servers are advisory examples, not production-ready trust boundaries.",
 };
 
+export const OMK_PARALLEL_ORCHESTRATOR_PRESET: OmkParallelOrchestratorPreset = {
+  id: "omk-parallel-orchestrator",
+  name: "OMK Parallel Orchestrator",
+  description: "Maximum parallelism preset for orchestrating multiple subagents with full MCP, skills, and hooks access.",
+  skills: [
+    "omk-repo-explorer",
+    "omk-context-broker",
+    "omk-industrial-control-loop",
+    "omk-plan-first",
+    "omk-quality-gate",
+    "omk-code-review",
+    "omk-test-debug-loop",
+    "omk-python-typing",
+    "omk-task-router",
+    "multica",
+    "agentmemory",
+  ],
+  hooks: [
+    "pre-shell-guard.sh",
+    "protect-secrets.sh",
+    "stop-verify.sh",
+    "subagent-stop-audit.sh",
+    "post-format.sh",
+  ],
+  mcpServers: [
+    "omk-project",
+    "context7",
+    "github",
+    "fetch",
+    "railway-unofficial",
+    "supabase",
+    "firecrawl",
+    "puppeteer",
+    "playwright",
+    "pdf",
+    "memory",
+    "sequential-thinking",
+    "filesystem-readonly",
+    "git",
+  ],
+  purpose: "Maximum parallelism orchestration with all available MCP servers, skills, and hooks enabled for multi-agent coordination.",
+};
+
 export const OMK_RUNTIME_PRESETS: readonly OmkRuntimePreset[] = [
+  OMK_PARALLEL_ORCHESTRATOR_PRESET,
   OMK_CORE_VERIFIED_PRESET,
   OMK_TS_PRODUCT_PRESET,
   OMK_WORKTREE_TEAM_PRESET,
@@ -169,6 +233,24 @@ const RELEASE_GUARD_INTENTS = new Set([
   "review",
   "shell-operation",
 ]);
+
+const PARALLEL_ORCHESTRATOR_INTENTS = new Set([
+  "coding",
+  "debugging",
+  "refactor",
+  "review",
+  "test-generation",
+  "planning",
+  "orchestration",
+  "general",
+]);
+
+export function isParallelOrchestratorIntent(intent: string, text: string): boolean {
+  if (!PARALLEL_ORCHESTRATOR_INTENTS.has(intent)) return false;
+  return /parallel|worker(?:s)?|lane(?:s)?|multi[- ]?agent|subagent|orchestrat(?:e|ion)|team|coordinate|并发|병렬|并行|エージェント|協調/i.test(
+    text
+  );
+}
 
 export function isCoreVerifiedIntent(intent: string): boolean {
   return CORE_VERIFIED_INTENTS.has(intent);
