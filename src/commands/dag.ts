@@ -8,7 +8,7 @@ import { checkEvidenceGates } from "../orchestration/evidence-gate.js";
 import { createExecutor } from "../orchestration/executor.js";
 import { createExecutableDagFromState, routeRunState } from "../orchestration/run-state.js";
 import { createOmkSessionEnv } from "../util/session.js";
-import { getOmkResourceSettings } from "../util/resource-profile.js";
+import { getOmkResourceSettings, getActiveRuntimePreset } from "../util/resource-profile.js";
 import { listWorktrees } from "../util/worktree.js";
 import { appendEvent } from "../util/events-logger.js";
 import { t } from "../util/i18n.js";
@@ -352,6 +352,7 @@ export async function dagReplayCommand(
   // ── Create runner ──
   const agentFile = getOmkPath("agents/root.yaml");
   const providerPolicy = normalizeProviderPolicy(options?.provider);
+  const activePreset = await getActiveRuntimePreset();
   const runner = await createProviderBackedTaskRunner({
     providerPolicy,
     deepseekPromptPrefix: buildReplayDeepSeekPromptPrefix({
@@ -369,6 +370,10 @@ export async function dagReplayCommand(
       mcpScope: resources.mcpScope,
       skillsScope: resources.skillsScope,
       roleAgentFiles: true,
+      mcpNames: activePreset?.mcpServers ?? [],
+      skillNames: activePreset?.skills ?? [],
+      hookNames: activePreset?.hooks ?? [],
+      toolNames: [],
       env: {
         ...createOmkSessionEnv(root, resolvedRunId),
         OMK_RUN_ID: resolvedRunId,

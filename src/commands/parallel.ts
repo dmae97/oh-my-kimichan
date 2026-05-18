@@ -6,7 +6,7 @@ import { getOmkPath, getProjectRoot, getRunPath, sanitizeRunId } from "../util/f
 import { style, header, status, label, kimicatCliHero, bullet } from "../util/theme.js";
 import { t } from "../util/i18n.js";
 import { createOmkSessionEnv } from "../util/session.js";
-import { getOmkResourceSettings, type OmkRuntimeScope } from "../util/resource-profile.js";
+import { getOmkResourceSettings, type OmkRuntimeScope, getActiveRuntimePreset } from "../util/resource-profile.js";
 import { parseRuntimeScopeOption } from "../util/runtime-scope.js";
 import { createRoutedRunState, createDagFromRunState, refreshRunStateEstimate, routeRunState } from "../orchestration/run-state.js";
 import { createExecutor } from "../orchestration/executor.js";
@@ -267,6 +267,7 @@ export async function parallelCommand(
     executor.onStateChange((stateSnapshot) => logRunStateTransitions(stateSnapshot, previousStatuses));
   }
 
+  const activePreset = await getActiveRuntimePreset();
   const runner = await createProviderBackedTaskRunner({
     providerPolicy,
     deepseekPromptPrefix: buildDeepSeekPromptPrefix(effectiveGoal, runId, workerCount, options.intent, intentFrame),
@@ -279,6 +280,10 @@ export async function parallelCommand(
       mcpScope,
       skillsScope: resources.skillsScope,
       roleAgentFiles: true,
+      mcpNames: activePreset?.mcpServers ?? [],
+      skillNames: activePreset?.skills ?? [],
+      hookNames: activePreset?.hooks ?? [],
+      toolNames: [],
       env: {
         ...createOmkSessionEnv(root, runId),
         OMK_RUN_ID: runId,

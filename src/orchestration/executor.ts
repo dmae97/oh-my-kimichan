@@ -31,12 +31,30 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
   const MAX_COMMIT_QUEUE = 10;
   const activeTimers = new Map<string, { progress: ReturnType<typeof setInterval>; persist: ReturnType<typeof setInterval> }>();
   let aborting = false;
+  let activeDag: Dag | undefined;
+  let activeTick: (() => Promise<void>) | undefined;
+  let activeRunOptions: RunOptions | undefined;
 
   const monitor = createNodeMonitorEngine({
     heartbeatIntervalMs: 30_000,
     stallThresholdMultiplier: 3,
     onStall: (m) => {
       process.stderr.write(`[omk] node ${m.nodeId} stalled (no heartbeat for ${m.stallThresholdMs}ms)\n`);
+    },
+    onKill: (m) => {
+      process.stderr.write(`[omk] node ${m.nodeId} killed (no heartbeat for ${m.stallThresholdMs}ms)\n`);
+      if (activeDag && activeRunOptions) {
+        try {
+          const node = activeDag.nodes.find((n) => n.id === m.nodeId);
+          if (node && node.status === "running") {
+            markNodeFinished(node, "failed");
+            scheduler.updateNodeStatus(activeDag, m.nodeId, "failed", activeRunOptions.runId);
+            activeTick?.().catch(() => {});
+          }
+        } catch {
+          // ignore kill handler errors
+        }
+      }
     },
   });
 
@@ -337,17 +355,23 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
         timeoutMs: node.timeoutMs ?? (timeoutPreset ? undefined : options.nodeTimeoutMs),
         timeoutPreset,
       });
+      const HARD_MAX_TIMEOUT_MS = 1_800_000; // 30 minutes
       const runPromise = nodeRunner.run(node, env);
+      let hardMaxHandle: ReturnType<typeof setTimeout>;
+      const hardMaxPromise = new Promise<never>((_, reject) => {
+        hardMaxHandle = setTimeout(() => reject(new Error(`Node ${node.id} exceeded hard maximum timeout`)), HARD_MAX_TIMEOUT_MS);
+      });
       if (nodeTimeoutMs > 0) {
         let timeoutHandle: ReturnType<typeof setTimeout>;
         const timeoutPromise = new Promise<never>((_, reject) => {
           timeoutHandle = setTimeout(() => reject(new Error(`Node ${node.id} timed out after ${nodeTimeoutMs}ms`)), nodeTimeoutMs);
         });
-        result = await Promise.race([runPromise, timeoutPromise]);
+        result = await Promise.race([runPromise, timeoutPromise, hardMaxPromise]);
         clearTimeout(timeoutHandle!);
       } else {
-        result = await runPromise;
+        result = await Promise.race([runPromise, hardMaxPromise]);
       }
+      clearTimeout(hardMaxHandle!);
       recordProviderAttempt(node, result);
       if (result.success) {
         const evidenceCheck = await checkNodeEvidence(node, result, options);
@@ -429,6 +453,9 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
         ? runner
         : createEnsembleTaskRunner(runner, executorOptions.ensemble ?? {});
 
+      activeDag = dag;
+      activeRunOptions = options;
+
       let state: RunState;
       if (executorOptions.resumeFromState) {
         state = cloneState(executorOptions.resumeFromState);
@@ -468,6 +495,7 @@ export function createExecutor(executorOptions: ExecutorOptions = {}): DagExecut
       const fallbackNodes = new Map<string, DagNode>();
 
       async function tick(): Promise<void> {
+        activeTick = tick;
         if (settled) return;
         // Handle fallback nodes FIRST, before isFailed check, so that a
         // terminal failure with a fallbackRole does not immediately fail the run.

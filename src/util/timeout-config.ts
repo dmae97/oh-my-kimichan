@@ -2,12 +2,14 @@ import { readSimpleToml, getProjectRoot } from "./resource-profile.js";
 import { join } from "path";
 import type { TimeoutPreset } from "../contracts/orchestration.js";
 
+const HARD_MAX_TIMEOUT_MS = 3_600_000; // 1 hour
+
 const DEFAULT_PRESETS: Record<string, TimeoutPreset> = {
   default: { name: "default", timeoutMs: 120_000, description: "Default 2-minute timeout" },
   quick: { name: "quick", timeoutMs: 30_000, description: "Quick 30-second timeout for simple tasks" },
   standard: { name: "standard", timeoutMs: 120_000, description: "Standard 2-minute timeout" },
   "long-running": { name: "long-running", timeoutMs: 1_800_000, description: "Long-running 30-minute timeout" },
-  unlimited: { name: "unlimited", timeoutMs: 0, description: "No timeout (use with caution)" },
+  unlimited: { name: "unlimited", timeoutMs: HARD_MAX_TIMEOUT_MS, description: "Hard maximum 1-hour timeout" },
 };
 
 let presetCache: Promise<Record<string, TimeoutPreset>> | undefined;
@@ -36,22 +38,29 @@ export async function resolveTimeoutMs(options: {
   timeoutMs?: number;
   timeoutPreset?: string;
 }): Promise<number> {
+  let value: number;
+
   // 1. Explicit per-node timeout wins
   if (options.timeoutMs !== undefined && options.timeoutMs >= 0) {
-    return options.timeoutMs;
+    value = options.timeoutMs;
+  } else {
+    // 2. Preset lookup
+    const presets = await resolveTimeoutPresets();
+    const requestedPreset = options.timeoutPreset?.trim();
+    const presetName = requestedPreset && requestedPreset.length > 0 ? requestedPreset : "default";
+    const preset = presets[presetName];
+    if (preset) {
+      value = preset.timeoutMs;
+    } else {
+      const validPresets = Object.keys(presets).sort().join(", ");
+      throw new Error(`Unknown timeout preset "${presetName}". Valid presets: ${validPresets}`);
+    }
   }
 
-  // 2. Preset lookup
-  const presets = await resolveTimeoutPresets();
-  const requestedPreset = options.timeoutPreset?.trim();
-  const presetName = requestedPreset && requestedPreset.length > 0 ? requestedPreset : "default";
-  const preset = presets[presetName];
-  if (preset) {
-    return preset.timeoutMs;
+  if (value === 0 || value > HARD_MAX_TIMEOUT_MS) {
+    return HARD_MAX_TIMEOUT_MS;
   }
-
-  const validPresets = Object.keys(presets).sort().join(", ");
-  throw new Error(`Unknown timeout preset "${presetName}". Valid presets: ${validPresets}`);
+  return value;
 }
 
 async function loadTimeoutPresets(): Promise<Record<string, TimeoutPreset>> {

@@ -7,7 +7,7 @@ import { createDag, type DagNodeDefinition } from "../orchestration/dag.js";
 import { createExecutor } from "../orchestration/executor.js";
 import { createStatePersister } from "../orchestration/state-persister.js";
 import { createOmkSessionEnv } from "../util/session.js";
-import { getOmkResourceSettings } from "../util/resource-profile.js";
+import { getOmkResourceSettings, getActiveRuntimePreset } from "../util/resource-profile.js";
 import { createProviderBackedTaskRunner } from "../providers/provider-runtime.js";
 import type { ApprovalPolicy, CronJob, TaskRunner } from "../contracts/orchestration.js";
 
@@ -91,6 +91,7 @@ export async function executeCronDag(
   const approvalPolicy = options.approvalPolicy ?? await loadCronApprovalPolicy(root);
   const resources = await getOmkResourceSettings();
   const promptPrefix = `Cron job: ${job.name}\nDAG file: ${job.dagFile}`;
+  const activePreset = await getActiveRuntimePreset();
   const runner = options.runner ?? await createProviderBackedTaskRunner({
     providerPolicy: "auto",
     deepseekPromptPrefix: [
@@ -108,6 +109,10 @@ export async function executeCronDag(
       mcpScope: resources.mcpScope,
       skillsScope: resources.skillsScope,
       roleAgentFiles: true,
+      mcpNames: activePreset?.mcpServers ?? [],
+      skillNames: activePreset?.skills ?? [],
+      hookNames: activePreset?.hooks ?? [],
+      toolNames: [],
       env: {
         ...createOmkSessionEnv(root, runId),
         OMK_RUN_ID: runId,

@@ -460,6 +460,10 @@ export interface KimiTaskRunnerOptions {
   mcpScope?: OmkRuntimeScope;
   skillsScope?: OmkRuntimeScope;
   hooksScope?: OmkRuntimeScope;
+  mcpNames?: string[];
+  skillNames?: string[];
+  hookNames?: string[];
+  toolNames?: string[];
   onThinking?: (thinking: string) => void;
   /** If true, automatically pick .omk/agents/{role}.yaml per node role */
   roleAgentFiles?: boolean;
@@ -525,7 +529,7 @@ async function resolveAgentFileForRole(role: string, fallback?: string): Promise
 }
 
 export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskRunner {
-  const { cwd, timeout = 120000, env, agentFile, promptPrefix, mcpScope, skillsScope, hooksScope, onThinking, roleAgentFiles } = options;
+  const { cwd, timeout = 120000, env, agentFile, promptPrefix, mcpScope, skillsScope, hooksScope, mcpNames, skillNames, hookNames, toolNames, onThinking, roleAgentFiles } = options;
   let currentOnThinking = onThinking;
 
   const runner: TaskRunner = {
@@ -576,12 +580,16 @@ export function createKimiTaskRunner(options: KimiTaskRunnerOptions = {}): TaskR
       if (resolvedAgentFile) {
         const scopedAgentFile = await writeScopedAgentFile({
           baseAgentFile: resolvedAgentFile,
-          outputFile: defaultScopedRoleAgentFile(getProjectRoot(), mergedEnv.OMK_RUN_ID ?? mergedEnv.OMK_SESSION_ID, node.role),
+          outputFile: defaultScopedRoleAgentFile(getProjectRoot(), mergedEnv.OMK_RUN_ID ?? mergedEnv.OMK_SESSION_ID, node.role, node.id),
           role: node.role,
           resources: {
             mcpScope: effectiveMcpScope,
             skillsScope: effectiveSkillsScope,
             hooksScope: effectiveHooksScope,
+            mcpNames: mcpNames ?? [],
+            skillNames: skillNames ?? [],
+            hookNames: hookNames ?? [],
+            toolNames: toolNames ?? [],
           },
         });
         args.push("--agent-file", scopedAgentFile);

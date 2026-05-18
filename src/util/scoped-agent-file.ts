@@ -59,8 +59,17 @@ export function sanitizeAgentFilePart(value: string): string {
   return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
 }
 
-export function defaultScopedRoleAgentFile(root: string, runId: string | undefined, role: string): string {
-  return join(root, ".omk", "runs", sanitizeAgentFilePart(runId ?? `runtime-${process.pid}`), "agents", "roles", `${sanitizeAgentFilePart(role)}.yaml`);
+export function defaultScopedRoleAgentFile(root: string, runId: string | undefined, role: string, nodeId?: string): string {
+  const suffix = nodeId ? `-${sanitizeAgentFilePart(nodeId)}` : "";
+  return join(root, ".omk", "runs", sanitizeAgentFilePart(runId ?? `runtime-${process.pid}`), "agents", "roles", `${sanitizeAgentFilePart(role)}${suffix}.yaml`);
+}
+
+export async function readBaseAgentExcludeTools(baseAgentFile: string): Promise<string[]> {
+  const raw = await readFile(baseAgentFile, "utf-8");
+  const doc = YAML.parse(raw) as Record<string, unknown>;
+  const agent = (doc?.agent ?? {}) as Record<string, unknown>;
+  const excludeTools = (agent.exclude_tools ?? []) as string[];
+  return Array.isArray(excludeTools) ? excludeTools : [];
 }
 
 export function yamlRelativePath(fromFile: string, toFile: string): string {
@@ -76,6 +85,7 @@ export function renderScopedAgentYaml(options: {
   resources: AgentCapabilityScopes;
   systemPromptPath?: string;
   subagents?: ScopedSubagentRef[];
+  excludeTools?: string[];
 }): string {
   const lines = [
     "version: 1",
@@ -99,6 +109,12 @@ export function renderScopedAgentYaml(options: {
     `    OMK_CONTEXT_BUDGET: "small"`,
     `    OMK_ROUTE_READ_ONLY: "false"`
   );
+  if (options.excludeTools?.length) {
+    lines.push("  exclude_tools:");
+    for (const tool of options.excludeTools) {
+      lines.push(`    - ${JSON.stringify(tool)}`);
+    }
+  }
   if (options.subagents?.length) {
     lines.push("  subagents:");
     for (const subagent of options.subagents) {
@@ -131,8 +147,9 @@ function hintDigest(values: string[]): string {
 
 export async function writeScopedAgentFile(options: ScopedAgentFileOptions): Promise<string> {
   const resources = await resolveAgentCapabilityScopes(options.resources);
+  const excludeTools = await readBaseAgentExcludeTools(options.baseAgentFile);
   await mkdir(dirname(options.outputFile), { recursive: true });
-  await writeFile(options.outputFile, renderScopedAgentYaml({ ...options, resources }), "utf-8");
+  await writeFile(options.outputFile, renderScopedAgentYaml({ ...options, resources, excludeTools }), "utf-8");
   return options.outputFile;
 }
 

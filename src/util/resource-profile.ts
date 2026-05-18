@@ -34,6 +34,30 @@ export function resetOmkResourceSettingsCache(): void {
   settingsCache = undefined;
 }
 
+export interface OmkActivePreset {
+  skills: string[];
+  hooks: string[];
+  mcpServers: string[];
+}
+
+export async function getActiveRuntimePreset(): Promise<OmkActivePreset | undefined> {
+  try {
+    const content = await readFile(join(getProjectRoot(), ".omk", "runtime-preset.json"), "utf-8");
+    const parsed = JSON.parse(content) as unknown;
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      return {
+        skills: Array.isArray(record.skills) ? (record.skills as string[]) : [],
+        hooks: Array.isArray(record.hooks) ? (record.hooks as string[]) : [],
+        mcpServers: Array.isArray(record.mcpServers) ? (record.mcpServers as string[]) : [],
+      };
+    }
+  } catch {
+    // ignore missing or invalid preset file
+  }
+  return undefined;
+}
+
 export async function getOmkResourceSettings(): Promise<OmkResourceSettings> {
   settingsCache ??= loadOmkResourceSettings();
   return settingsCache;

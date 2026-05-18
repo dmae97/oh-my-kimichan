@@ -4,6 +4,7 @@ export interface MonitorOptions {
   heartbeatIntervalMs?: number;
   stallThresholdMultiplier?: number;
   onStall?: (monitor: NodeMonitor) => void;
+  onKill?: (monitor: NodeMonitor) => void;
   onRecover?: (monitor: NodeMonitor) => void;
 }
 
@@ -56,6 +57,7 @@ export function createNodeMonitorEngine(options: MonitorOptions = {}): NodeMonit
       if (now - lastHeartbeat > threshold) {
         monitor.status = "stalled";
         stalled.push(monitor);
+        options.onKill?.(monitor);
       }
     }
     return stalled;
@@ -119,4 +121,8 @@ export function createNodeMonitorEngine(options: MonitorOptions = {}): NodeMonit
       monitors.clear();
     },
   };
+}
+
+export function forciblyRemoveMonitor(engine: NodeMonitorEngine, nodeId: string, runId: string): void {
+  engine.unregister(nodeId, runId);
 }
